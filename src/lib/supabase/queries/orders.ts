@@ -3,7 +3,7 @@ import type {
   Order, OrderItem, OrderEvent, OrderResultFile, Address, Patient,
   Shift, PaymentMethod, OrderEventType,
 } from "@/lib/types";
-import { isUuid } from "@/lib/supabase/auth-helpers";
+import { isUuid } from "@/lib/supabase/uuid";
 import { sqlStatusToTs } from "@/lib/supabase/order-status";
 
 // Reads the current customer's orders with the joined rows the UI expects:

@@ -1,6 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Order } from "@/lib/types";
-import { isUuid } from "@/lib/supabase/auth-helpers";
+import { isUuid } from "@/lib/supabase/uuid";
 
 export interface PlaceOrderResult {
   ok: boolean;

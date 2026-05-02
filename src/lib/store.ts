@@ -104,6 +104,24 @@ export function getLabIssuesFor(orderId: string) {
   return _labIssues.filter((i) => i.orderId === orderId);
 }
 
+// Resolve the current Order for a given idempotency key. After the server
+// swaps the placeholder id for the canonical UUID, this still returns the
+// same record — so callers tracking an order by idempotency key see the
+// server-generated public_number as soon as the swap lands.
+export function getOrderByIdempotencyKey(key: string): Order | null {
+  const id = _idempotency.get(key);
+  if (!id) return null;
+  return _orders.find((o) => o.id === id) ?? null;
+}
+
+export function useOrderByIdempotencyKey(key: string | null): Order | null {
+  return useSyncExternalStore(
+    subscribe,
+    () => (key ? getOrderByIdempotencyKey(key) : null),
+    () => null,
+  );
+}
+
 // ─── Phase 1 hydration: pull orders from /api/orders and merge into _orders.
 // Server rows win on id collision; local-only mock rows (no Supabase id) are
 // preserved alongside. Safe to call repeatedly; callers should debounce on
@@ -275,7 +293,6 @@ async function writeOrderRemote(order: Order, input: CreateOrderInput): Promise<
   if (!USE_SUPABASE) return;
   if (!input.session || input.session.role !== "customer") return;
   const result = await apiCreateOrder(input.session, input.idempotencyKey, {
-    publicNumber: order.publicNumber!,
     type: order.type,
     packageId: order.packageSnapshot?.packageId,
     packageSnapshot: order.packageSnapshot,

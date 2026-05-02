@@ -5,7 +5,6 @@ import type { AuthSession, Order, OrderStatus, PaymentMethod, Shift } from "@/li
 // the TS Order shape and the JSON the route handlers expect.
 
 export interface ApiCreateOrderInput {
-  publicNumber: string;
   type: "package" | "custom" | "prescription";
   packageId?: string;
   packageSnapshot?: unknown;

@@ -2,6 +2,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabase/server-admin";
 import { fetchOrdersForAdmin, fetchOrdersForCustomer } from "@/lib/supabase/queries/orders";
 import { tsStatusToSql } from "@/lib/supabase/order-status";
+import { isUuid } from "@/lib/supabase/uuid";
 import type { AuthSession, Order, OrderStatus, PaymentMethod, Shift } from "@/lib/types";
 
 // Phase 1: trust the mock session passed by the client (mock auth has no
@@ -13,7 +14,6 @@ interface CreateOrderBody {
   session: AuthSession;
   idempotencyKey: string;
   order: {
-    publicNumber: string;
     type: "package" | "custom" | "prescription";
     packageId?: string;
     packageSnapshot?: unknown;
@@ -39,8 +39,6 @@ interface CreateOrderBody {
   };
 }
 
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
 export async function POST(req: NextRequest) {
   let body: CreateOrderBody;
   try {
@@ -56,10 +54,10 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "idempotencyKey required" }, { status: 400 });
   }
   const customerId = session.linkedEntityId;
-  if (!UUID_RE.test(customerId)) {
+  if (!isUuid(customerId)) {
     return NextResponse.json({ error: "session.linkedEntityId is not a uuid; reseed Phase 1 demo data" }, { status: 400 });
   }
-  if (!UUID_RE.test(order.patientId) || !UUID_RE.test(order.addressId)) {
+  if (!isUuid(order.patientId) || !isUuid(order.addressId)) {
     return NextResponse.json({ error: "patient_id and address_id must be uuids that exist in supabase" }, { status: 400 });
   }
 
@@ -88,8 +86,10 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "address does not belong to this customer" }, { status: 400 });
   }
 
+  // public_number is generated server-side by the RPC (migration 011) and any
+  // value the client sends is intentionally ignored to prevent collisions
+  // after a localStorage reset.
   const payload = {
-    public_number: order.publicNumber,
     patient_id: order.patientId,
     address_id: order.addressId,
     kind: order.type,
@@ -142,7 +142,7 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ orders: orders ?? [] });
   }
   if (role === "customer") {
-    if (!customerId || !UUID_RE.test(customerId)) {
+    if (!customerId || !isUuid(customerId)) {
       return NextResponse.json({ error: "customerId uuid required for customer role" }, { status: 400 });
     }
     const orders = await fetchOrdersForCustomer(sb, customerId);

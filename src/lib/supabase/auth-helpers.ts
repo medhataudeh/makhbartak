@@ -1,23 +1,10 @@
 "use client";
 import type { SupabaseClient } from "@supabase/supabase-js";
-
-// ─── UUID guard ────────────────────────────────────────────────────────────
-// Every Supabase column that expects uuid (customer_id, patient_id, …) MUST
-// be validated before it leaves the client. Sending a non-uuid yields the
-// runtime error: invalid input syntax for type uuid: "..." (PostgREST 22P02).
-// This guard short-circuits those calls so dev/local fixture ids never leak.
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
-export function isUuid(value: unknown): value is string {
-  return typeof value === "string" && UUID_RE.test(value);
-}
-
-/** Throw-style guard for callers that prefer fail-fast. */
-export function assertUuid(value: unknown, label = "id"): asserts value is string {
-  if (!isUuid(value)) {
-    throw new Error(`[supabase] ${label} is not a valid uuid: ${String(value)}`);
-  }
-}
+// Pure UUID guards live in `./uuid` so server code (Route Handlers) can use
+// them without dragging in this file's "use client" boundary. Re-exported
+// here for back-compat with existing client callers.
+import { isUuid } from "./uuid";
+export { isUuid, assertUuid } from "./uuid";
 
 // ─── Dev session UUID ──────────────────────────────────────────────────────
 // When the dev-OTP fallback is on we don't have a real Supabase session, so

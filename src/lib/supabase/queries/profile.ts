@@ -1,6 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Patient, Address, PaymentMethod } from "@/lib/types";
-import { isUuid } from "@/lib/supabase/auth-helpers";
+import { isUuid } from "@/lib/supabase/uuid";
 
 // All read/write helpers below assume a customer_id has already been resolved
 // for the signed-in user. They return null on error so the caller can fall

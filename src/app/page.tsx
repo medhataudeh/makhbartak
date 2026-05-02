@@ -18,7 +18,7 @@ import { AccountScreen } from "@/components/account/AccountScreen";
 import { ShoppingCart, ChevronLeft } from "lucide-react";
 
 import type { Test, Package, Shift, Address, Patient, PaymentMethod } from "@/lib/types";
-import { useCustomerNotifications, createOrder } from "@/lib/store";
+import { useCustomerNotifications, createOrder, useOrderByIdempotencyKey } from "@/lib/store";
 import { useSystemSettings } from "@/lib/system-settings";
 import { COMMON_INSTRUCTIONS } from "@/lib/mock-data";
 import { dedupeInstructions, generateOrderNumber } from "@/lib/order-utils";
@@ -60,7 +60,12 @@ function CustomerApp({ userId }: { userId: string }) {
   const [view, setView] = useState<AppView>("home");
   const [booking, setBooking] = useState<BookingState>({});
   const [pendingPackage, setPendingPackage] = useState<Package | null>(null);
-  const [lastOrderPublicNumber, setLastOrderPublicNumber] = useState<string | null>(null);
+  const [lastIdempotencyKey, setLastIdempotencyKey] = useState<string | null>(null);
+  // Live-tracked Order for the success screen. After the server swaps the
+  // placeholder for the canonical UUID + server-generated public_number, this
+  // hook re-renders with the server values.
+  const lastOrder = useOrderByIdempotencyKey(lastIdempotencyKey);
+  const lastOrderPublicNumber = lastOrder?.publicNumber ?? null;
 
   const unread = useCustomerNotifications().filter((n) => !n.isRead).length;
   const settings = useSystemSettings();
@@ -73,6 +78,8 @@ function CustomerApp({ userId }: { userId: string }) {
   const hasCart = !!booking.pkg || (booking.tests?.length ?? 0) > 0;
 
   const confirmPurchase = (snapshot: import("@/components/cart/CartScreen").CartConfirmSnapshot) => {
+    // Local placeholder for the optimistic in-memory order; the server
+    // generates the canonical HL-YYYY-NNNNNN and the store swaps it in.
     const publicNumber = generateOrderNumber();
     const initialStatus =
       snapshot.paymentMethod === "cash" && settings.allowCashOrders
@@ -102,7 +109,7 @@ function CustomerApp({ userId }: { userId: string }) {
       publicNumber,
       initialStatus,
     });
-    setLastOrderPublicNumber(publicNumber);
+    setLastIdempotencyKey(snapshot.idempotencyKey);
     setBooking((b) => ({ ...b, paymentMethod: snapshot.paymentMethod }));
     setView("success");
   };
