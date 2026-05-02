@@ -103,6 +103,11 @@ export async function assignNurseRemote(
   return { ok: true };
 }
 
+/**
+ * @deprecated Phase 3 wires lab uploads through `/api/orders/[id]/lab/files`
+ * (server-side service role + `upload_result_file_admin` RPC). Kept here for
+ * the eventual Phase-N authenticated-browser path.
+ */
 export async function uploadResultFileRemote(
   sb: SupabaseClient,
   orderId: string,
@@ -126,6 +131,10 @@ export async function uploadResultFileRemote(
   return { ok: true, id: data as string };
 }
 
+/**
+ * @deprecated Phase 3 wires archive through `/api/orders/[id]/lab/files/[fileId]/archive`
+ * (server-side service role + `archive_result_file_admin` RPC).
+ */
 export async function archiveResultFileRemote(
   sb: SupabaseClient,
   fileId: string,

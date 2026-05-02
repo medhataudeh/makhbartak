@@ -493,20 +493,24 @@ function OrdersSection({ lab, labUser, labOrders, brand, resultsFocus }: {
               <MultiUploadModal
                 title="رفع ملفات نتيجة"
                 onClose={() => setUploadOpen(false)}
-                onSubmit={(files, note) => {
-                  files.forEach((f) => {
-                    uploadResultFile(selected.id, {
+                onSubmit={async (files, note) => {
+                  let firstError: string | null = null;
+                  for (const f of files) {
+                    const res = await uploadResultFile(selected.id, {
                       labId: lab.id,
                       fileUrl: f.dataUrl ?? `/results/${selected.id}/${f.name}`,
+                      blob: f.blob,
                       fileName: f.name,
                       uploadedBy: labUser.fullName,
                       note,
                     });
-                  });
+                    if (!res.ok && !firstError) firstError = res.error ?? "حدث خطأ";
+                  }
                   if (selected.status === "sent_to_lab") {
                     setOrderStatus(selected.id, "lab_processing", { actor: "lab", actorName: labUser.fullName });
                   }
-                  toast.success(files.length > 1 ? `تم رفع ${files.length} ملفات بنجاح` : "تم رفع الملف بنجاح");
+                  if (firstError) toast.error(firstError);
+                  else toast.success(files.length > 1 ? `تم رفع ${files.length} ملفات بنجاح` : "تم رفع الملف بنجاح");
                   setUploadOpen(false);
                 }}
               />
@@ -517,18 +521,20 @@ function OrdersSection({ lab, labUser, labOrders, brand, resultsFocus }: {
                 title="استبدال ملف"
                 singleOnly
                 onClose={() => setReplacingFileId(null)}
-                onSubmit={(files, note) => {
+                onSubmit={async (files, note) => {
                   const f = files[0];
                   if (!f) return;
-                  uploadResultFile(selected.id, {
+                  const res = await uploadResultFile(selected.id, {
                     labId: lab.id,
                     fileUrl: f.dataUrl ?? `/results/${selected.id}/${f.name}`,
+                    blob: f.blob,
                     fileName: f.name,
                     uploadedBy: labUser.fullName,
                     note,
                     replacesFileId: replacingFileId,
                   });
-                  toast.success("تم استبدال الملف");
+                  if (res.ok) toast.success("تم استبدال الملف");
+                  else toast.error(res.error ?? "تعذر استبدال الملف");
                   setReplacingFileId(null);
                 }}
               />
@@ -854,7 +860,7 @@ function IssueModal({ onClose, onSubmit }: {
   );
 }
 
-interface UploadFile { name: string; dataUrl?: string }
+interface UploadFile { name: string; dataUrl?: string; blob?: File }
 
 function MultiUploadModal({ title, singleOnly, onClose, onSubmit }: {
   title: string;
@@ -872,7 +878,11 @@ function MultiUploadModal({ title, singleOnly, onClose, onSubmit }: {
     Promise.all(
       arr.map((f) => new Promise<UploadFile>((resolve) => {
         const r = new FileReader();
-        r.onload = () => resolve({ name: f.name, dataUrl: typeof r.result === "string" ? r.result : undefined });
+        r.onload = () => resolve({
+          name: f.name,
+          dataUrl: typeof r.result === "string" ? r.result : undefined,
+          blob: f,
+        });
         r.readAsDataURL(f);
       })),
     ).then((picked) => setFiles(singleOnly ? picked.slice(0, 1) : [...files, ...picked]));

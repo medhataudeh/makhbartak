@@ -75,6 +75,61 @@ export async function fetchOrdersForNurse(
   return (data as unknown as RawOrderRow[]).map(mapRowToOrder);
 }
 
+// Mints a 1-hour signed URL for every active OrderResultFile whose fileUrl
+// is a Storage path (i.e. not a legacy mock data: URL or /results/* path).
+// Service-role client recommended so the signing isn't gated by RLS, but
+// any client with read on the bucket works. Failures fall back to leaving
+// the original storage path in place so the caller can still detect / log.
+const SIGNED_URL_TTL_SECONDS = 60 * 60;
+
+function looksLikeStoragePath(url: string): boolean {
+  if (!url) return false;
+  if (url.startsWith("data:")) return false;
+  if (url.startsWith("http://") || url.startsWith("https://")) return false;
+  if (url.startsWith("/results/")) return false;
+  return true;
+}
+
+export async function enrichOrdersWithSignedUrls(
+  sb: SupabaseClient,
+  orders: Order[],
+): Promise<Order[]> {
+  // Collect storage paths for active files only — archived files don't need
+  // a customer-visible URL and the bucket's customer RLS only permits
+  // active rows anyway.
+  const paths = new Set<string>();
+  for (const o of orders) {
+    for (const f of o.resultFiles ?? []) {
+      if (f.isActive && looksLikeStoragePath(f.fileUrl)) paths.add(f.fileUrl);
+    }
+  }
+  if (paths.size === 0) return orders;
+
+  const pathList = Array.from(paths);
+  const { data, error } = await sb.storage
+    .from("lab-results")
+    .createSignedUrls(pathList, SIGNED_URL_TTL_SECONDS);
+  if (error || !data) {
+    console.warn("[supabase] createSignedUrls failed", error);
+    return orders;
+  }
+  const signed = new Map<string, string>();
+  for (const row of data) {
+    if (row.path && row.signedUrl) signed.set(row.path, row.signedUrl);
+  }
+  return orders.map((o) => {
+    if (!o.resultFiles?.length) return o;
+    return {
+      ...o,
+      resultFiles: o.resultFiles.map((f) =>
+        f.isActive && signed.has(f.fileUrl)
+          ? { ...f, fileUrl: signed.get(f.fileUrl)! }
+          : f,
+      ),
+    };
+  });
+}
+
 export async function fetchOrderById(sb: SupabaseClient, id: string): Promise<Order | null> {
   if (!isUuid(id)) return null;
   const { data, error } = await sb

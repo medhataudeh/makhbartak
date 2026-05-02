@@ -1,6 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabase/server-admin";
-import { fetchOrdersForAdmin, fetchOrdersForCustomer, fetchOrdersForNurse } from "@/lib/supabase/queries/orders";
+import { fetchOrdersForAdmin, fetchOrdersForCustomer, fetchOrdersForNurse, enrichOrdersWithSignedUrls } from "@/lib/supabase/queries/orders";
 import { tsStatusToSql } from "@/lib/supabase/order-status";
 import { isUuid } from "@/lib/supabase/uuid";
 import type { AuthSession, Order, OrderStatus, PaymentMethod, Shift } from "@/lib/types";
@@ -127,7 +127,8 @@ export async function POST(req: NextRequest) {
   // Hydrate the row so the client gets a full TS Order back. Falls back to
   // a minimal stub if the read fails (rare; the row was just inserted).
   const orders = await fetchOrdersForCustomer(sb, customerId);
-  const created = orders?.find((o) => o.id === orderId) ?? null;
+  const enriched = orders ? await enrichOrdersWithSignedUrls(sb, orders) : [];
+  const created = enriched.find((o) => o.id === orderId) ?? null;
   return NextResponse.json({ order: created, orderId } satisfies { order: Order | null; orderId: string });
 }
 
@@ -140,21 +141,24 @@ export async function GET(req: NextRequest) {
 
   if (role === "admin") {
     const orders = await fetchOrdersForAdmin(sb);
-    return NextResponse.json({ orders: orders ?? [] });
+    const enriched = orders ? await enrichOrdersWithSignedUrls(sb, orders) : [];
+    return NextResponse.json({ orders: enriched });
   }
   if (role === "customer") {
     if (!customerId || !isUuid(customerId)) {
       return NextResponse.json({ error: "customerId uuid required for customer role" }, { status: 400 });
     }
     const orders = await fetchOrdersForCustomer(sb, customerId);
-    return NextResponse.json({ orders: orders ?? [] });
+    const enriched = orders ? await enrichOrdersWithSignedUrls(sb, orders) : [];
+    return NextResponse.json({ orders: enriched });
   }
   if (role === "nurse") {
     if (!nurseId || !isUuid(nurseId)) {
       return NextResponse.json({ error: "nurseId uuid required for nurse role" }, { status: 400 });
     }
     const orders = await fetchOrdersForNurse(sb, nurseId);
-    return NextResponse.json({ orders: orders ?? [] });
+    const enriched = orders ? await enrichOrdersWithSignedUrls(sb, orders) : [];
+    return NextResponse.json({ orders: enriched });
   }
   return NextResponse.json({ error: "role must be 'customer', 'admin', or 'nurse'" }, { status: 400 });
 }

@@ -21,12 +21,17 @@ import {
 import { USE_SUPABASE, supabaseEnvReady } from "./supabase/flags";
 import { getSupabaseBrowser } from "./supabase/client";
 import {
-  // setOrderStatusRemote retired in Phase 2 — see persistOrderStatusViaApi.
+  // Phase 2 retired setOrderStatusRemote (see persistOrderStatusViaApi).
+  // Phase 3 retired uploadResultFileRemote + archiveResultFileRemote (see
+  // persistUploadViaApi / persistArchiveViaApi). assignNurse is the only
+  // mutator still using the direct-RPC path; it is also broken under mock
+  // auth and slated for the next phase.
   assignNurseRemote,
-  uploadResultFileRemote,
-  archiveResultFileRemote,
 } from "./supabase/queries/orders-mutations";
-import { apiCreateOrder, apiListOrdersForAdmin, apiListOrdersForCustomer, apiListOrdersForNurse, apiSetOrderStatus } from "./orders-api";
+import {
+  apiCreateOrder, apiListOrdersForAdmin, apiListOrdersForCustomer, apiListOrdersForNurse,
+  apiSetOrderStatus, apiUploadLabResultFile, apiArchiveLabResultFile, apiConfirmLabResults,
+} from "./orders-api";
 import { isUuid } from "./supabase/uuid";
 import type { AuthSession } from "./types";
 
@@ -538,7 +543,11 @@ function appendFileEvent(orderId: string, ev: Omit<OrderFileEvent, "id" | "order
 
 interface UploadInput {
   labId: string;
+  /** Used for the optimistic local preview. When the actual binary is also
+   *  available (Phase 3 flag-on), pass `blob` so the API route can stream
+   *  it to Supabase Storage. */
   fileUrl: string;
+  blob?: File;
   fileName: string;
   uploadedBy: string;
   note?: string;
@@ -546,9 +555,10 @@ interface UploadInput {
   replacesFileId?: string;
 }
 
-export function uploadResultFile(orderId: string, file: UploadInput) {
+export function uploadResultFile(orderId: string, file: UploadInput): Promise<{ ok: boolean; error?: string }> {
+  const localId = nextId("rf");
   const full: OrderResultFile = {
-    id: nextId("rf"),
+    id: localId,
     orderId,
     labId: file.labId,
     fileUrl: file.fileUrl,
@@ -573,13 +583,53 @@ export function uploadResultFile(orderId: string, file: UploadInput) {
     actor: "lab", actorName: file.uploadedBy, note: file.note,
   });
   appendEvent(orderId, "result_uploaded", { actor: "lab", actorName: file.uploadedBy }, file.fileName);
-  void writeRemote(
-    async (sb) => uploadResultFileRemote(sb, orderId, file.fileUrl, file.fileName, { replacesId: file.replacesFileId }),
-    "upload_result_file"
-  );
+  return persistUploadViaApi(orderId, file, localId);
 }
 
-export function archiveResultFile(orderId: string, fileId: string, actor: { actor: "lab" | "admin"; actorName: string }, note?: string) {
+async function persistUploadViaApi(
+  orderId: string,
+  file: UploadInput,
+  localFileId: string,
+): Promise<{ ok: boolean; error?: string }> {
+  if (!USE_SUPABASE) return { ok: true };
+  if (!isUuid(orderId)) {
+    return { ok: false, error: "تعذر رفع الملف، الطلب غير موجود في قاعدة البيانات" };
+  }
+  if (!file.blob) {
+    return { ok: false, error: "no_file_blob" };
+  }
+  const session = (await import("./auth")).getStoredSession();
+  if (!session || (session.role !== "lab" && session.role !== "admin")) return { ok: true };
+
+  // Translate the local placeholder replacesFileId (slug like rf-...) to the
+  // real Supabase uuid when possible; otherwise pass undefined and let the
+  // server treat this as a fresh upload.
+  const replacesId = file.replacesFileId && isUuid(file.replacesFileId)
+    ? file.replacesFileId
+    : undefined;
+
+  const result = await apiUploadLabResultFile(session, orderId, file.blob, {
+    fileName: file.fileName, replacesFileId: replacesId, note: file.note,
+  });
+  if ("error" in result) {
+    console.warn("[api/orders/lab/files] upload failed; keeping local row", result.error);
+    return { ok: false, error: result.error };
+  }
+  if (result.order) {
+    // Merge canonical row in. Drop the local placeholder we inserted by
+    // matching on the locally-generated id; the server now owns the row.
+    const remote = result.order;
+    _orders = _orders.map((o) => {
+      if (o.id !== remote.id) return o;
+      const filtered = (o.resultFiles ?? []).filter((f) => f.id !== localFileId);
+      return { ...o, ...remote, resultFiles: remote.resultFiles ?? filtered };
+    });
+    emit();
+  }
+  return { ok: true };
+}
+
+export function archiveResultFile(orderId: string, fileId: string, actor: { actor: "lab" | "admin"; actorName: string }, note?: string): Promise<{ ok: boolean; error?: string }> {
   let archived: OrderResultFile | undefined;
   mutateOrder(orderId, (o) => ({
     ...o,
@@ -593,8 +643,32 @@ export function archiveResultFile(orderId: string, fileId: string, actor: { acto
     appendFileEvent(orderId, {
       fileId, fileName: archived.fileName, type: "archived", actor: actor.actor, actorName: actor.actorName, note,
     });
-    void writeRemote(async (sb) => archiveResultFileRemote(sb, fileId, note), "archive_result_file");
   }
+  return persistArchiveViaApi(orderId, fileId, note);
+}
+
+async function persistArchiveViaApi(
+  orderId: string,
+  fileId: string,
+  note?: string,
+): Promise<{ ok: boolean; error?: string }> {
+  if (!USE_SUPABASE) return { ok: true };
+  if (!isUuid(orderId) || !isUuid(fileId)) {
+    return { ok: false, error: "تعذر أرشفة الملف، السجل غير موجود في قاعدة البيانات" };
+  }
+  const session = (await import("./auth")).getStoredSession();
+  if (!session || (session.role !== "lab" && session.role !== "admin")) return { ok: true };
+  const result = await apiArchiveLabResultFile(session, orderId, fileId, note);
+  if ("error" in result) {
+    console.warn("[api/orders/lab/files/archive] failed; keeping local archive", result.error);
+    return { ok: false, error: result.error };
+  }
+  if (result.order) {
+    const remote = result.order;
+    _orders = _orders.map((o) => (o.id === remote.id ? { ...o, ...remote } : o));
+    emit();
+  }
+  return { ok: true };
 }
 
 /** Restore a previously archived file. */
@@ -630,8 +704,32 @@ export function confirmResultsReady(orderId: string, ref: ActorRef): boolean {
   if (!order) return false;
   const hasActive = (order.resultFiles ?? []).some((f) => f.isActive);
   if (!hasActive) return false;
+  // Local optimistic state flip — this also fires the Phase-2 status route
+  // path internally for the order.status update.
   setOrderStatus(orderId, "completed", ref, "تأكيد إرسال النتائج");
+  // Phase 3: also call the lab-confirm route so the server insists on at
+  // least one active row in lab_result_files (defense-in-depth) and stamps
+  // a uniform actor_role='lab' history row, independent of which mock
+  // session called setOrderStatus.
+  void persistConfirmViaApi(orderId);
   return true;
+}
+
+async function persistConfirmViaApi(orderId: string): Promise<void> {
+  if (!USE_SUPABASE) return;
+  if (!isUuid(orderId)) return;
+  const session = (await import("./auth")).getStoredSession();
+  if (!session || (session.role !== "lab" && session.role !== "admin")) return;
+  const result = await apiConfirmLabResults(session, orderId);
+  if ("error" in result) {
+    console.warn("[api/orders/lab/confirm] failed; status update may not be canonical", result.error);
+    return;
+  }
+  if (result.order) {
+    const remote = result.order;
+    _orders = _orders.map((o) => (o.id === remote.id ? { ...o, ...remote } : o));
+    emit();
+  }
 }
 
 /** Admin override — close an order without uploaded results. Logged. */

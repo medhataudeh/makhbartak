@@ -1,6 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabase/server-admin";
-import { fetchOrderById } from "@/lib/supabase/queries/orders";
+import { enrichOrdersWithSignedUrls, fetchOrderById } from "@/lib/supabase/queries/orders";
 
 export async function GET(
   _req: NextRequest,
@@ -10,5 +10,6 @@ export async function GET(
   const sb = getSupabaseAdmin();
   const order = await fetchOrderById(sb, id);
   if (!order) return NextResponse.json({ error: "not found" }, { status: 404 });
-  return NextResponse.json({ order });
+  const [enriched] = await enrichOrdersWithSignedUrls(sb, [order]);
+  return NextResponse.json({ order: enriched });
 }
