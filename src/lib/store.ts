@@ -27,6 +27,7 @@ import {
   archiveResultFileRemote,
 } from "./supabase/queries/orders-mutations";
 import { apiCreateOrder, apiListOrdersForAdmin, apiListOrdersForCustomer, apiListOrdersForNurse, apiSetOrderStatus } from "./orders-api";
+import { isUuid } from "./supabase/uuid";
 import type { AuthSession } from "./types";
 
 // ─── Tiny pub-sub ────────────────────────────────────────────────────────────
@@ -142,7 +143,14 @@ export async function hydrateOrdersForAdmin(): Promise<void> {
 
 export async function hydrateOrdersForNurse(nurseId: string): Promise<void> {
   if (!USE_SUPABASE) return;
-  const remote = await apiListOrdersForNurse(nurseId);
+  // Phase 2 mock-auth fallback: nurse seed ids today are slugs ("nur-1"),
+  // not UUIDs. The server route requires a UUID, so a slug-id call returns
+  // null. Fall back to the admin list so the nurse can still see and act on
+  // real Supabase orders during Phase 2 testing. When a future migration
+  // replaces nurse slugs with UUIDs, this branch becomes the primary path.
+  const remote = isUuid(nurseId)
+    ? await apiListOrdersForNurse(nurseId)
+    : await apiListOrdersForAdmin();
   if (!remote) return;
   mergeRemoteOrders(remote);
 }
@@ -432,6 +440,17 @@ async function persistOrderStatusViaApi(
   note?: string,
 ): Promise<{ ok: boolean; error?: string }> {
   if (!USE_SUPABASE) return { ok: true };
+  // Pre-flight: refuse to send a non-UUID to the API. Mock placeholder ids
+  // (e.g. "ord-3") would otherwise return 400 from the server. The caller
+  // should have resolved a real Supabase order before getting here; this
+  // guard exists as defense-in-depth so a stale local id can't surface as
+  // a successful UI toast.
+  if (!isUuid(orderId)) {
+    return {
+      ok: false,
+      error: "تعذر تحديث حالة الطلب، لم يتم العثور على الطلب الحقيقي",
+    };
+  }
   // Read the current mock session at write time so existing call sites
   // don't have to thread it through. Returns local-only when the session is
   // not a writer role (Phase 2 only allows nurse + admin).

@@ -28,6 +28,8 @@ import { BottomSheet } from "@/components/ui/BottomSheet";
 import { BackButton } from "@/components/ui/BackButton";
 import { useSession, logout, nurseFromSession } from "@/lib/auth";
 import { NurseLogin } from "@/components/nurse/NurseLogin";
+import { USE_SUPABASE } from "@/lib/supabase/flags";
+import { isUuid } from "@/lib/supabase/uuid";
 
 type NurseTab = "home" | "schedule" | "settings";
 
@@ -111,15 +113,39 @@ function NurseAppInner({ nurseId, onLogout }: { nurseId: string; onLogout: () =>
   const liveOrders = useOrders();
   const [activeStopId, setActiveStopId] = useState<string | null>(null);
   const [stops, setStops] = useState<NurseRouteStop[]>(today?.stops ?? []);
-  // Hydrate stops from the live order store, then filter out unpaid online
-  // orders (and any cash orders if admin disabled cash). Nurse must not see
-  // an order until it's actionable per the platform rules.
-  const stopsHydrated = stops
+
+  // Phase 2: when Supabase persistence is on, derive stops from real
+  // Supabase orders so every stop.orderId is a real UUID (not a mock slug
+  // like "ord-3"). Mock-only mode (flag off) keeps using the seed route.
+  // Status mapping for the *stop* (independent of the SQL order status):
+  //   sample_collected / sent_to_lab / lab_processing / result_ready /
+  //   completed   → "completed"
+  //   failed_to_collect / cancelled / lab_issue   → "failed"
+  //   anything else                               → "pending"
+  const supabaseStops: NurseRouteStop[] = USE_SUPABASE
+    ? liveOrders
+        .filter((o) => isUuid(o.id))
+        .filter((o) => isOrderActionable(o, settings) || ["sample_collected", "sent_to_lab", "lab_processing", "result_ready", "completed", "failed_to_collect", "cancelled", "lab_issue"].includes(o.status))
+        .map<NurseRouteStop>((o, idx) => ({
+          orderId: o.id,
+          order: o,
+          sequence: idx + 1,
+          status: ["sample_collected", "sent_to_lab", "lab_processing", "result_ready", "completed"].includes(o.status)
+            ? "completed"
+            : ["failed_to_collect", "cancelled", "lab_issue"].includes(o.status)
+              ? "failed"
+              : "pending",
+        }))
+    : [];
+
+  const stopsBase = USE_SUPABASE && supabaseStops.length > 0 ? supabaseStops : stops;
+
+  const stopsHydrated = stopsBase
     .map((s) => {
       const live = liveOrders.find((o) => o.id === s.orderId);
       return live ? { ...s, order: live } : s;
     })
-    .filter((s) => isOrderActionable(s.order, settings));
+    .filter((s) => isOrderActionable(s.order, settings) || s.status !== "pending");
   const activeStop = activeStopId ? stopsHydrated.find((s) => s.orderId === activeStopId) ?? null : null;
   const setActiveStop = (s: NurseRouteStop | null) => setActiveStopId(s ? s.orderId : null);
 
@@ -985,11 +1011,19 @@ function NurseVisitDetail({
     opts?: { successToast?: string },
   ) => {
     if (pendingAction) return;
+    // Pre-flight: when Supabase persistence is on, refuse to act on a stop
+    // that isn't bound to a real Supabase order. The user has to wait for
+    // hydration or this stop genuinely has no real order behind it.
+    if (USE_SUPABASE && o.id && !isUuid(o.id)) {
+      toast.error("تعذر تحديث حالة الطلب، لم يتم العثور على الطلب الحقيقي");
+      return;
+    }
     setPendingAction(key);
     try {
       const result = await Promise.resolve(action());
       if (result && typeof result === "object" && "ok" in result && (result as { ok: boolean }).ok === false) {
-        toast.error("حدث خطأ، حاول مرة أخرى");
+        const err = (result as { error?: string }).error;
+        toast.error(err && err.length > 0 ? err : "حدث خطأ، حاول مرة أخرى");
         return;
       }
       toast.success(opts?.successToast ?? "تم تحديث حالة الزيارة بنجاح");
