@@ -279,21 +279,32 @@ export const COMMON_INSTRUCTIONS: Instruction[] = [
   { id: "ins-5", icon: "shirt", textAr: "ارتدِ ملابس مريحة تسمح بالوصول للذراع", textEn: "Wear comfortable clothing with sleeve access" },
 ];
 
+// ─── Phase 1 demo seed UUIDs (must match supabase/migrations/010) ───────────
+// These are the deterministic ids used both in the mock store and in the
+// Supabase seed so the API route can resolve session.linkedEntityId →
+// customers.id and patient_id / address_id without an extra lookup.
+export const SEED_CUSTOMER_1_ID = "00000000-0000-4000-8000-00000000c001";
+export const SEED_CUSTOMER_2_ID = "00000000-0000-4000-8000-00000000c002";
+export const SEED_PATIENT_1_ID  = "00000000-0000-4000-8000-00000000d001";
+export const SEED_PATIENT_2_ID  = "00000000-0000-4000-8000-00000000d002";
+export const SEED_ADDRESS_1_ID  = "00000000-0000-4000-8000-00000000e001";
+export const SEED_ADDRESS_2_ID  = "00000000-0000-4000-8000-00000000e002";
+
 // ─── Patients ────────────────────────────────────────────────────────────────
 export const MOCK_PATIENTS: Patient[] = [
-  { id: "p-1", userId: "u-1", name: "أحمد محمد علي", isDefault: true },
-  { id: "p-2", userId: "u-1", name: "فاطمة أحمد", isDefault: false },
+  { id: SEED_PATIENT_1_ID, userId: SEED_CUSTOMER_1_ID, name: "أحمد محمد علي", isDefault: true },
+  { id: SEED_PATIENT_2_ID, userId: SEED_CUSTOMER_1_ID, name: "فاطمة أحمد", isDefault: false },
 ];
 
 // ─── Addresses ───────────────────────────────────────────────────────────────
 export const MOCK_ADDRESSES: Address[] = [
   {
-    id: "addr-1", userId: "u-1", label: "المنزل",
+    id: SEED_ADDRESS_1_ID, userId: SEED_CUSTOMER_1_ID, label: "المنزل",
     description: "المزة – شارع الفردوس، بناء رقم 12، الطابق 3",
     lat: 33.5138, lng: 36.2765, city: "دمشق", isDefault: true,
   },
   {
-    id: "addr-2", userId: "u-1", label: "العمل",
+    id: SEED_ADDRESS_2_ID, userId: SEED_CUSTOMER_1_ID, label: "العمل",
     description: "المالكي – برج المعلومات، الطابق 5",
     lat: 33.5203, lng: 36.2912, city: "دمشق", isDefault: false,
   },
@@ -302,7 +313,7 @@ export const MOCK_ADDRESSES: Address[] = [
 // ─── Orders ──────────────────────────────────────────────────────────────────
 export const MOCK_ORDERS: Order[] = [
   {
-    id: "ord-1", userId: "u-1", status: "result_ready",
+    id: "ord-1", userId: SEED_CUSTOMER_1_ID, status: "result_ready",
     type: "package", packageNameAr: "باقة الفحص الشامل",
     packageSnapshot: {
       packageId: "pkg-1",
@@ -328,7 +339,7 @@ export const MOCK_ORDERS: Order[] = [
     createdAt: "2025-04-30T08:00:00Z", updatedAt: "2025-05-01T11:30:00Z",
   },
   {
-    id: "ord-2", userId: "u-1", status: "confirmed",
+    id: "ord-2", userId: SEED_CUSTOMER_1_ID, status: "confirmed",
     type: "custom",
     items: [
       { id: "oi-4", testId: "t-3", nameAr: "فيتامين د", nameEn: "Vitamin D", priceSnapshot: 25 },
@@ -342,7 +353,7 @@ export const MOCK_ORDERS: Order[] = [
     createdAt: "2025-05-02T14:00:00Z", updatedAt: "2025-05-02T14:05:00Z",
   },
   {
-    id: "ord-3", userId: "u-1", status: "on_the_way",
+    id: "ord-3", userId: SEED_CUSTOMER_1_ID, status: "on_the_way",
     type: "custom",
     items: [
       { id: "oi-6", testId: "t-4", nameAr: "هرمون الغدة الدرقية", nameEn: "TSH", priceSnapshot: 20 },
@@ -355,7 +366,7 @@ export const MOCK_ORDERS: Order[] = [
     createdAt: "2025-05-02T06:00:00Z", updatedAt: "2025-05-02T09:10:00Z",
   },
   {
-    id: "ord-4", userId: "u-1", status: "sent_to_lab",
+    id: "ord-4", userId: SEED_CUSTOMER_1_ID, status: "sent_to_lab",
     type: "custom",
     items: [
       { id: "oi-7", testId: "t-7", nameAr: "وظائف الكبد", nameEn: "Liver Function Tests", priceSnapshot: 22 },
@@ -369,7 +380,7 @@ export const MOCK_ORDERS: Order[] = [
     createdAt: "2025-05-03T07:00:00Z", updatedAt: "2025-05-03T10:30:00Z",
   },
   {
-    id: "ord-5", userId: "u-1", status: "sample_collected",
+    id: "ord-5", userId: SEED_CUSTOMER_1_ID, status: "sample_collected",
     type: "custom",
     items: [
       { id: "oi-8", testId: "t-12", nameAr: "الهيموغلوبين الغليكوزيلاتي", nameEn: "Glycated Hemoglobin", priceSnapshot: 18 },
@@ -387,19 +398,19 @@ export const MOCK_ORDERS: Order[] = [
 // ─── Notifications ───────────────────────────────────────────────────────────
 export const MOCK_NOTIFICATIONS: Notification[] = [
   {
-    id: "n-1", userId: "u-1", titleAr: "نتيجتك جاهزة",
+    id: "n-1", userId: SEED_CUSTOMER_1_ID, titleAr: "نتيجتك جاهزة",
     bodyAr: "تم رفع نتيجة طلبك #ord-1. اضغط لعرضها.",
     type: "result_ready", orderId: "ord-1", isRead: false,
     createdAt: "2025-05-01T11:30:00Z",
   },
   {
-    id: "n-2", userId: "u-1", titleAr: "الممرض في الطريق",
+    id: "n-2", userId: SEED_CUSTOMER_1_ID, titleAr: "الممرض في الطريق",
     bodyAr: "الممرض في طريقه إليك الآن.",
     type: "nurse_on_way", orderId: "ord-3", isRead: false,
     createdAt: "2025-05-02T09:10:00Z",
   },
   {
-    id: "n-3", userId: "u-1", titleAr: "تم تأكيد طلبك",
+    id: "n-3", userId: SEED_CUSTOMER_1_ID, titleAr: "تم تأكيد طلبك",
     bodyAr: "تم تأكيد طلبك #ord-2 بنجاح.",
     type: "order_confirmed", orderId: "ord-2", isRead: true,
     createdAt: "2025-05-02T14:05:00Z",
@@ -962,8 +973,8 @@ export const MOCK_LAB_USERS: LabUser[] = [
 // linkedEntityId points at the User record (e.g. "u-1" carries the seed
 // patients/addresses/orders that this prototype's store returns globally).
 export const MOCK_CUSTOMER_USERS: AuthUser[] = [
-  { id: "cu-1", username: "customer1", password: "customer123", name: "أحمد محمد علي", role: "customer", linkedEntityId: "u-1", isActive: true },
-  { id: "cu-2", username: "customer2", password: "customer123", name: "فاطمة الحسن",  role: "customer", linkedEntityId: "u-2", isActive: true },
+  { id: "cu-1", username: "customer1", password: "customer123", name: "أحمد محمد علي", role: "customer", linkedEntityId: SEED_CUSTOMER_1_ID, isActive: true },
+  { id: "cu-2", username: "customer2", password: "customer123", name: "فاطمة الحسن",  role: "customer", linkedEntityId: SEED_CUSTOMER_2_ID, isActive: true },
 ];
 
 // ─── Nurse login accounts ───────────────────────────────────────────────────
@@ -1083,7 +1094,7 @@ export const MOCK_CONTENT_PAGES: ContentPage[] = [
 // admin UI shows what filled-in ratings look like.
 export const MOCK_ORDER_RATINGS: OrderRating[] = [
   {
-    id: "rt-1", orderId: "ord-1", userId: "u-1",
+    id: "rt-1", orderId: "ord-1", userId: SEED_CUSTOMER_1_ID,
     nurseId: "nur-1", labId: "lab-1",
     nurseRating: 5, labRating: 4, overallRating: 5,
     comment: "ممرض ودود، النتائج وصلت بسرعة.",

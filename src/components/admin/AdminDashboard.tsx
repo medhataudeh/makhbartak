@@ -1,5 +1,5 @@
 "use client";
-import { useState, useMemo } from "react";
+import { useEffect, useState, useMemo } from "react";
 import {
   LayoutGrid, ClipboardList, FlaskConical, Package as PackageIcon, Tag, Users,
   Building2, Settings, TrendingUp, Clock, CheckCircle, DollarSign, FileText,
@@ -10,7 +10,7 @@ import {
 import {
   MOCK_ORDERS, ADMIN_STATS, MOCK_TESTS, MOCK_PACKAGES, MOCK_NURSES,
   ORDER_STATUS_LABELS, MOCK_INVOICES,
-  MOCK_ICONS, MOCK_SLIDERS, MOCK_PATIENTS, MOCK_ADDRESSES, MOCK_NOTIFICATIONS,
+  MOCK_ICONS, MOCK_SLIDERS, MOCK_PATIENTS, MOCK_ADDRESSES, MOCK_NOTIFICATIONS, SEED_CUSTOMER_1_ID,
   MOCK_COUPONS, MOCK_NURSE_ROUTES, MOCK_GAMIFICATION,
   NURSE_LEVELS, NURSE_BADGES, GAMIFICATION_CONFIG, canAccess,
 } from "@/lib/mock-data";
@@ -34,7 +34,7 @@ import { useLibraryInstructions } from "@/lib/instruction-library";
 import { useLibraryTools } from "@/lib/tool-library";
 import { AdminUserContext } from "@/components/admin/AdminContext";
 import { useCurrentAdmin } from "@/components/admin/AdminContext";
-import { useOrders, createOrder } from "@/lib/store";
+import { useOrders, createOrder, hydrateOrdersForAdmin } from "@/lib/store";
 import { generateOrderNumber, dedupeInstructions } from "@/lib/order-utils";
 import { validateCoupon, COMMON_INSTRUCTIONS } from "@/lib/mock-data";
 import { MOCK_LABS } from "@/lib/mock-data";
@@ -503,6 +503,9 @@ function OrdersAdmin({ nurses, user }: { orders: Order[]; setOrders: React.Dispa
   // Read from the live store so quick-actions in the Control Center reflect
   // back into this list immediately (and into the customer + nurse views).
   const orders = useOrders();
+
+  // Phase 1: pull persisted orders from Supabase on mount when the flag is on.
+  useEffect(() => { void hydrateOrdersForAdmin(); }, []);
 
   // Combinable filters — all persistent within the session via component state.
   const [statusFilter, setStatusFilter] = useState<string>("all");
@@ -2648,7 +2651,7 @@ function NewOrderDrawer({ user, nurses, onCancel, onCreated }: {
     return Array.from(set.values());
   }, []);
 
-  const [userId, setUserId] = useState<string>(customerList[0]?.userId ?? "u-1");
+  const [userId, setUserId] = useState<string>(customerList[0]?.userId ?? SEED_CUSTOMER_1_ID);
   const userPatients  = MOCK_PATIENTS.filter((p) => p.userId === userId);
   const userAddresses = MOCK_ADDRESSES.filter((a) => a.userId === userId);
 

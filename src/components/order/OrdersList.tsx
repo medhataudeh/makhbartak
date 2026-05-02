@@ -1,8 +1,9 @@
 "use client";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { ChevronLeft, Clock, MapPin, FlaskConical, AlertTriangle, Bell } from "lucide-react";
-import { useOrders } from "@/lib/store";
+import { hydrateOrdersForCustomer, useOrders } from "@/lib/store";
+import { useSession } from "@/lib/auth";
 import { formatDate, formatPrice } from "@/lib/utils";
 import type { Order } from "@/lib/types";
 import { CustomerStatusBadge } from "@/components/ui/CustomerStatusBadge";
@@ -17,8 +18,16 @@ interface OrdersListProps {
 
 export function OrdersList({ onOpenNotifications, unreadNotifications = 0 }: OrdersListProps = {}) {
   const orders = useOrders();
+  const session = useSession();
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const selectedOrder = orders.find((o) => o.id === selectedId) ?? null;
+
+  // Phase 1: pull persisted orders for this customer when the tab opens.
+  // No-op in mock-only mode (USE_SUPABASE=false).
+  useEffect(() => {
+    if (session?.role !== "customer") return;
+    void hydrateOrdersForCustomer(session.linkedEntityId);
+  }, [session?.role, session?.linkedEntityId]);
 
   return (
     <>

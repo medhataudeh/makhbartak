@@ -55,6 +55,7 @@ export default function App() {
 
 function CustomerApp({ userId }: { userId: string }) {
   const toast = useToast();
+  const session = useSession();
   const [activeTab, setActiveTab] = useState<NavTab>("home");
   const [view, setView] = useState<AppView>("home");
   const [booking, setBooking] = useState<BookingState>({});
@@ -80,6 +81,7 @@ function CustomerApp({ userId }: { userId: string }) {
     createOrder({
       idempotencyKey: snapshot.idempotencyKey,
       userId,
+      session: session ?? undefined,
       type: snapshot.type,
       packageSnapshot: snapshot.packageSnapshot,
       packageNameAr: snapshot.packageNameAr,

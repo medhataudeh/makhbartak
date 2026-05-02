@@ -308,7 +308,8 @@ the database.
 | Domain | Today | Where |
 |---|---|---|
 | Auth / session | mock + localStorage | `lib/auth.ts` (key: `makhbartak.session.v1`) |
-| Orders + items + status | in-memory store + fire-and-forget RPC | `lib/store.ts` (`_orders`); RPCs `place_order`, `set_order_status` ignored on response |
+| **Order create + customer/admin order list + detail read** | **Phase 1 wired: Supabase via `/api/orders` (server route + service role)** | `app/api/orders/*`, `lib/orders-api.ts`, `lib/supabase/server-admin.ts`, RPC `place_order_admin` (migration 010); in-memory mirror in `lib/store.ts` for snappy UX; hydrate on mount in `OrdersList` + `OrdersAdmin` |
+| Order status mutations (admin/nurse/lab actions) | mock + fire-and-forget RPC (Phase 2) | `lib/store.ts` setOrderStatus / assignNurse / assignLab / verifyPatient / addNote / openLabIssue / cancelOrder / rescheduleOrder / confirmResultsReady / forceCompleteOrder |
 | Lab result PDFs | in-memory `OrderResultFile` rows + optional Supabase Storage upload | `lib/store.ts`, `lib/supabase/storage.ts` |
 | Nurse visit state | localStorage per-day | `makhbartak.nurse.prep:<date>`, `makhbartak.nurse.started:<date>` |
 | Patients / addresses / payment pref | localStorage primary, Supabase secondary | `lib/profile.ts`, `lib/payment-pref.ts` |
@@ -317,16 +318,29 @@ the database.
 | Content pages | localStorage primary | `lib/content-pages.ts` |
 
 Rules until full Supabase wiring is approved:
-- Treat in-memory writes as authoritative. Do not introduce code paths
-  that need a Supabase round-trip to render correctly.
+- Treat in-memory writes as authoritative for non-Phase-1 flows. Do not
+  introduce code paths that need a Supabase round-trip to render correctly.
 - Do not widen RLS policies, do not add anon-write policies, do not seed
   insecure auth bypasses.
-- Do not modify `supabase/migrations/*` to chase frontend changes —
-  schema reconciliation (e.g. `OrderStatus` enum, `booking_horizon_days`
-  column) is a deferred task tracked in this file.
+- Do not modify earlier `supabase/migrations/*` files. New work goes in a
+  new migration with a higher number. Phase 1 added `010_*`.
 - When adding a setting or field that the frontend cares about, add it
   to `SystemSettings` (mock) only; the matching SQL column will be
   added in the migration pass.
+
+### Phase 1 server-route rules
+- The service-role key (`SUPABASE_SERVICE_ROLE_KEY`) is **server-only**.
+  Never reference it from any `"use client"` module or any file
+  importable from one. `lib/supabase/server-admin.ts` enforces this with
+  `import "server-only"`.
+- `/api/orders` routes are the *only* callers of the service-role client
+  in Phase 1. The browser never invokes `place_order_admin` or any other
+  service-role RPC directly.
+- The mock session passed in the POST body is trusted at the same level
+  as today's `localStorage` — there is no stronger boundary while mock
+  auth is in charge. When real Supabase Auth lands, the route handlers
+  shrink to passthroughs (or are removed) and writes happen browser-side
+  via `place_order` against an authenticated session.
 
 ## Mock data rules
 

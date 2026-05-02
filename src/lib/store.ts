@@ -20,15 +20,14 @@ import {
 } from "./mock-data";
 import { USE_SUPABASE, supabaseEnvReady } from "./supabase/flags";
 import { getSupabaseBrowser } from "./supabase/client";
-import { getCurrentCustomerId } from "./supabase/auth-helpers";
-import { fetchOrdersForCustomer } from "./supabase/queries/orders";
 import {
-  placeOrderRemote,
   setOrderStatusRemote,
   assignNurseRemote,
   uploadResultFileRemote,
   archiveResultFileRemote,
 } from "./supabase/queries/orders-mutations";
+import { apiCreateOrder, apiListOrdersForAdmin, apiListOrdersForCustomer } from "./orders-api";
+import type { AuthSession } from "./types";
 
 // ─── Tiny pub-sub ────────────────────────────────────────────────────────────
 // Single in-memory store so that admin / customer / nurse / lab views inside
@@ -92,33 +91,9 @@ function seedEventsFor(order: Order): OrderEvent[] {
 }
 
 // ─── Supabase hydrate (read-only; flag-gated; no-op until auth lands) ───────
-// Customer-scoped: replaces _orders with the signed-in customer's rows from
-// Supabase. Writes still flow through the local mutators below — switching
-// writes to Supabase comes once the RPC layer is in place.
-let _remoteOrdersHydrated = false;
-async function hydrateOrdersFromSupabase() {
-  if (_remoteOrdersHydrated || typeof window === "undefined") return;
-  _remoteOrdersHydrated = true;
-  if (!USE_SUPABASE || !supabaseEnvReady()) return;
-  const sb = getSupabaseBrowser();
-  if (!sb) return;
-  try {
-    const customerId = await getCurrentCustomerId(sb);
-    if (!customerId) return;
-    const remote = await fetchOrdersForCustomer(sb, customerId);
-    if (remote) {
-      _orders = remote;
-      emit();
-    }
-  } catch (err) {
-    console.warn("[supabase] orders hydrate failed; using local", err);
-  }
-}
-// Kick off once the module loads in the browser. The pre-Supabase paint uses
-// MOCK_ORDERS so the UI never goes blank.
-if (typeof window !== "undefined") {
-  hydrateOrdersFromSupabase();
-}
+// Phase 1 superseded the legacy module-load hydrate (it relied on the anon
+// browser client, which mock auth can't authenticate). Hydration now runs
+// per-view via hydrateOrdersForCustomer / hydrateOrdersForAdmin below.
 
 // ─── Snapshot getters ────────────────────────────────────────────────────────
 export function getOrders() { return _orders; }
@@ -127,6 +102,34 @@ export function getCustomerNotifications() { return _notifications; }
 export function getNurseNotifications() { return _nurseNotifications; }
 export function getLabIssuesFor(orderId: string) {
   return _labIssues.filter((i) => i.orderId === orderId);
+}
+
+// ─── Phase 1 hydration: pull orders from /api/orders and merge into _orders.
+// Server rows win on id collision; local-only mock rows (no Supabase id) are
+// preserved alongside. Safe to call repeatedly; callers should debounce on
+// mount.
+export async function hydrateOrdersForCustomer(customerId: string): Promise<void> {
+  if (!USE_SUPABASE) return;
+  const remote = await apiListOrdersForCustomer(customerId);
+  if (!remote) return;
+  mergeRemoteOrders(remote);
+}
+
+export async function hydrateOrdersForAdmin(): Promise<void> {
+  if (!USE_SUPABASE) return;
+  const remote = await apiListOrdersForAdmin();
+  if (!remote) return;
+  mergeRemoteOrders(remote);
+}
+
+function mergeRemoteOrders(remote: Order[]) {
+  if (remote.length === 0) return;
+  const byId = new Map(_orders.map((o) => [o.id, o]));
+  for (const r of remote) byId.set(r.id, { ...byId.get(r.id), ...r });
+  _orders = Array.from(byId.values()).sort((a, b) =>
+    new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
+  );
+  emit();
 }
 
 // ─── Hooks ───────────────────────────────────────────────────────────────────
@@ -191,6 +194,9 @@ interface CreateOrderInput {
   publicNumber: string;
   /** Cash + allowCashOrders → status starts at confirmed; otherwise created (= awaiting payment to the customer). */
   initialStatus: OrderStatus;
+  /** Phase 1: required to write to Supabase via /api/orders. When omitted or
+   *  not a customer session, the order stays local-only (mock mode). */
+  session?: AuthSession;
 }
 
 export function createOrder(input: CreateOrderInput): Order {
@@ -258,20 +264,50 @@ export function createOrder(input: CreateOrderInput): Order {
   ];
 
   emit();
-  // Background remote write — flag-gated, auth-gated. Failures are warned;
-  // local order remains so the customer's flow never blocks on the network.
-  void writeOrderRemote(order, input.idempotencyKey);
+  // Background remote write — Phase 1 routes through /api/orders (server-side
+  // service-role). Falls back to local-only when flag off or when the session
+  // isn't a customer (admin can't place orders in Phase 1).
+  void writeOrderRemote(order, input);
   return order;
 }
 
-async function writeOrderRemote(order: Order, idempotencyKey: string): Promise<void> {
-  if (!USE_SUPABASE || !supabaseEnvReady()) return;
-  const sb = getSupabaseBrowser();
-  if (!sb) return;
-  const customerId = await getCurrentCustomerId(sb);
-  if (!customerId) return;
-  const res = await placeOrderRemote(sb, order, idempotencyKey);
-  if (!res.ok) console.warn("[supabase] place_order failed", res.error);
+async function writeOrderRemote(order: Order, input: CreateOrderInput): Promise<void> {
+  if (!USE_SUPABASE) return;
+  if (!input.session || input.session.role !== "customer") return;
+  const result = await apiCreateOrder(input.session, input.idempotencyKey, {
+    publicNumber: order.publicNumber!,
+    type: order.type,
+    packageId: order.packageSnapshot?.packageId,
+    packageSnapshot: order.packageSnapshot,
+    items: order.items.map((i) => ({
+      testId: i.testId, nameAr: i.nameAr, nameEn: i.nameEn, priceSnapshot: i.priceSnapshot,
+    })),
+    subtotal: order.subtotal,
+    couponCode: order.couponCode,
+    couponDiscount: order.couponDiscount,
+    total: order.total,
+    shift: order.shift,
+    visitDate: order.visitDate,
+    shiftStartTime: order.shiftStartTime,
+    shiftEndTime: order.shiftEndTime,
+    patientId: order.patient.id,
+    addressId: order.address.id,
+    paymentMethod: order.paymentMethod,
+    paymentStatus: order.paymentStatus,
+    initialStatus: order.status,
+  });
+  if ("error" in result) {
+    console.warn("[api/orders] create failed; keeping local order", result.error);
+    return;
+  }
+  // Swap the in-memory placeholder id for the real Supabase UUID so subsequent
+  // reads (refresh → hydrate) align without duplicates. The `created` server
+  // payload also carries any server-defaulted fields (timestamps, etc.).
+  if (result.order && result.orderId !== order.id) {
+    _orders = _orders.map((o) => (o.id === order.id ? { ...result.order!, instructions: order.instructions } : o));
+    _idempotency.set(input.idempotencyKey, result.order.id);
+    emit();
+  }
 }
 
 // Generic flag/auth-gated remote-write wrapper used by lifecycle mutators.

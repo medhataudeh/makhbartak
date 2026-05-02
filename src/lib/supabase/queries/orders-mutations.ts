@@ -9,8 +9,10 @@ export interface PlaceOrderResult {
 }
 
 /**
- * Atomic order placement via the public.place_order RPC.
- * Maps the in-memory Order shape to the jsonb payload the function expects.
+ * @deprecated Phase 1 wires order creation through `/api/orders`
+ * (server-side service role + `place_order_admin` RPC). Kept here so that
+ * Phase 2 — when real Supabase Auth is in place — can switch back to the
+ * direct browser-side `place_order` RPC by re-importing this from store.ts.
  */
 export async function placeOrderRemote(
   sb: SupabaseClient,

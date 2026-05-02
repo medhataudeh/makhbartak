@@ -12,6 +12,7 @@ import {
   usePatients, upsertPatient, deletePatient,
   useAddresses, upsertAddress, deleteAddress,
 } from "@/lib/profile";
+import { SEED_CUSTOMER_1_ID } from "@/lib/mock-data";
 import { Button } from "@/components/ui/Button";
 import { BackButton } from "@/components/ui/BackButton";
 import { CmsPage } from "@/components/account/CmsPage";
@@ -219,7 +220,7 @@ function AddressForm({ initial, onCancel, onSubmit }: {
   initial?: Address; onCancel: () => void; onSubmit: (a: Address) => void;
 }) {
   const [d, setD] = useState<Address>(() => initial ?? {
-    id: `addr-${Date.now()}`, userId: "u-1", label: "", description: "",
+    id: `addr-${Date.now()}`, userId: SEED_CUSTOMER_1_ID, label: "", description: "",
     lat: 33.5138, lng: 36.2765, city: "دمشق", isDefault: false,
   });
   const set = <K extends keyof Address>(k: K, v: Address[K]) => setD((x) => ({ ...x, [k]: v }));
@@ -311,7 +312,7 @@ function PatientForm({ initial, onCancel, onSubmit }: {
   initial?: Patient; onCancel: () => void; onSubmit: (p: Patient) => void;
 }) {
   const [d, setD] = useState<Patient>(() => initial ?? {
-    id: `p-${Date.now()}`, userId: "u-1", name: "", isDefault: false,
+    id: `p-${Date.now()}`, userId: SEED_CUSTOMER_1_ID, name: "", isDefault: false,
   });
   return (
     <div role="dialog" aria-modal="true" className="fixed inset-0 z-50 bg-black/50 flex items-end md:items-center justify-center p-4">

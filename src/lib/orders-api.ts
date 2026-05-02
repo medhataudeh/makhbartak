@@ -1,0 +1,64 @@
+"use client";
+import type { AuthSession, Order, OrderStatus, PaymentMethod, Shift } from "@/lib/types";
+
+// Thin client-side fetch wrappers around /api/orders. They translate between
+// the TS Order shape and the JSON the route handlers expect.
+
+export interface ApiCreateOrderInput {
+  publicNumber: string;
+  type: "package" | "custom" | "prescription";
+  packageId?: string;
+  packageSnapshot?: unknown;
+  items: Array<{ testId: string; nameAr: string; nameEn?: string; priceSnapshot: number }>;
+  subtotal: number;
+  couponCode?: string;
+  couponDiscount: number;
+  total: number;
+  shift: Shift;
+  visitDate: string;
+  shiftStartTime?: string;
+  shiftEndTime?: string;
+  patientId: string;
+  addressId: string;
+  paymentMethod: PaymentMethod;
+  paymentStatus: "pending" | "paid" | "failed";
+  initialStatus: OrderStatus;
+}
+
+export async function apiCreateOrder(
+  session: AuthSession,
+  idempotencyKey: string,
+  order: ApiCreateOrderInput,
+): Promise<{ order: Order | null; orderId: string } | { error: string }> {
+  const res = await fetch("/api/orders", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ session, idempotencyKey, order }),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    return { error: body.error ?? `HTTP ${res.status}` };
+  }
+  return res.json();
+}
+
+export async function apiListOrdersForCustomer(customerId: string): Promise<Order[] | null> {
+  const res = await fetch(`/api/orders?role=customer&customerId=${encodeURIComponent(customerId)}`, { cache: "no-store" });
+  if (!res.ok) return null;
+  const body = await res.json().catch(() => null);
+  return (body?.orders ?? null) as Order[] | null;
+}
+
+export async function apiListOrdersForAdmin(): Promise<Order[] | null> {
+  const res = await fetch("/api/orders?role=admin", { cache: "no-store" });
+  if (!res.ok) return null;
+  const body = await res.json().catch(() => null);
+  return (body?.orders ?? null) as Order[] | null;
+}
+
+export async function apiGetOrder(id: string): Promise<Order | null> {
+  const res = await fetch(`/api/orders/${encodeURIComponent(id)}`, { cache: "no-store" });
+  if (!res.ok) return null;
+  const body = await res.json().catch(() => null);
+  return (body?.order ?? null) as Order | null;
+}

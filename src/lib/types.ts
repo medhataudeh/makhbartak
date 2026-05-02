@@ -684,7 +684,7 @@ export interface SliderItem {
 // One row per login account across the four portals. AdminUser, LabUser, etc.
 // are projected into this shape by lib/auth.ts so the four sign-in screens
 // share a single store. linkedEntityId points at the role-specific record:
-//   role "customer" → User.id (e.g. "u-1")
+//   role "customer" → customers.id (UUID — see SEED_CUSTOMER_*_ID in mock-data)
 //   role "nurse"    → Nurse.id (e.g. "nur-1")
 //   role "lab"      → LabUser.id (lab portal also reads labId via LabUser)
 //   role "admin"    → AdminUser.id (e.g. "ad-1")

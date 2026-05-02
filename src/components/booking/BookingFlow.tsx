@@ -2,7 +2,7 @@
 import { useState } from "react";
 import { motion } from "framer-motion";
 import { MapPin, User, Clock, ChevronLeft, Plus, Calendar as CalendarIcon } from "lucide-react";
-import { getShiftConfigs } from "@/lib/mock-data";
+import { getShiftConfigs, SEED_CUSTOMER_1_ID } from "@/lib/mock-data";
 import { usePatients, useAddresses, upsertPatient, upsertAddress } from "@/lib/profile";
 import { useToast } from "@/components/ui/Toast";
 import { useSystemSettings } from "@/lib/system-settings";
@@ -353,7 +353,7 @@ function AddressInlineForm({ onCancel, onSubmit }: { onCancel: () => void; onSub
           disabled={!label.trim() || !description.trim()}
           onClick={() => onSubmit({
             id: `addr-${Date.now()}`,
-            userId: "u-1",
+            userId: SEED_CUSTOMER_1_ID,
             label: label.trim(),
             description: description.trim(),
             lat: 33.5138, lng: 36.2765,
@@ -388,7 +388,7 @@ function PatientInlineForm({ onCancel, onSubmit }: { onCancel: () => void; onSub
           disabled={!name.trim()}
           onClick={() => onSubmit({
             id: `p-${Date.now()}`,
-            userId: "u-1",
+            userId: SEED_CUSTOMER_1_ID,
             name: name.trim(),
             nationalId: nationalId.trim() || undefined,
             isDefault: makeDefault,
