@@ -13,7 +13,7 @@ import {
   buildPrepChecklist, FAILED_COLLECTION_REASONS, NURSE_BADGES,
 } from "@/lib/mock-data";
 import type { Nurse, NurseRouteStop, NurseGamification, Notification, Order } from "@/lib/types";
-import { setOrderStatus, verifyPatient, useOrders } from "@/lib/store";
+import { setOrderStatus, verifyPatient, useOrders, hydrateOrdersForNurse } from "@/lib/store";
 import { useEditableNurse, updateNurseProfile } from "@/lib/nurse-profile";
 import { useSystemSettings } from "@/lib/system-settings";
 import { isOrderActionable, instructionsForOrder, isStructuredInstructions } from "@/lib/order-utils";
@@ -102,6 +102,10 @@ function NurseAppInner({ nurseId, onLogout }: { nurseId: string; onLogout: () =>
   const [notifs, setNotifs] = useState<Notification[]>(MOCK_NURSE_NOTIFICATIONS);
   const unread = notifs.filter((n) => !n.isRead).length;
 
+  // Phase 2: pull this nurse's orders from Supabase on mount when the flag
+  // is on. No-op in mock-only mode.
+  useEffect(() => { void hydrateOrdersForNurse(nurse.id); }, [nurse.id]);
+
   // Visit detail flow — hydrate `stops` against the live order store so that
   // `patientVerification` and the latest order status update reflect here.
   const liveOrders = useOrders();
@@ -131,15 +135,19 @@ function NurseAppInner({ nurseId, onLogout }: { nurseId: string; onLogout: () =>
     setActiveStop(null);
   };
 
-  const completeStop = (orderId: string) => {
-    setOrderStatus(orderId, "sample_collected", ref);
+  const completeStop = async (orderId: string) => {
+    const r = await setOrderStatus(orderId, "sample_collected", ref);
+    if (!r.ok) return r;
     updateStopStatus(orderId, "completed");
+    return r;
   };
 
-  const failStop = (orderId: string, reasonValue: string) => {
-    const reason = FAILED_COLLECTION_REASONS.find((r) => r.value === reasonValue)?.labelAr ?? reasonValue;
-    setOrderStatus(orderId, "failed_to_collect", ref, reason);
+  const failStop = async (orderId: string, reasonValue: string) => {
+    const reason = FAILED_COLLECTION_REASONS.find((rr) => rr.value === reasonValue)?.labelAr ?? reasonValue;
+    const r = await setOrderStatus(orderId, "failed_to_collect", ref, reason);
+    if (!r.ok) return r;
     updateStopStatus(orderId, "failed");
+    return r;
   };
 
   // ─── Morning prep checklist (aggregated from today's orders) ─────────────
@@ -971,12 +979,19 @@ function NurseVisitDetail({
   const [pendingAction, setPendingAction] = useState<string | null>(null);
   const status = o.status;
 
-  const runAction = async (key: string, action: () => void, opts?: { successToast?: string }) => {
+  const runAction = async (
+    key: string,
+    action: () => unknown,
+    opts?: { successToast?: string },
+  ) => {
     if (pendingAction) return;
     setPendingAction(key);
     try {
-      await new Promise((r) => setTimeout(r, 250));
-      action();
+      const result = await Promise.resolve(action());
+      if (result && typeof result === "object" && "ok" in result && (result as { ok: boolean }).ok === false) {
+        toast.error("حدث خطأ، حاول مرة أخرى");
+        return;
+      }
       toast.success(opts?.successToast ?? "تم تحديث حالة الزيارة بنجاح");
     } catch {
       toast.error("حدث خطأ، حاول مرة أخرى");

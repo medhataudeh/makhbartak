@@ -55,6 +55,31 @@ export async function apiListOrdersForAdmin(): Promise<Order[] | null> {
   return (body?.orders ?? null) as Order[] | null;
 }
 
+export async function apiListOrdersForNurse(nurseId: string): Promise<Order[] | null> {
+  const res = await fetch(`/api/orders?role=nurse&nurseId=${encodeURIComponent(nurseId)}`, { cache: "no-store" });
+  if (!res.ok) return null;
+  const body = await res.json().catch(() => null);
+  return (body?.orders ?? null) as Order[] | null;
+}
+
+export async function apiSetOrderStatus(
+  session: import("@/lib/types").AuthSession,
+  orderId: string,
+  status: import("@/lib/types").OrderStatus,
+  opts?: { note?: string; reason?: string },
+): Promise<{ order: Order } | { error: string }> {
+  const res = await fetch(`/api/orders/${encodeURIComponent(orderId)}/status`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ session, status, note: opts?.note, reason: opts?.reason }),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    return { error: body.error ?? `HTTP ${res.status}` };
+  }
+  return res.json();
+}
+
 export async function apiGetOrder(id: string): Promise<Order | null> {
   const res = await fetch(`/api/orders/${encodeURIComponent(id)}`, { cache: "no-store" });
   if (!res.ok) return null;

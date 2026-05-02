@@ -1,6 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabase/server-admin";
-import { fetchOrdersForAdmin, fetchOrdersForCustomer } from "@/lib/supabase/queries/orders";
+import { fetchOrdersForAdmin, fetchOrdersForCustomer, fetchOrdersForNurse } from "@/lib/supabase/queries/orders";
 import { tsStatusToSql } from "@/lib/supabase/order-status";
 import { isUuid } from "@/lib/supabase/uuid";
 import type { AuthSession, Order, OrderStatus, PaymentMethod, Shift } from "@/lib/types";
@@ -135,6 +135,7 @@ export async function GET(req: NextRequest) {
   const url = new URL(req.url);
   const role = url.searchParams.get("role");
   const customerId = url.searchParams.get("customerId");
+  const nurseId = url.searchParams.get("nurseId");
   const sb = getSupabaseAdmin();
 
   if (role === "admin") {
@@ -148,5 +149,12 @@ export async function GET(req: NextRequest) {
     const orders = await fetchOrdersForCustomer(sb, customerId);
     return NextResponse.json({ orders: orders ?? [] });
   }
-  return NextResponse.json({ error: "role must be 'customer' or 'admin'" }, { status: 400 });
+  if (role === "nurse") {
+    if (!nurseId || !isUuid(nurseId)) {
+      return NextResponse.json({ error: "nurseId uuid required for nurse role" }, { status: 400 });
+    }
+    const orders = await fetchOrdersForNurse(sb, nurseId);
+    return NextResponse.json({ orders: orders ?? [] });
+  }
+  return NextResponse.json({ error: "role must be 'customer', 'admin', or 'nurse'" }, { status: 400 });
 }

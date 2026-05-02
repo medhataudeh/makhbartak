@@ -67,6 +67,12 @@ export interface MutationResult {
   id?: string;
 }
 
+/**
+ * @deprecated Phase 2 wires status updates through `/api/orders/[id]/status`
+ * (server-side service role + `set_order_status_admin` RPC). Kept here so
+ * Phase 3+ (real Supabase Auth) can switch back to the direct
+ * `set_order_status` RPC by re-importing this from store.ts.
+ */
 export async function setOrderStatusRemote(
   sb: SupabaseClient,
   orderId: string,

@@ -21,12 +21,12 @@ import {
 import { USE_SUPABASE, supabaseEnvReady } from "./supabase/flags";
 import { getSupabaseBrowser } from "./supabase/client";
 import {
-  setOrderStatusRemote,
+  // setOrderStatusRemote retired in Phase 2 — see persistOrderStatusViaApi.
   assignNurseRemote,
   uploadResultFileRemote,
   archiveResultFileRemote,
 } from "./supabase/queries/orders-mutations";
-import { apiCreateOrder, apiListOrdersForAdmin, apiListOrdersForCustomer } from "./orders-api";
+import { apiCreateOrder, apiListOrdersForAdmin, apiListOrdersForCustomer, apiListOrdersForNurse, apiSetOrderStatus } from "./orders-api";
 import type { AuthSession } from "./types";
 
 // ─── Tiny pub-sub ────────────────────────────────────────────────────────────
@@ -136,6 +136,13 @@ export async function hydrateOrdersForCustomer(customerId: string): Promise<void
 export async function hydrateOrdersForAdmin(): Promise<void> {
   if (!USE_SUPABASE) return;
   const remote = await apiListOrdersForAdmin();
+  if (!remote) return;
+  mergeRemoteOrders(remote);
+}
+
+export async function hydrateOrdersForNurse(nurseId: string): Promise<void> {
+  if (!USE_SUPABASE) return;
+  const remote = await apiListOrdersForNurse(nurseId);
   if (!remote) return;
   mergeRemoteOrders(remote);
 }
@@ -380,11 +387,14 @@ const STATUS_TO_EVENT: Partial<Record<OrderStatus, OrderEventType>> = {
   cancelled: "cancelled",
 };
 
-export function setOrderStatus(orderId: string, status: OrderStatus, ref: ActorRef, note?: string) {
+export function setOrderStatus(orderId: string, status: OrderStatus, ref: ActorRef, note?: string): Promise<{ ok: boolean; error?: string }> {
   mutateOrder(orderId, (o) => ({ ...o, status, updatedAt: new Date().toISOString() }));
   const evt = STATUS_TO_EVENT[status];
   if (evt) appendEvent(orderId, evt, ref, note);
-  void writeRemote(async (sb) => setOrderStatusRemote(sb, orderId, status, note), "set_order_status");
+  // Phase 2: persist via /api/orders/[id]/status when flag on. The legacy
+  // setOrderStatusRemote path is kept for the future authenticated-browser
+  // flow but is no longer called.
+  const remote = persistOrderStatusViaApi(orderId, status, note);
   // Customer notification mirror — only for milestones the user cares about.
   const notifMap: Partial<Record<OrderStatus, { type: NotificationType; titleAr: string; bodyAr: string }>> = {
     confirmed:        { type: "order_confirmed", titleAr: "تم تأكيد طلبك",    bodyAr: "تم تأكيد طلبك. سيصلك الممرض في الموعد." },
@@ -413,6 +423,37 @@ export function setOrderStatus(orderId: string, status: OrderStatus, ref: ActorR
       emit();
     }
   }
+  return remote;
+}
+
+async function persistOrderStatusViaApi(
+  orderId: string,
+  status: OrderStatus,
+  note?: string,
+): Promise<{ ok: boolean; error?: string }> {
+  if (!USE_SUPABASE) return { ok: true };
+  // Read the current mock session at write time so existing call sites
+  // don't have to thread it through. Returns local-only when the session is
+  // not a writer role (Phase 2 only allows nurse + admin).
+  // Imported lazily-by-side-effect — auth lives in a "use client" file but
+  // store.ts is also client-side, so direct import is fine.
+  const session = (await import("./auth")).getStoredSession();
+  if (!session || (session.role !== "nurse" && session.role !== "admin")) {
+    return { ok: true };
+  }
+  const result = await apiSetOrderStatus(session, orderId, status, { note });
+  if ("error" in result) {
+    console.warn("[api/orders/status] failed; keeping local update", result.error);
+    return { ok: false, error: result.error };
+  }
+  // Merge the canonical server row so updated_at, history-derived fields,
+  // and any future server-only side-effects win over the optimistic patch.
+  if (result.order) {
+    const remote = result.order;
+    _orders = _orders.map((o) => (o.id === remote.id ? { ...o, ...remote } : o));
+    emit();
+  }
+  return { ok: true };
 }
 
 export function markNotificationRead(id: string) {

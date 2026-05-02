@@ -309,7 +309,8 @@ the database.
 |---|---|---|
 | Auth / session | mock + localStorage | `lib/auth.ts` (key: `makhbartak.session.v1`) |
 | **Order create + customer/admin order list + detail read** | **Phase 1 wired: Supabase via `/api/orders` (server route + service role)** | `app/api/orders/*`, `lib/orders-api.ts`, `lib/supabase/server-admin.ts`, RPC `place_order_admin` (migration 010); in-memory mirror in `lib/store.ts` for snappy UX; hydrate on mount in `OrdersList` + `OrdersAdmin` |
-| Order status mutations (admin/nurse/lab actions) | mock + fire-and-forget RPC (Phase 2) | `lib/store.ts` setOrderStatus / assignNurse / assignLab / verifyPatient / addNote / openLabIssue / cancelOrder / rescheduleOrder / confirmResultsReady / forceCompleteOrder |
+| **Order status mutations (nurse + admin)** | **Phase 2 wired: `/api/orders/[id]/status` (server route + service role) + `set_order_status_admin` RPC (migration 012)** | nurse buttons in `components/nurse/NurseApp.tsx`, admin in `OrderControlCenter.tsx`; both go through `lib/store.ts` `setOrderStatus` which now awaits the API and merges the canonical row |
+| Order status mutations (lab) + assignNurse / assignLab / verifyPatient / addNote / openLabIssue / cancelOrder / rescheduleOrder / confirmResultsReady / forceCompleteOrder | mock-only | `lib/store.ts` |
 | Lab result PDFs | in-memory `OrderResultFile` rows + optional Supabase Storage upload | `lib/store.ts`, `lib/supabase/storage.ts` |
 | Nurse visit state | localStorage per-day | `makhbartak.nurse.prep:<date>`, `makhbartak.nurse.started:<date>` |
 | Patients / addresses / payment pref | localStorage primary, Supabase secondary | `lib/profile.ts`, `lib/payment-pref.ts` |

@@ -56,6 +56,25 @@ export async function fetchOrdersForAdmin(sb: SupabaseClient): Promise<Order[] |
   return (data as unknown as RawOrderRow[]).map(mapRowToOrder);
 }
 
+// Nurse variant — only orders assigned to the given nurse_id.
+export async function fetchOrdersForNurse(
+  sb: SupabaseClient,
+  nurseId: string,
+): Promise<Order[] | null> {
+  if (!isUuid(nurseId)) {
+    console.warn("[supabase] fetchOrdersForNurse skipped: invalid uuid", nurseId);
+    return null;
+  }
+  const { data, error } = await sb
+    .from("orders")
+    .select(ORDER_SELECT)
+    .eq("nurse_id", nurseId)
+    .is("deleted_at", null)
+    .order("created_at", { ascending: false });
+  if (error || !data) return null;
+  return (data as unknown as RawOrderRow[]).map(mapRowToOrder);
+}
+
 export async function fetchOrderById(sb: SupabaseClient, id: string): Promise<Order | null> {
   if (!isUuid(id)) return null;
   const { data, error } = await sb
