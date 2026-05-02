@@ -1,0 +1,27 @@
+{
+  "name": "مختبرك – تحاليل طبية في بيتك",
+  "short_name": "مختبرك",
+  "description": "اطلب تحاليلك المخبرية من راحة بيتك",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#ECFEFF",
+  "theme_color": "#0891B2",
+  "orientation": "portrait",
+  "lang": "ar",
+  "dir": "rtl",
+  "categories": ["medical", "health"],
+  "icons": [],
+  "screenshots": [],
+  "shortcuts": [
+    {
+      "name": "طلب جديد",
+      "url": "/?action=new-order",
+      "description": "ابدأ طلباً جديداً"
+    },
+    {
+      "name": "طلباتي",
+      "url": "/?tab=orders",
+      "description": "عرض طلباتي"
+    }
+  ]
+}
