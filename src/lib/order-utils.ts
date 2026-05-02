@@ -1,6 +1,7 @@
 "use client";
 import type { Order, Instruction, SystemSettings, TestInstruction, Test } from "./types";
-import { MOCK_TESTS, COMMON_INSTRUCTIONS } from "./mock-data";
+import { COMMON_INSTRUCTIONS } from "./mock-data";
+import { getTests } from "./catalog";
 
 const COUNTER_KEY = "makhbartak.order-number.counter.v1";
 const NUMBER_PREFIX = "HL";
@@ -110,7 +111,7 @@ export function dedupeInstructions(
 // (or the order.instructions snapshot).
 export function instructionsForOrder(
   order: Order,
-  resolveTest: (id: string) => Test | undefined = (id) => MOCK_TESTS.find((t) => t.id === id),
+  resolveTest: (id: string) => Test | undefined = (id) => getTests().find((t) => t.id === id),
 ): TestInstruction[] | Instruction[] {
   const collected: TestInstruction[] = [];
   for (const item of order.items) {

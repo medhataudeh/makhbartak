@@ -2,6 +2,14 @@
 import { useSyncExternalStore } from "react";
 import type { Patient, Address } from "./types";
 import { MOCK_PATIENTS, MOCK_ADDRESSES } from "./mock-data";
+import { USE_SUPABASE, supabaseEnvReady } from "./supabase/flags";
+import { getSupabaseBrowser } from "./supabase/client";
+import { getCurrentCustomerId } from "./supabase/auth-helpers";
+import {
+  fetchPatients, fetchAddresses,
+  upsertPatientRemote, deletePatientRemote,
+  upsertAddressRemote, deleteAddressRemote,
+} from "./supabase/queries/profile";
 
 const PATIENTS_KEY  = "makhbartak.profile.patients.v1";
 const ADDRESSES_KEY = "makhbartak.profile.addresses.v1";
@@ -9,6 +17,7 @@ const ADDRESSES_KEY = "makhbartak.profile.addresses.v1";
 let _patients: Patient[]   = [...MOCK_PATIENTS];
 let _addresses: Address[]  = [...MOCK_ADDRESSES];
 let _hydrated = false;
+let _remoteHydrated = false;
 
 const listeners = new Set<() => void>();
 function emit() { listeners.forEach((l) => l()); }
@@ -24,6 +33,29 @@ function hydrate() {
     if (a) _addresses = JSON.parse(a) as Address[];
   } catch {}
   emit();
+  hydrateFromSupabase();
+}
+
+async function hydrateFromSupabase() {
+  if (_remoteHydrated) return;
+  _remoteHydrated = true;
+  if (!USE_SUPABASE || !supabaseEnvReady()) return;
+  const sb = getSupabaseBrowser();
+  if (!sb) return;
+  try {
+    const customerId = await getCurrentCustomerId(sb);
+    if (!customerId) return; // no auth yet — keep local
+    const [pats, addrs] = await Promise.all([
+      fetchPatients(sb, customerId),
+      fetchAddresses(sb, customerId),
+    ]);
+    let changed = false;
+    if (pats) { _patients = pats; changed = true; }
+    if (addrs) { _addresses = addrs; changed = true; }
+    if (changed) emit();
+  } catch (err) {
+    console.warn("[supabase] profile hydrate failed; using local", err);
+  }
 }
 
 function persistPatients() {
@@ -42,7 +74,7 @@ export function usePatients(): Patient[] {
   return useSyncExternalStore(subscribe, getPatients, () => MOCK_PATIENTS);
 }
 export function upsertPatient(p: Patient): void {
-  // Defaulting is exclusive: setting a default unsets others.
+  // Optimistic local update first; emit so UI is snappy.
   let next = getPatients();
   const exists = next.find((x) => x.id === p.id);
   next = exists ? next.map((x) => x.id === p.id ? p : x) : [...next, p];
@@ -50,15 +82,37 @@ export function upsertPatient(p: Patient): void {
   _patients = next;
   persistPatients();
   emit();
+  // Background remote write when flag on + signed in. Errors are warned;
+  // local state stays as the user expects (no surprise rollback).
+  void writePatientRemote(p);
 }
+
+async function writePatientRemote(p: Patient): Promise<void> {
+  if (!USE_SUPABASE || !supabaseEnvReady()) return;
+  const sb = getSupabaseBrowser();
+  if (!sb) return;
+  const customerId = await getCurrentCustomerId(sb);
+  if (!customerId) return;
+  const res = await upsertPatientRemote(sb, customerId, p);
+  if (!res.ok) console.warn("[supabase] upsertPatient failed", res.error);
+}
+
 export function deletePatient(id: string): void {
   _patients = getPatients().filter((p) => p.id !== id);
-  // Promote the first remaining patient to default if none are.
   if (_patients.length && !_patients.some((p) => p.isDefault)) {
     _patients = _patients.map((p, i) => i === 0 ? { ...p, isDefault: true } : p);
   }
   persistPatients();
   emit();
+  void deletePatientRemoteWrap(id);
+}
+
+async function deletePatientRemoteWrap(id: string): Promise<void> {
+  if (!USE_SUPABASE || !supabaseEnvReady()) return;
+  const sb = getSupabaseBrowser();
+  if (!sb) return;
+  const res = await deletePatientRemote(sb, id);
+  if (!res.ok) console.warn("[supabase] deletePatient failed", res.error);
 }
 
 // ─── Addresses ─────────────────────────────────────────────────────────────
@@ -77,7 +131,19 @@ export function upsertAddress(a: Address): void {
   _addresses = next;
   persistAddresses();
   emit();
+  void writeAddressRemote(a);
 }
+
+async function writeAddressRemote(a: Address): Promise<void> {
+  if (!USE_SUPABASE || !supabaseEnvReady()) return;
+  const sb = getSupabaseBrowser();
+  if (!sb) return;
+  const customerId = await getCurrentCustomerId(sb);
+  if (!customerId) return;
+  const res = await upsertAddressRemote(sb, customerId, a);
+  if (!res.ok) console.warn("[supabase] upsertAddress failed", res.error);
+}
+
 export function deleteAddress(id: string): void {
   _addresses = getAddresses().filter((a) => a.id !== id);
   if (_addresses.length && !_addresses.some((a) => a.isDefault)) {
@@ -85,4 +151,13 @@ export function deleteAddress(id: string): void {
   }
   persistAddresses();
   emit();
+  void deleteAddressRemoteWrap(id);
+}
+
+async function deleteAddressRemoteWrap(id: string): Promise<void> {
+  if (!USE_SUPABASE || !supabaseEnvReady()) return;
+  const sb = getSupabaseBrowser();
+  if (!sb) return;
+  const res = await deleteAddressRemote(sb, id);
+  if (!res.ok) console.warn("[supabase] deleteAddress failed", res.error);
 }

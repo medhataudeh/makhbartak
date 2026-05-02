@@ -18,6 +18,17 @@ import {
   MOCK_NURSE_NOTIFICATIONS,
   MOCK_RESULT_FILES,
 } from "./mock-data";
+import { USE_SUPABASE, supabaseEnvReady } from "./supabase/flags";
+import { getSupabaseBrowser } from "./supabase/client";
+import { getCurrentCustomerId } from "./supabase/auth-helpers";
+import { fetchOrdersForCustomer } from "./supabase/queries/orders";
+import {
+  placeOrderRemote,
+  setOrderStatusRemote,
+  assignNurseRemote,
+  uploadResultFileRemote,
+  archiveResultFileRemote,
+} from "./supabase/queries/orders-mutations";
 
 // ─── Tiny pub-sub ────────────────────────────────────────────────────────────
 // Single in-memory store so that admin / customer / nurse / lab views inside
@@ -78,6 +89,35 @@ function seedEventsFor(order: Order): OrderEvent[] {
     evts.push({ id: `ev-${order.id}-${i}`, orderId: order.id, type: f.t, actor: f.actor, createdAt: at(f.offset) });
   }
   return evts;
+}
+
+// ─── Supabase hydrate (read-only; flag-gated; no-op until auth lands) ───────
+// Customer-scoped: replaces _orders with the signed-in customer's rows from
+// Supabase. Writes still flow through the local mutators below — switching
+// writes to Supabase comes once the RPC layer is in place.
+let _remoteOrdersHydrated = false;
+async function hydrateOrdersFromSupabase() {
+  if (_remoteOrdersHydrated || typeof window === "undefined") return;
+  _remoteOrdersHydrated = true;
+  if (!USE_SUPABASE || !supabaseEnvReady()) return;
+  const sb = getSupabaseBrowser();
+  if (!sb) return;
+  try {
+    const customerId = await getCurrentCustomerId(sb);
+    if (!customerId) return;
+    const remote = await fetchOrdersForCustomer(sb, customerId);
+    if (remote) {
+      _orders = remote;
+      emit();
+    }
+  } catch (err) {
+    console.warn("[supabase] orders hydrate failed; using local", err);
+  }
+}
+// Kick off once the module loads in the browser. The pre-Supabase paint uses
+// MOCK_ORDERS so the UI never goes blank.
+if (typeof window !== "undefined") {
+  hydrateOrdersFromSupabase();
 }
 
 // ─── Snapshot getters ────────────────────────────────────────────────────────
@@ -218,7 +258,36 @@ export function createOrder(input: CreateOrderInput): Order {
   ];
 
   emit();
+  // Background remote write — flag-gated, auth-gated. Failures are warned;
+  // local order remains so the customer's flow never blocks on the network.
+  void writeOrderRemote(order, input.idempotencyKey);
   return order;
+}
+
+async function writeOrderRemote(order: Order, idempotencyKey: string): Promise<void> {
+  if (!USE_SUPABASE || !supabaseEnvReady()) return;
+  const sb = getSupabaseBrowser();
+  if (!sb) return;
+  const customerId = await getCurrentCustomerId(sb);
+  if (!customerId) return;
+  const res = await placeOrderRemote(sb, order, idempotencyKey);
+  if (!res.ok) console.warn("[supabase] place_order failed", res.error);
+}
+
+// Generic flag/auth-gated remote-write wrapper used by lifecycle mutators.
+// The fn receives a fresh Supabase client; auth is required (we don't run
+// status changes / file ops as anon).
+async function writeRemote(
+  fn: (sb: ReturnType<typeof getSupabaseBrowser> & object) => Promise<{ ok: boolean; error?: string }>,
+  label: string
+): Promise<void> {
+  if (!USE_SUPABASE || !supabaseEnvReady()) return;
+  const sb = getSupabaseBrowser();
+  if (!sb) return;
+  const user = (await sb.auth.getUser()).data.user;
+  if (!user) return;
+  const res = await fn(sb);
+  if (!res.ok) console.warn(`[supabase] ${label} failed`, res.error);
 }
 
 interface ActorRef { actor: OrderEvent["actor"]; actorName?: string }
@@ -262,6 +331,7 @@ export function setOrderStatus(orderId: string, status: OrderStatus, ref: ActorR
   mutateOrder(orderId, (o) => ({ ...o, status, updatedAt: new Date().toISOString() }));
   const evt = STATUS_TO_EVENT[status];
   if (evt) appendEvent(orderId, evt, ref, note);
+  void writeRemote(async (sb) => setOrderStatusRemote(sb, orderId, status, note), "set_order_status");
   // Customer notification mirror — only for milestones the user cares about.
   const notifMap: Partial<Record<OrderStatus, { type: NotificationType; titleAr: string; bodyAr: string }>> = {
     confirmed:        { type: "order_confirmed", titleAr: "تم تأكيد طلبك",    bodyAr: "تم تأكيد طلبك. سيصلك الممرض في الموعد." },
@@ -390,6 +460,10 @@ export function uploadResultFile(orderId: string, file: UploadInput) {
     actor: "lab", actorName: file.uploadedBy, note: file.note,
   });
   appendEvent(orderId, "result_uploaded", { actor: "lab", actorName: file.uploadedBy }, file.fileName);
+  void writeRemote(
+    async (sb) => uploadResultFileRemote(sb, orderId, file.fileUrl, file.fileName, { replacesId: file.replacesFileId }),
+    "upload_result_file"
+  );
 }
 
 export function archiveResultFile(orderId: string, fileId: string, actor: { actor: "lab" | "admin"; actorName: string }, note?: string) {
@@ -406,6 +480,7 @@ export function archiveResultFile(orderId: string, fileId: string, actor: { acto
     appendFileEvent(orderId, {
       fileId, fileName: archived.fileName, type: "archived", actor: actor.actor, actorName: actor.actorName, note,
     });
+    void writeRemote(async (sb) => archiveResultFileRemote(sb, fileId, note), "archive_result_file");
   }
 }
 
@@ -519,6 +594,7 @@ export function resolveLabIssue(issueId: string, note: string, ref: ActorRef) {
 export function assignNurse(orderId: string, nurseId: string, ref: ActorRef) {
   mutateOrder(orderId, (o) => ({ ...o, nurseId, status: o.status === "confirmed" ? "nurse_assigned" : o.status }));
   appendEvent(orderId, "nurse_assigned", ref, nurseId);
+  void writeRemote(async (sb) => assignNurseRemote(sb, orderId, nurseId), "assign_nurse");
 }
 
 export function assignLab(orderId: string, labId: string, ref: ActorRef) {

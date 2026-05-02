@@ -2,7 +2,7 @@
 import { useState, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Search, Plus, Check, X, ShoppingCart } from "lucide-react";
-import { MOCK_TESTS } from "@/lib/mock-data";
+import { useTests } from "@/lib/catalog";
 import { searchTests, formatPrice } from "@/lib/utils";
 import type { Test } from "@/lib/types";
 import { Button } from "@/components/ui/Button";
@@ -16,8 +16,9 @@ interface CustomTestBuilderProps {
 export function CustomTestBuilder({ onContinue, onBack }: CustomTestBuilderProps) {
   const [query, setQuery] = useState("");
   const [selected, setSelected] = useState<Test[]>([]);
+  const tests = useTests();
 
-  const results = useMemo(() => searchTests(MOCK_TESTS, query), [query]);
+  const results = useMemo(() => searchTests(tests, query), [tests, query]);
 
   const toggle = (test: Test) => {
     setSelected((prev) =>

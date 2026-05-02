@@ -2,11 +2,15 @@
 import { useSyncExternalStore } from "react";
 import type { ContentPage, ContentPageSlug } from "./types";
 import { MOCK_CONTENT_PAGES } from "./mock-data";
+import { USE_SUPABASE, supabaseEnvReady } from "./supabase/flags";
+import { getSupabaseBrowser } from "./supabase/client";
+import { fetchContentPages } from "./supabase/queries/content-pages";
 
 const KEY = "makhbartak.content-pages.v1";
 
 let _pages: ContentPage[] = [...MOCK_CONTENT_PAGES];
 let _hydrated = false;
+let _remoteHydrated = false;
 const listeners = new Set<() => void>();
 function emit() { listeners.forEach((l) => l()); }
 function subscribe(l: () => void) { listeners.add(l); return () => { listeners.delete(l); }; }
@@ -18,12 +22,30 @@ function hydrate() {
     const raw = window.localStorage.getItem(KEY);
     if (raw) {
       const overrides = JSON.parse(raw) as ContentPage[];
-      // Merge: any persisted page overrides the seed by slug.
       const bySlug = new Map(overrides.map((p) => [p.slug, p]));
       _pages = MOCK_CONTENT_PAGES.map((p) => bySlug.get(p.slug) ?? p);
     }
   } catch {}
   emit();
+  hydrateFromSupabase();
+}
+
+async function hydrateFromSupabase() {
+  if (_remoteHydrated) return;
+  _remoteHydrated = true;
+  if (!USE_SUPABASE || !supabaseEnvReady()) return;
+  const sb = getSupabaseBrowser();
+  if (!sb) return;
+  try {
+    const remote = await fetchContentPages(sb);
+    if (remote && remote.length) {
+      const bySlug = new Map(remote.map((p) => [p.slug, p]));
+      _pages = MOCK_CONTENT_PAGES.map((p) => bySlug.get(p.slug) ?? p);
+      emit();
+    }
+  } catch (err) {
+    console.warn("[supabase] content_pages hydrate failed; using local", err);
+  }
 }
 
 function persist() {

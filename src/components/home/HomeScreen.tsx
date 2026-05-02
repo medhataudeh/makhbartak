@@ -2,7 +2,8 @@
 import Image from "next/image";
 import { motion } from "framer-motion";
 import { Camera, FlaskConical, ShoppingCart, ChevronLeft, Bell } from "lucide-react";
-import { MOCK_PACKAGES, MOCK_SLIDERS } from "@/lib/mock-data";
+import { MOCK_SLIDERS } from "@/lib/mock-data";
+import { usePackages } from "@/lib/catalog";
 import type { Package, SliderItem } from "@/lib/types";
 import { HomeSlider } from "@/components/home/HomeSlider";
 
@@ -25,11 +26,12 @@ export function HomeScreen({
   onNotificationsClick,
   unreadNotifications = 0,
 }: HomeScreenProps) {
+  const packages = usePackages();
   const handleSliderCta = (item: SliderItem) => {
     if (item.ctaTarget === "prescription") return onPrescription();
     if (item.ctaTarget === "custom-builder") return onCustomBuilder();
     if (item.ctaTarget === "package" && item.ctaTargetId) {
-      const pkg = MOCK_PACKAGES.find((p) => p.id === item.ctaTargetId);
+      const pkg = packages.find((p) => p.id === item.ctaTargetId);
       if (pkg) onSelectPackage(pkg);
     }
   };

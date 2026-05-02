@@ -2,7 +2,7 @@
 import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Upload, Camera, AlertTriangle, Check } from "lucide-react";
-import { MOCK_TESTS } from "@/lib/mock-data";
+import { useTests } from "@/lib/catalog";
 import { formatPrice } from "@/lib/utils";
 import type { Test, PrescriptionMatch } from "@/lib/types";
 import { Button } from "@/components/ui/Button";
@@ -14,14 +14,8 @@ interface PrescriptionUploaderProps {
   onBack: () => void;
 }
 
-const MOCK_EXTRACTED: PrescriptionMatch[] = [
-  { id: "pm-1", rawText: "CBC", matchedTest: MOCK_TESTS[0], confidence: 0.99, isUnclear: false },
-  { id: "pm-2", rawText: "FBS", matchedTest: MOCK_TESTS[1], confidence: 0.97, isUnclear: false },
-  { id: "pm-3", rawText: "Vitamin D", matchedTest: MOCK_TESTS[2], confidence: 0.95, isUnclear: false },
-  { id: "pm-4", rawText: "XXXX-unclear", matchedTest: undefined, confidence: 0.2, isUnclear: true },
-];
-
 export function PrescriptionUploader({ onContinue, onBack }: PrescriptionUploaderProps) {
+  const tests = useTests();
   const [step, setStep] = useState<"upload" | "processing" | "results">("upload");
   const [matches, setMatches] = useState<PrescriptionMatch[]>([]);
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -29,8 +23,14 @@ export function PrescriptionUploader({ onContinue, onBack }: PrescriptionUploade
   const handleUpload = async () => {
     setStep("processing");
     await new Promise((r) => setTimeout(r, 2200));
-    setMatches(MOCK_EXTRACTED);
-    const defaultSelected = new Set(MOCK_EXTRACTED.filter((m) => !m.isUnclear && m.matchedTest).map((m) => m.id));
+    const extracted: PrescriptionMatch[] = [
+      { id: "pm-1", rawText: "CBC", matchedTest: tests[0], confidence: 0.99, isUnclear: false },
+      { id: "pm-2", rawText: "FBS", matchedTest: tests[1], confidence: 0.97, isUnclear: false },
+      { id: "pm-3", rawText: "Vitamin D", matchedTest: tests[2], confidence: 0.95, isUnclear: false },
+      { id: "pm-4", rawText: "XXXX-unclear", matchedTest: undefined, confidence: 0.2, isUnclear: true },
+    ];
+    setMatches(extracted);
+    const defaultSelected = new Set(extracted.filter((m) => !m.isUnclear && m.matchedTest).map((m) => m.id));
     setSelected(defaultSelected);
     setStep("results");
   };

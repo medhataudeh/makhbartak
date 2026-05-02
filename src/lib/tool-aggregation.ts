@@ -2,7 +2,7 @@
 import type {
   Order, Test, LibraryTool, NurseChecklistDefaults, TestToolReq,
 } from "./types";
-import { MOCK_TESTS } from "./mock-data";
+import { getTests } from "./catalog";
 
 /** Resolved checklist row — what the nurse actually ticks off in the morning. */
 export interface AggregatedTool {
@@ -28,7 +28,7 @@ interface AggregateInput {
   orders: Order[];
   defaults: NurseChecklistDefaults;
   toolsCatalog: LibraryTool[];
-  /** Optional override for resolving Test by id. Defaults to MOCK_TESTS. */
+  /** Optional override for resolving Test by id. Defaults to the catalog store. */
   resolveTest?: (id: string) => Test | undefined;
 }
 
@@ -105,5 +105,5 @@ export function aggregateNurseTools({
 }
 
 function defaultResolve(id: string): Test | undefined {
-  return MOCK_TESTS.find((t) => t.id === id);
+  return getTests().find((t) => t.id === id);
 }
