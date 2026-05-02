@@ -17,11 +17,18 @@ set; a nurse visits, collects samples; the lab uploads a PDF; the result lands
 in the patient's phone. The app must feel as easy as ordering a ride and as
 trustworthy as a clinic.
 
-This repo is **front-end only**: no API, no DB. Everything is mock data in
-`src/lib/mock-data.ts`. Authentication, persistence, payments, and the
-prescription OCR are all simulated. Treat the codebase as a high-fidelity,
-clickable prototype that designers, stakeholders, and back-end engineers use
-as a contract.
+This repo is currently a **mock prototype**: the source of truth for every
+flow is in-memory state and `localStorage`, seeded from `src/lib/mock-data.ts`.
+Authentication, orders, results, payments, and prescription OCR are all
+simulated. Treat the codebase as a high-fidelity, clickable contract that
+designers, stakeholders, and back-end engineers work against.
+
+A Supabase schema (`supabase/migrations/*`) and partial query/RPC layer
+(`src/lib/supabase/`) exist but are **staged, not authoritative**. Wiring is
+gated on `NEXT_PUBLIC_USE_SUPABASE=true`; even when on, current calls are
+fire-and-forget and the in-memory state always wins. Real persistence (auth
+bridge, order RPCs, RLS) is intentionally out of scope this phase. See
+`### Persistence layer` below for the full mock-vs-Supabase map.
 
 For deeper product/design context: `PRODUCT.md`, `DESIGN.md`, `AGENTS.md`.
 
@@ -79,7 +86,7 @@ src/
     ui/                  # Button, BottomSheet, FullScreenModal, Card, Badge,
                          # StatusBadge, Input, Skeleton, BackButton
     layout/              # BottomNav (mobile), SideNav (desktop)
-    auth/                # AuthScreen (mock OTP)
+    auth/                # LoginForm + per-portal login wrappers (CustomerLogin, NurseLogin)
     home/                # HomeScreen, HomeSlider, CustomTestBuilder, PrescriptionUploader
     booking/             # BookingFlow (shift + address + patient)
     cart/                # CartScreen (coupon, payment method, confirm)
@@ -112,7 +119,9 @@ npm run lint     # eslint (next/core-web-vitals + next/typescript)
 npm start        # serve a built app
 ```
 
-Routes: `/` (customer), `/admin`, `/nurse`, `/lab`.
+Routes: `/` (customer), `/admin`, `/nurse`, `/lab`. All four gate behind
+`useSession()` from `lib/auth.ts` and render their portal's `LoginForm`
+when there is no matching role session.
 
 ## Design principles
 
@@ -216,6 +225,18 @@ These live in mock data + helpers; don't hard-code copies.
 - **Minimum booking notice**: 120 minutes. Enforced by `getShiftConfigs()` —
   it returns `available: false` with an Arabic reason for shifts inside the
   notice window. Always render that reason; never silently disable.
+- **Booking window**: customers may pick today plus
+  `SystemSettings.bookingWindowDays` additional days (default 2 → today,
+  tomorrow, day after). **Booking window is enforced in both UI and
+  business logic.** UI alone is not sufficient:
+  - UI: `BookingFlow`'s `<DateGrid>` renders **only** `bookingWindowDays + 1`
+    cells starting today — no out-of-window dates appear, even disabled.
+  - Logic: `getShiftConfigs()` marks every shift unavailable for any date
+    past the window or in the past, with the standard Arabic reason. The
+    `submit()` handler in `BookingFlow` re-checks `available` before
+    forwarding so a bypassed UI cannot push an invalid date through.
+  - Admin changes to `bookingWindowDays` propagate to live customer
+    sessions in the same tab via `useSystemSettings()` (no refresh needed).
 - **Supported cities**: دمشق, ريف دمشق.
 - **Currency**: Syrian Pound (ل.س). Format with `formatPrice()`.
 - **Coupons**: validated by `validateCoupon(code, total)` — covers active
@@ -277,6 +298,35 @@ These live in mock data + helpers; don't hard-code copies.
 - Sections grouped: ops, catalog, operations (field), finance, content,
   system. Centralized mutable state lives at the top of `AdminDashboard`
   so child sections can CRUD without prop-drilling.
+
+## Persistence layer (mock vs. Supabase)
+
+Today's source of truth is **mock + localStorage**. Supabase exists but
+is not connected to the live UI; do not assume any read or write reaches
+the database.
+
+| Domain | Today | Where |
+|---|---|---|
+| Auth / session | mock + localStorage | `lib/auth.ts` (key: `makhbartak.session.v1`) |
+| Orders + items + status | in-memory store + fire-and-forget RPC | `lib/store.ts` (`_orders`); RPCs `place_order`, `set_order_status` ignored on response |
+| Lab result PDFs | in-memory `OrderResultFile` rows + optional Supabase Storage upload | `lib/store.ts`, `lib/supabase/storage.ts` |
+| Nurse visit state | localStorage per-day | `makhbartak.nurse.prep:<date>`, `makhbartak.nurse.started:<date>` |
+| Patients / addresses / payment pref | localStorage primary, Supabase secondary | `lib/profile.ts`, `lib/payment-pref.ts` |
+| System settings | localStorage write, Supabase one-shot read | `lib/system-settings.ts` (key: `makhbartak.system-settings.v1`) |
+| Catalog (tests, packages, instructions) | mock seed | `lib/mock-data.ts` (Supabase fetch is one-shot, no invalidation) |
+| Content pages | localStorage primary | `lib/content-pages.ts` |
+
+Rules until full Supabase wiring is approved:
+- Treat in-memory writes as authoritative. Do not introduce code paths
+  that need a Supabase round-trip to render correctly.
+- Do not widen RLS policies, do not add anon-write policies, do not seed
+  insecure auth bypasses.
+- Do not modify `supabase/migrations/*` to chase frontend changes —
+  schema reconciliation (e.g. `OrderStatus` enum, `booking_horizon_days`
+  column) is a deferred task tracked in this file.
+- When adding a setting or field that the frontend cares about, add it
+  to `SystemSettings` (mock) only; the matching SQL column will be
+  added in the migration pass.
 
 ## Mock data rules
 
@@ -360,18 +410,20 @@ This repo has no automated tests. Verify your change manually:
    ```bash
    npm run dev
    ```
-   - `/` — sign in with any phone+OTP, walk through Home → Package
-     (or Prescription / Custom) → BookingFlow → Cart → Success.
+   - `/` — sign in as `customer1 / customer123`, walk through Home →
+     Package (or Prescription / Custom) → BookingFlow → Cart → Success.
      Confirm bottom-nav switches feel instant; flow transitions feel
      spring-y; back button arrow points the right direction (→ in RTL).
    - `/admin` — log in as `admin / admin123` (super_admin) and as a
      scoped role (e.g. `content / content123`) to confirm permission
      gating actually hides sections.
-   - `/nurse` — confirm the prep checklist gates "Start Day", and that
-     localStorage keys (`makhbartak.nurse.prep:<date>`,
-     `makhbartak.nurse.started:<date>`) clear cleanly across days.
-   - `/lab` — confirm filtering, status changes, and PDF upload/delete on
-     an order persist in component state.
+   - `/nurse` — sign in as `nurse1 / nurse123`. Confirm the prep
+     checklist gates "Start Day" and that localStorage keys
+     (`makhbartak.nurse.prep:<date>`, `makhbartak.nurse.started:<date>`)
+     clear on logout / across days.
+   - `/lab` — sign in as `sham-admin / sham123`. Confirm filtering,
+     status changes, and PDF upload/delete on an order persist in
+     component state.
 3. **Mobile + desktop**: resize down to ~375px width; the customer and
    nurse apps must stay phone-shaped, the lab and admin apps must reflow
    to the desktop layout.
@@ -451,16 +503,21 @@ new work.
   rendering instructions on order success / order details / nurse visit.
 - Dedup key = `Instruction.id` (preferred) or `icon|textAr` fallback.
 
-### Guest mode (customer)
-- The app boots into **guest** state. Browsing home, packages, package
-  details, custom builder, prescription, and CMS pages is unrestricted.
-- Protected actions (add-to-cart, confirm order, opening Orders/Account
-  tabs) call `requireAuth(action, reasonAr)` in `app/page.tsx`. The
-  `LoginModal` opens with the contextual reason; on OTP success the
-  pending intent runs.
-- The full-screen `AuthScreen` is no longer mounted — it remains in the
-  repo for historical reasons but is unused. Use `LoginModal` for any
-  in-app auth gate.
+### Customer auth — username/password, no guest browsing
+- The customer app requires sign-in before any screen renders. There is
+  no guest mode and no OTP / phone / email flow. `app/page.tsx` checks
+  `useSession()` and renders `<CustomerLogin />` until the session role
+  is `"customer"`.
+- All four portals (customer, nurse, lab, admin) share `LoginForm` from
+  `components/auth/LoginForm.tsx`. The unified credential store lives
+  in `lib/auth.ts`; per-role mock seed lists are
+  `MOCK_CUSTOMER_USERS`, `MOCK_NURSE_USERS`, `MOCK_ADMINS`,
+  `MOCK_LAB_USERS`.
+- Demo credentials are surfaced under a collapsible on each login
+  screen (prototype only — remove when real auth lands).
+- Logout is a single call to `logout()` from `lib/auth.ts`. It clears
+  the session key `makhbartak.session.v1`; all four portals re-render
+  to their login screen via `useSession()`.
 
 ### Admin "no popups" rule
 - Heavy details belong in **inline pages** or full-height side drawers,
@@ -471,8 +528,8 @@ new work.
   benefit from preserving page context.
 
 ### Lab portal rules
-- Real username/password auth via `MOCK_LAB_USERS`. Inactive users can't
-  log in.
+- Username/password auth via the unified store in `lib/auth.ts`
+  (seeded from `MOCK_LAB_USERS`). Inactive users can't log in.
 - Sections in the sidebar: Orders / رفع النتائج / مشاكل المخبر / المحاسبة
   (lab_admin or lab_accounting only) / إعدادات المخبر (lab_admin only).
 - **Lab never sees customer sell prices** unless `lab.revealSellPriceToLab`
@@ -520,12 +577,18 @@ new work.
 
 Manual checks before declaring a Stage 6+ change done:
 
-- [ ] **Guest browsing**: `/` opens without auth. Home / package details /
-      custom builder / prescription / Account+Orders are reachable; Account
-      and Orders show a "تسجيل الدخول" gate.
-- [ ] **Add-to-cart from guest**: tapping "أضف إلى السلة" on a package opens
-      the LoginModal with a reason. After OTP `1234`, the cart flow opens
-      with the same package selected.
+- [ ] **Customer login required**: `/` shows the customer login screen on
+      first load. Sign in as `customer1 / customer123`; Home / package
+      details / custom builder / prescription / Orders / Account all
+      become reachable.
+- [ ] **Wrong-portal login is blocked**: trying to sign into `/admin` with
+      `customer1 / customer123` shows "لا تملك صلاحية الوصول…"; the same
+      account works on `/`.
+- [ ] **Logout returns to login screen**: calling logout from any portal
+      drops the user to that portal's `LoginForm`, no stale state.
+- [ ] **Refresh keeps session**: after sign-in, hard-refreshing the page
+      keeps the user signed in (session persists via
+      `makhbartak.session.v1`).
 - [ ] **Order number consistency**: order success page shows e.g.
       `HL-2026-000007`. Same number appears in `طلباتي → details`.
 - [ ] **Add patient / address**: "+ إضافة مريض جديد" and "+ إضافة عنوان

@@ -639,8 +639,12 @@ export interface SystemSettings {
   whatsappNumber: string;
   /** When true, cash orders enter the operational workflow without paying first. */
   allowCashOrders: boolean;
-  /** How many days ahead admin allows a customer to book. */
-  bookingHorizonDays: number;
+  /**
+   * Days a customer may book *in addition to* today. Default 2 → today,
+   * tomorrow, and the day after. The date picker renders bookingWindowDays + 1
+   * cells; getShiftConfigs() rejects dates outside that range.
+   */
+  bookingWindowDays: number;
   /** Hard cap on confirmed orders per shift per date. 0 = unlimited. */
   maxOrdersPerShift: number;
 }
@@ -674,6 +678,42 @@ export interface SliderItem {
   badgeAr?: string;
   displayOrder: number;
   isActive: boolean;
+}
+
+// ─── Unified mock auth ──────────────────────────────────────────────────────
+// One row per login account across the four portals. AdminUser, LabUser, etc.
+// are projected into this shape by lib/auth.ts so the four sign-in screens
+// share a single store. linkedEntityId points at the role-specific record:
+//   role "customer" → User.id (e.g. "u-1")
+//   role "nurse"    → Nurse.id (e.g. "nur-1")
+//   role "lab"      → LabUser.id (lab portal also reads labId via LabUser)
+//   role "admin"    → AdminUser.id (e.g. "ad-1")
+export type Role = "customer" | "nurse" | "lab" | "admin";
+
+export const ROLE_HOME_PATH: Record<Role, string> = {
+  customer: "/",
+  nurse: "/nurse",
+  lab: "/lab",
+  admin: "/admin",
+};
+
+export interface AuthUser {
+  id: string;
+  username: string;
+  password: string; // mock-only; production stores a server-side hash
+  name: string;
+  role: Role;
+  linkedEntityId: string;
+  isActive: boolean;
+  lastLoginAt?: string;
+}
+
+export interface AuthSession {
+  userId: string;
+  username: string;
+  name: string;
+  role: Role;
+  linkedEntityId: string;
 }
 
 export type AdminRole =

@@ -13,7 +13,7 @@ import { useOrders, resolveLabIssue, assignLab, updateLabIssueCustomerMessage } 
 import { logActivity } from "@/lib/activity-log";
 import {
   useLabUsers, upsertLabUser, deleteLabUser, setLabUserActive, resetLabUserPassword,
-} from "@/lib/lab-auth";
+} from "@/lib/auth";
 import { useSettlementsForLab, generateSettlement, setSettlementStatus } from "@/lib/settlements";
 import { useToast } from "@/components/ui/Toast";
 import { checkPassword, PASSWORD_HINT_AR } from "@/lib/password-policy";

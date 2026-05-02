@@ -27,7 +27,10 @@ export async function fetchAppSettings(
     supportedCities: data.supported_cities,
     whatsappNumber: data.whatsapp_number,
     allowCashOrders: data.allow_cash_orders,
-    bookingHorizonDays: data.booking_horizon_days,
+    // Frontend now uses bookingWindowDays semantics (default 2 = today + 2).
+    // The legacy schema column is still booking_horizon_days; remap here so
+    // the camelCase shape stays consistent. Schema rename is deferred (D1).
+    bookingWindowDays: data.booking_horizon_days,
     maxOrdersPerShift: data.max_orders_per_shift,
   };
 }

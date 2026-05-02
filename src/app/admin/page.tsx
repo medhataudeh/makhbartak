@@ -1,37 +1,29 @@
 "use client";
-import { useEffect, useState } from "react";
 import { AdminDashboard } from "@/components/admin/AdminDashboard";
-import { AdminLogin } from "@/components/admin/AdminLogin";
-import type { AdminUser } from "@/lib/types";
-
-const SESSION_KEY = "makhbartak.admin.session";
+import { LoginForm } from "@/components/auth/LoginForm";
+import { adminFromSession, useSession, logout } from "@/lib/auth";
+import { MOCK_ADMINS } from "@/lib/mock-data";
+import { ROLE_LABELS } from "@/lib/types";
 
 export default function AdminPage() {
-  const [user, setUser] = useState<AdminUser | null>(null);
-  const [hydrated, setHydrated] = useState(false);
+  const session = useSession();
+  const admin = adminFromSession(session);
 
-  useEffect(() => {
-    try {
-      const raw = window.localStorage.getItem(SESSION_KEY);
-      // eslint-disable-next-line react-hooks/set-state-in-effect -- localStorage hydration on mount
-      if (raw) setUser(JSON.parse(raw));
-    } catch {
-      // localStorage may be blocked — fall through to login
-    }
-    setHydrated(true);
-  }, []);
+  if (!session || session.role !== "admin" || !admin) {
+    return (
+      <LoginForm
+        brandTitle="لوحة الإدارة — مختبرك"
+        brandSubtitle="تسجيل دخول الموظفين"
+        allowedRoles={["admin"]}
+        onSuccess={() => { /* useSession() in this page re-renders */ }}
+        demoCredentials={MOCK_ADMINS.map((a) => ({
+          label: ROLE_LABELS[a.role],
+          username: a.username,
+          password: a.password,
+        }))}
+      />
+    );
+  }
 
-  const handleLogin = (u: AdminUser) => {
-    setUser(u);
-    try { window.localStorage.setItem(SESSION_KEY, JSON.stringify(u)); } catch {}
-  };
-
-  const handleLogout = () => {
-    setUser(null);
-    try { window.localStorage.removeItem(SESSION_KEY); } catch {}
-  };
-
-  if (!hydrated) return null;
-  if (!user) return <AdminLogin onLogin={handleLogin} />;
-  return <AdminDashboard user={user} onLogout={handleLogout} />;
+  return <AdminDashboard user={admin} onLogout={logout} />;
 }

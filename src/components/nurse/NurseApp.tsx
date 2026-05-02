@@ -26,69 +26,34 @@ import { formatDate, getShiftLabel, relativeTime } from "@/lib/utils";
 import { Button } from "@/components/ui/Button";
 import { BottomSheet } from "@/components/ui/BottomSheet";
 import { BackButton } from "@/components/ui/BackButton";
+import { useSession, logout, nurseFromSession } from "@/lib/auth";
+import { NurseLogin } from "@/components/nurse/NurseLogin";
 
 type NurseTab = "home" | "schedule" | "settings";
 
 const PREP_KEY = "makhbartak.nurse.prep";
 const STARTED_KEY = "makhbartak.nurse.started";
-const LOGGED_OUT_KEY = "makhbartak.nurse.loggedOut";
 
 export function NurseApp() {
-  const [loggedOut, setLoggedOut] = useState(false);
-  // Hydrate session from localStorage on mount.
-  useEffect(() => {
+  const session = useSession();
+  if (!session || session.role !== "nurse") return <NurseLogin />;
+  const nurseRecord = nurseFromSession(session);
+  if (!nurseRecord) return <NurseLogin />;
+  const handleLogout = () => {
     try {
-      // eslint-disable-next-line react-hooks/set-state-in-effect -- mount-only hydration
-      setLoggedOut(window.localStorage.getItem(LOGGED_OUT_KEY) === "1");
-    } catch {}
-  }, []);
-  if (loggedOut) {
-    return (
-      <NurseLoggedOut onLogin={() => {
-        try { window.localStorage.removeItem(LOGGED_OUT_KEY); } catch {}
-        setLoggedOut(false);
-      }} />
-    );
-  }
-  return <NurseAppInner onLogout={() => {
-    try {
-      window.localStorage.setItem(LOGGED_OUT_KEY, "1");
       // Clear today's prep state so a re-login starts fresh.
       const today = new Date().toISOString().split("T")[0];
       window.localStorage.removeItem(STARTED_KEY + ":" + today);
       window.localStorage.removeItem(PREP_KEY + ":" + today);
     } catch {}
-    setLoggedOut(true);
-  }} />;
+    logout();
+  };
+  return <NurseAppInner nurseId={nurseRecord.id} onLogout={handleLogout} />;
 }
 
-function NurseLoggedOut({ onLogin }: { onLogin: () => void }) {
-  return (
-    <div className="min-h-screen bg-app flex items-center justify-center p-4">
-      <div className="w-full max-w-sm bg-white rounded-2xl border border-gray-100 p-6 space-y-4 text-center">
-        <div className="w-14 h-14 rounded-2xl bg-[#ECFEFF] flex items-center justify-center mx-auto">
-          <HomeIcon size={26} className="text-[#0891B2]" aria-hidden="true" />
-        </div>
-        <div>
-          <h1 className="text-lg font-bold text-[#164E63]">تم تسجيل الخروج</h1>
-          <p className="text-xs text-gray-500 mt-1.5 leading-relaxed">
-            سجّل الدخول مجدداً لمتابعة جدولك اليومي وزياراتك.
-          </p>
-        </div>
-        <button
-          onClick={onLogin}
-          className="w-full py-3 rounded-xl bg-[#0891B2] text-white text-sm font-semibold cursor-pointer active:bg-[#0E7490]"
-        >
-          دخول
-        </button>
-      </div>
-    </div>
-  );
-}
-
-function NurseAppInner({ onLogout }: { onLogout: () => void }) {
-  const seedNurse = MOCK_NURSES[0];
-  const editableNurse = useEditableNurse(seedNurse.id);
+function NurseAppInner({ nurseId, onLogout }: { nurseId: string; onLogout: () => void }) {
+  const editableNurse = useEditableNurse(nurseId);
+  const seedNurse = MOCK_NURSES.find((n) => n.id === nurseId) ?? MOCK_NURSES[0];
   const nurse = editableNurse ?? seedNurse;
   const game = MOCK_GAMIFICATION[nurse.id];
   const routes = MOCK_NURSE_ROUTES.filter((r) => r.nurseId === nurse.id);

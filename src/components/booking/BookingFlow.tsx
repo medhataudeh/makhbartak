@@ -64,6 +64,7 @@ export function BookingFlow({ tests, pkg, onContinue, onBack }: BookingFlowProps
     eveningEnd:   settings.eveningShiftEnd,
     ordersForDate,
     maxOrdersPerShift: settings.maxOrdersPerShift,
+    bookingWindowDays: settings.bookingWindowDays,
   });
 
   const canContinue = shift && address && patient && visitDate;
@@ -71,8 +72,15 @@ export function BookingFlow({ tests, pkg, onContinue, onBack }: BookingFlowProps
   const submit = () => {
     if (!canContinue) return;
     const sCfg = shifts.find((x) => x.shift === shift);
-    const startH = String(sCfg?.startHour ?? (shift === "morning" ? 8 : 16)).padStart(2, "0");
-    const endH = String(sCfg?.endHour ?? (shift === "morning" ? 10 : 18)).padStart(2, "0");
+    // Logic guard: even if the UI was bypassed, refuse a date/shift that
+    // getShiftConfigs() considers unavailable (out-of-window, past, or
+    // inside the min-notice cushion).
+    if (!sCfg?.available) {
+      toast.error("هذا الموعد غير متاح، يرجى اختيار وقت آخر");
+      return;
+    }
+    const startH = String(sCfg.startHour).padStart(2, "0");
+    const endH = String(sCfg.endHour).padStart(2, "0");
     onContinue({
       shift: shift!,
       visitDate,
@@ -162,7 +170,7 @@ export function BookingFlow({ tests, pkg, onContinue, onBack }: BookingFlowProps
       <BottomSheet open={dateSheet} onClose={() => setDateSheet(false)} title="تاريخ الزيارة">
         <div className="px-4 py-4">
           <DateGrid
-            horizonDays={settings.bookingHorizonDays}
+            windowDays={settings.bookingWindowDays}
             selected={visitDate}
             onPick={(d) => {
               setVisitDate(d);
@@ -178,6 +186,12 @@ export function BookingFlow({ tests, pkg, onContinue, onBack }: BookingFlowProps
       {/* Shift Sheet */}
       <BottomSheet open={shiftSheet} onClose={() => setShiftSheet(false)} title="موعد الزيارة">
         <div className="px-4 py-4 space-y-3">
+          {shifts.every((s) => !s.available) && (
+            <div className="bg-amber-50 border border-amber-100 rounded-xl px-4 py-3">
+              <p className="text-sm font-semibold text-amber-700">لا توجد مواعيد متاحة في هذا اليوم.</p>
+              <p className="text-[11px] text-amber-700/80 mt-1 leading-relaxed">جرّب اختيار يوم آخر من الأيام المتاحة.</p>
+            </div>
+          )}
           {shifts.map((s) => {
             const isSelected = shift === s.shift;
             return (
@@ -423,15 +437,16 @@ function SectionRow({ icon, title, value, placeholder, required, onClick }: {
   );
 }
 
-// ─── Date grid (next N days, weekday + day-of-month) ─────────────────────────
-function DateGrid({ horizonDays, selected, onPick }: {
-  horizonDays: number;
+// ─── Date grid: today + windowDays additional days ──────────────────────────
+function DateGrid({ windowDays, selected, onPick }: {
+  windowDays: number;
   selected: string;
   onPick: (date: string) => void;
 }) {
   const today = new Date(); today.setHours(0, 0, 0, 0);
-  const days: { date: string; day: number; weekday: string; isToday: boolean }[] = [];
-  for (let i = 0; i < Math.max(1, horizonDays); i++) {
+  const cells = Math.max(1, windowDays + 1);
+  const days: { date: string; day: number; weekday: string; isToday: boolean; offset: number }[] = [];
+  for (let i = 0; i < cells; i++) {
     const d = new Date(today);
     d.setDate(today.getDate() + i);
     days.push({
@@ -439,14 +454,27 @@ function DateGrid({ horizonDays, selected, onPick }: {
       day: d.getDate(),
       weekday: WEEKDAYS_AR[d.getDay()].slice(0, 3),
       isToday: i === 0,
+      offset: i,
     });
   }
+  const labelFor = (offset: number) => {
+    if (offset === 0) return "اليوم";
+    if (offset === 1) return "غداً";
+    if (offset === 2) return "بعد غد";
+    return null;
+  };
   return (
     <div>
-      <p className="text-[11px] text-gray-400 mb-2">اختر تاريخ الزيارة (المتاح خلال {horizonDays} يوم)</p>
-      <div className="grid grid-cols-4 sm:grid-cols-5 gap-2">
+      <p className="text-[12px] text-[#164E63] font-medium mb-1">يمكنك اختيار موعد خلال الأيام المتاحة فقط.</p>
+      <p className="text-[11px] text-gray-400 mb-2">
+        {windowDays === 0
+          ? "متاح اليوم فقط"
+          : `متاح اليوم وحتى ${windowDays} ${windowDays === 1 ? "يوم" : "أيام"} لاحقاً`}
+      </p>
+      <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
         {days.map((d) => {
           const active = d.date === selected;
+          const tag = labelFor(d.offset);
           return (
             <button
               key={d.date}
@@ -458,7 +486,7 @@ function DateGrid({ horizonDays, selected, onPick }: {
             >
               <span className="text-[10px] font-medium opacity-70">{d.weekday}</span>
               <span className="text-lg font-bold lat" dir="ltr">{d.day}</span>
-              {d.isToday && <span className="text-[9px] font-semibold mt-0.5">اليوم</span>}
+              {tag && <span className="text-[9px] font-semibold mt-0.5">{tag}</span>}
             </button>
           );
         })}

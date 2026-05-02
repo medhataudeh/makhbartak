@@ -5,18 +5,17 @@ import {
   Search, Building2, LogOut, ChevronRight, FileText, Upload,
   AlertTriangle, CheckCircle2, ClipboardList, DollarSign, Lock, Download,
 } from "lucide-react";
-import type { Lab, Order, LabSettlement } from "@/lib/types";
+import type { Lab, LabUser, Order, LabSettlement } from "@/lib/types";
 import { LAB_USER_ROLE_LABELS } from "@/lib/types";
 import {
-  MOCK_LABS, LAB_ISSUE_REASONS, computeOrderLabAmount,
+  MOCK_LABS, MOCK_LAB_USERS, LAB_ISSUE_REASONS, computeOrderLabAmount,
 } from "@/lib/mock-data";
 import {
   useOrders, uploadResultFile, archiveResultFile, openLabIssue, setOrderStatus,
   confirmResultsReady,
 } from "@/lib/store";
-import {
-  loginLabUser, logoutLabUser, getStoredLabSession, type LabSession,
-} from "@/lib/lab-auth";
+import { useSession, logout, labUserFromSession } from "@/lib/auth";
+import { LoginForm } from "@/components/auth/LoginForm";
 import { useSettlementsForLab, useSettlementItems } from "@/lib/settlements";
 import { useEditableLab, updateLabSelf } from "@/lib/lab-overrides";
 import { formatDate, formatPrice, getShiftLabel } from "@/lib/utils";
@@ -32,18 +31,11 @@ const LAB_STATUSES = [
 ] as const;
 
 export function LabPortal() {
-  const [session, setSession] = useState<LabSession | null>(null);
-  const [hydrated, setHydrated] = useState(false);
-
-  useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- localStorage hydration on mount
-    setSession(getStoredLabSession());
-    setHydrated(true);
-  }, []);
-
+  const auth = useSession();
+  const labUser = labUserFromSession(auth);
   const lab = useMemo(
-    () => (session ? MOCK_LABS.find((l) => l.id === session.labId) ?? null : null),
-    [session],
+    () => (labUser ? MOCK_LABS.find((l) => l.id === labUser.labId) ?? null : null),
+    [labUser],
   );
 
   // Apply per-lab branding via CSS variables. Cleared on logout.
@@ -61,107 +53,49 @@ export function LabPortal() {
     }
   }, [lab]);
 
-  if (!hydrated) return null;
-  if (!session || !lab) return <LabLogin onAuthed={setSession} />;
+  if (!auth || auth.role !== "lab" || !labUser || !lab) {
+    return (
+      <LoginForm
+        brandTitle="بوابة المخبر"
+        brandSubtitle="سجّل دخولك ببيانات الحساب الذي زوّدتك به الإدارة."
+        allowedRoles={["lab"]}
+        onSuccess={() => { /* useSession() re-renders LabPortal */ }}
+        demoCredentials={MOCK_LAB_USERS.map((u) => ({
+          label: `${u.fullName} · ${LAB_USER_ROLE_LABELS[u.role]}`,
+          username: u.username,
+          password: u.password,
+        }))}
+      />
+    );
+  }
 
   return (
     <LabPortalShell
       lab={lab}
-      session={session}
-      onLogout={() => { logoutLabUser(); setSession(null); }}
+      labUser={labUser}
+      onLogout={logout}
     />
-  );
-}
-
-// ─── Login (username + password) ─────────────────────────────────────────────
-function LabLogin({ onAuthed }: { onAuthed: (s: LabSession) => void }) {
-  const toast = useToast();
-  const [username, setUsername] = useState("");
-  const [password, setPassword] = useState("");
-  const [submitting, setSubmitting] = useState(false);
-  const [error, setError] = useState("");
-
-  const submit = async () => {
-    if (!username.trim() || !password.trim()) {
-      setError("الرجاء إدخال اسم المستخدم وكلمة المرور");
-      return;
-    }
-    setSubmitting(true); setError("");
-    await new Promise((r) => setTimeout(r, 400));
-    const session = loginLabUser(username, password);
-    setSubmitting(false);
-    if (!session) {
-      setError("بيانات الدخول غير صحيحة، أو الحساب موقوف.");
-      toast.error("بيانات الدخول غير صحيحة");
-      return;
-    }
-    toast.success("مرحباً بك");
-    onAuthed(session);
-  };
-
-  return (
-    <div className="min-h-screen bg-app flex items-center justify-center p-4">
-      <div className="w-full max-w-sm bg-white rounded-2xl border border-gray-100 p-6 space-y-4">
-        <div className="text-center">
-          <div className="w-14 h-14 rounded-2xl bg-[#ECFEFF] flex items-center justify-center mx-auto mb-3">
-            <Building2 size={26} className="text-[#0891B2]" aria-hidden="true" />
-          </div>
-          <h1 className="text-lg font-bold text-[#164E63]">بوابة المخبر</h1>
-          <p className="text-xs text-gray-500 mt-1">سجّل دخولك ببيانات الحساب الذي زوّدتك به الإدارة.</p>
-        </div>
-        <label className="block">
-          <span className="text-[11px] font-medium text-gray-500">اسم المستخدم</span>
-          <input
-            value={username}
-            onChange={(e) => { setUsername(e.target.value); setError(""); }}
-            onKeyDown={(e) => { if (e.key === "Enter") submit(); }}
-            autoComplete="username"
-            className="w-full mt-1 h-11 px-3 rounded-xl border border-gray-200 text-sm focus:border-[#0891B2] outline-none lat"
-            dir="ltr"
-          />
-        </label>
-        <label className="block">
-          <span className="text-[11px] font-medium text-gray-500">كلمة المرور</span>
-          <input
-            type="password"
-            value={password}
-            onChange={(e) => { setPassword(e.target.value); setError(""); }}
-            onKeyDown={(e) => { if (e.key === "Enter") submit(); }}
-            autoComplete="current-password"
-            className="w-full mt-1 h-11 px-3 rounded-xl border border-gray-200 text-sm focus:border-[#0891B2] outline-none lat"
-            dir="ltr"
-          />
-        </label>
-        {error && <p role="alert" className="text-xs text-red-600">{error}</p>}
-        <Button variant="primary" size="lg" className="w-full" loading={submitting} onClick={submit}>
-          دخول
-        </Button>
-        <p className="text-[11px] text-gray-400 text-center">
-          نسيت كلمة المرور؟ تواصل مع المدير لإعادة تعيينها.
-        </p>
-      </div>
-    </div>
   );
 }
 
 // ─── Main shell with section nav ─────────────────────────────────────────────
 type LabSection = "orders" | "results" | "issues" | "accounting" | "lab_settings";
 
-function LabPortalShell({ lab, session, onLogout }: { lab: Lab; session: LabSession; onLogout: () => void }) {
+function LabPortalShell({ lab, labUser, onLogout }: { lab: Lab; labUser: LabUser; onLogout: () => void }) {
   const orders = useOrders();
   const labOrders = useMemo(
     () => orders.filter((o) => o.labId === lab.id && (LAB_STATUSES as readonly string[]).includes(o.status)),
     [orders, lab.id],
   );
 
-  const canAccount = session.role === "lab_admin" || session.role === "lab_accounting";
-  const initialSection: LabSection = session.role === "lab_accounting" ? "accounting" : "orders";
+  const canAccount = labUser.role === "lab_admin" || labUser.role === "lab_accounting";
+  const initialSection: LabSection = labUser.role === "lab_accounting" ? "accounting" : "orders";
   const [section, setSection] = useState<LabSection>(initialSection);
 
   const brand = lab.branding ?? { primaryColor: "#0891B2", secondaryColor: "#0E7490", accentColor: "#ECFEFF" };
   const portalName = lab.branding?.portalDisplayName ?? `بوابة ${lab.nameAr}`;
 
-  const isLabAdmin = session.role === "lab_admin";
+  const isLabAdmin = labUser.role === "lab_admin";
   const sections: { id: LabSection; labelAr: string; Icon: React.FC<{ size?: number; className?: string }> }[] = [
     { id: "orders",     labelAr: "الطلبات",       Icon: ClipboardList },
     { id: "results",    labelAr: "رفع النتائج",   Icon: Upload },
@@ -187,7 +121,7 @@ function LabPortalShell({ lab, session, onLogout }: { lab: Lab; session: LabSess
           <div className="flex-1 min-w-0">
             <p className="text-sm font-bold truncate" style={{ color: brand.primaryColor }}>{portalName}</p>
             <p className="text-[11px] truncate" style={{ color: brand.secondaryColor }}>
-              {session.fullName} · {LAB_USER_ROLE_LABELS[session.role]}
+              {labUser.fullName} · {LAB_USER_ROLE_LABELS[labUser.role]}
             </p>
           </div>
           <button onClick={onLogout} aria-label="تسجيل الخروج" className="w-8 h-8 rounded-lg hover:bg-white/60 flex items-center justify-center cursor-pointer">
@@ -223,8 +157,8 @@ function LabPortalShell({ lab, session, onLogout }: { lab: Lab; session: LabSess
 
       {/* Main */}
       <main className="flex-1 min-w-0 overflow-y-auto">
-        {section === "orders"     && <OrdersSection lab={lab} session={session} labOrders={labOrders} brand={brand} />}
-        {section === "results"    && <OrdersSection lab={lab} session={session} labOrders={labOrders.filter((o) => o.status !== "lab_issue")} brand={brand} resultsFocus />}
+        {section === "orders"     && <OrdersSection lab={lab} labUser={labUser} labOrders={labOrders} brand={brand} />}
+        {section === "results"    && <OrdersSection lab={lab} labUser={labUser} labOrders={labOrders.filter((o) => o.status !== "lab_issue")} brand={brand} resultsFocus />}
         {section === "issues"     && <IssuesSection lab={lab} labOrders={labOrders.filter((o) => o.status === "lab_issue" || (o.issues?.length ?? 0) > 0)} brand={brand} />}
         {section === "accounting" && (canAccount ? <AccountingSection lab={lab} brand={brand} /> : <NoAccess />)}
         {section === "lab_settings" && (isLabAdmin ? <LabSettingsSection lab={lab} /> : <NoAccess />)}
@@ -245,8 +179,8 @@ function NoAccess() {
 }
 
 // ─── Section: Orders / Results ───────────────────────────────────────────────
-function OrdersSection({ lab, session, labOrders, brand, resultsFocus }: {
-  lab: Lab; session: LabSession; labOrders: Order[];
+function OrdersSection({ lab, labUser, labOrders, brand, resultsFocus }: {
+  lab: Lab; labUser: LabUser; labOrders: Order[];
   brand: { primaryColor: string; secondaryColor: string; accentColor: string };
   resultsFocus?: boolean;
 }) {
@@ -367,7 +301,7 @@ function OrdersSection({ lab, session, labOrders, brand, resultsFocus }: {
                   variant="primary" size="sm"
                   disabled={selectedFiles.length === 0 || selected.status === "completed"}
                   onClick={() => {
-                    const ok = confirmResultsReady(selected.id, { actor: "lab", actorName: session.fullName });
+                    const ok = confirmResultsReady(selected.id, { actor: "lab", actorName: labUser.fullName });
                     if (ok) toast.success("تم إرسال النتائج — اكتمل الطلب");
                     else toast.error("ارفع ملف نتيجة واحداً على الأقل قبل التأكيد");
                   }}
@@ -468,7 +402,7 @@ function OrdersSection({ lab, session, labOrders, brand, resultsFocus }: {
                       </button>
                       <button
                         onClick={() => {
-                          archiveResultFile(selected.id, f.id, { actor: "lab", actorName: session.fullName });
+                          archiveResultFile(selected.id, f.id, { actor: "lab", actorName: labUser.fullName });
                           toast.success("تم أرشفة الملف");
                         }}
                         aria-label={`أرشفة ${f.fileName}`}
@@ -547,7 +481,7 @@ function OrdersSection({ lab, session, labOrders, brand, resultsFocus }: {
                 onSubmit={(type, description) => {
                   openLabIssue({
                     orderId: selected.id, labId: lab.id, type, description,
-                    createdBy: session.fullName, createdByRole: "lab",
+                    createdBy: labUser.fullName, createdByRole: "lab",
                   });
                   toast.success("تم تسجيل المشكلة");
                   setIssueOpen(false);
@@ -565,12 +499,12 @@ function OrdersSection({ lab, session, labOrders, brand, resultsFocus }: {
                       labId: lab.id,
                       fileUrl: f.dataUrl ?? `/results/${selected.id}/${f.name}`,
                       fileName: f.name,
-                      uploadedBy: session.fullName,
+                      uploadedBy: labUser.fullName,
                       note,
                     });
                   });
                   if (selected.status === "sent_to_lab") {
-                    setOrderStatus(selected.id, "lab_processing", { actor: "lab", actorName: session.fullName });
+                    setOrderStatus(selected.id, "lab_processing", { actor: "lab", actorName: labUser.fullName });
                   }
                   toast.success(files.length > 1 ? `تم رفع ${files.length} ملفات بنجاح` : "تم رفع الملف بنجاح");
                   setUploadOpen(false);
@@ -590,7 +524,7 @@ function OrdersSection({ lab, session, labOrders, brand, resultsFocus }: {
                     labId: lab.id,
                     fileUrl: f.dataUrl ?? `/results/${selected.id}/${f.name}`,
                     fileName: f.name,
-                    uploadedBy: session.fullName,
+                    uploadedBy: labUser.fullName,
                     note,
                     replacesFileId: replacingFileId,
                   });
@@ -603,7 +537,7 @@ function OrdersSection({ lab, session, labOrders, brand, resultsFocus }: {
             {openControlCenter && (
               <OrderControlCenter
                 order={selected}
-                role={{ role: "lab_user", actor: "lab", actorName: session.fullName }}
+                role={{ role: "lab_user", actor: "lab", actorName: labUser.fullName }}
                 nurses={[]}
                 labs={MOCK_LABS}
                 onClose={() => setOpenControlCenter(false)}

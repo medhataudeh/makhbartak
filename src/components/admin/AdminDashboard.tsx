@@ -9,7 +9,7 @@ import {
 } from "lucide-react";
 import {
   MOCK_ORDERS, ADMIN_STATS, MOCK_TESTS, MOCK_PACKAGES, MOCK_NURSES,
-  ORDER_STATUS_LABELS, MOCK_ADMINS, MOCK_INVOICES,
+  ORDER_STATUS_LABELS, MOCK_INVOICES,
   MOCK_ICONS, MOCK_SLIDERS, MOCK_PATIENTS, MOCK_ADDRESSES, MOCK_NOTIFICATIONS,
   MOCK_COUPONS, MOCK_NURSE_ROUTES, MOCK_GAMIFICATION,
   NURSE_LEVELS, NURSE_BADGES, GAMIFICATION_CONFIG, canAccess,
@@ -42,6 +42,11 @@ import { useActivityLogs } from "@/lib/activity-log";
 import { logActivity } from "@/lib/activity-log";
 import { useToast } from "@/components/ui/Toast";
 import { useSystemSettings, updateSystemSettings } from "@/lib/system-settings";
+import {
+  useAdmins, upsertAdmin, deleteAdmin, setAdminActive,
+  useCustomerUsers, upsertCustomerUser, deleteCustomerUser, setCustomerUserActive, resetCustomerUserPassword,
+  useNurseUsers, upsertNurseUser, deleteNurseUser, setNurseUserActive, resetNurseUserPassword,
+} from "@/lib/auth";
 
 interface AdminDashboardProps {
   user: AdminUser;
@@ -116,7 +121,6 @@ export function AdminDashboard({ user, onLogout }: AdminDashboardProps) {
   const [nurses, setNurses]               = useState<Nurse[]>(MOCK_NURSES);
   const [sliders, setSliders]             = useState<SliderItem[]>(MOCK_SLIDERS);
   const [icons, setIcons]                 = useState<SvgIcon[]>(MOCK_ICONS);
-  const [admins, setAdmins]               = useState<AdminUser[]>(MOCK_ADMINS);
   const [orders, setOrders]               = useState<Order[]>(MOCK_ORDERS);
   const [routes, setRoutes]               = useState<NurseRoute[]>(MOCK_NURSE_ROUTES);
   const [notifications, setNotifications] = useState<Notification[]>(MOCK_NOTIFICATIONS);
@@ -251,7 +255,7 @@ export function AdminDashboard({ user, onLogout }: AdminDashboardProps) {
           {section === "content"       && <ContentAdmin  adminId={user.id} adminName={user.name} adminRole={user.role} />}
           {section === "libraries"     && <LibrariesAdmin adminId={user.id} adminName={user.name} adminRole={user.role} />}
           {section === "notifications" && <NotificationsAdmin notifications={notifications} setNotifications={setNotifications} />}
-          {section === "admins"        && <AdminsAdmin admins={admins} setAdmins={setAdmins} currentUser={user} />}
+          {section === "admins"        && <AdminsAdmin currentUser={user} />}
           {section === "activity"      && <ActivityAdmin />}
           {section === "settings"      && <SettingsAdmin />}
         </main>
@@ -2058,13 +2062,13 @@ function NotificationsAdmin({ notifications, setNotifications }: { notifications
 
 // ════════════════════════════ Admins / Activity / Settings ══════════════════
 
-function AdminsAdmin({ admins, setAdmins, currentUser }: {
-  admins: AdminUser[]; setAdmins: React.Dispatch<React.SetStateAction<AdminUser[]>>; currentUser: AdminUser;
-}) {
+function AdminsAdmin({ currentUser }: { currentUser: AdminUser }) {
   const toast = useToast();
+  const admins = useAdmins();
   const [editing, setEditing] = useState<AdminUser | null>(null);
   const [creating, setCreating] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState<AdminUser | null>(null);
+  const [tab, setTab] = useState<"admins" | "customers" | "nurses">("admins");
 
   if (currentUser.role !== "super_admin") {
     return <p className="text-sm text-gray-500">هذه الصفحة متاحة للمدير العام فقط.</p>;
@@ -2072,7 +2076,7 @@ function AdminsAdmin({ admins, setAdmins, currentUser }: {
 
   const upsert = (a: AdminUser) => {
     const exists = admins.find((x) => x.id === a.id);
-    setAdmins((prev) => exists ? prev.map((x) => x.id === a.id ? a : x) : [...prev, a]);
+    upsertAdmin(a);
     logActivity({ adminId: currentUser.id, adminName: currentUser.name, role: currentUser.role, action: "user_edit", entity: "admin", entityId: a.id, details: exists ? `تعديل الموظف ${a.name}` : `إضافة الموظف ${a.name}` });
     toast.success("تم الحفظ بنجاح");
     setEditing(null); setCreating(false);
@@ -2080,56 +2084,271 @@ function AdminsAdmin({ admins, setAdmins, currentUser }: {
 
   return (
     <div className="space-y-4">
-      <div className="flex justify-between items-center">
-        <p className="text-sm text-gray-500">{admins.length} موظف</p>
-        <Button size="sm" variant="secondary" onClick={() => setCreating(true)}><Plus size={13} aria-hidden="true" /> إضافة موظف</Button>
+      <div className="flex items-center gap-2 border-b border-gray-100">
+        {[
+          { id: "admins" as const, label: "موظفو لوحة الإدارة" },
+          { id: "customers" as const, label: "حسابات العملاء" },
+          { id: "nurses" as const, label: "حسابات الممرضين" },
+        ].map((t) => (
+          <button
+            key={t.id}
+            onClick={() => setTab(t.id)}
+            aria-current={tab === t.id ? "page" : undefined}
+            className={tab === t.id
+              ? "px-3 py-2 text-sm font-semibold text-[#0E7490] border-b-2 border-[#0891B2] cursor-pointer"
+              : "px-3 py-2 text-sm font-medium text-gray-500 hover:text-[#164E63] cursor-pointer"}
+          >
+            {t.label}
+          </button>
+        ))}
       </div>
-      <Section title="موظفو لوحة الإدارة">
+
+      {tab === "admins" && (
+        <>
+          <div className="flex justify-between items-center">
+            <p className="text-sm text-gray-500">{admins.length} موظف</p>
+            <Button size="sm" variant="secondary" onClick={() => setCreating(true)}><Plus size={13} aria-hidden="true" /> إضافة موظف</Button>
+          </div>
+          <Section title="موظفو لوحة الإدارة">
+            <DataTable
+              rows={admins}
+              columns={[
+                { key: "user",   label: "اسم المستخدم", render: (a) => <span className="lat" dir="ltr">{a.username}</span> },
+                { key: "name",   label: "الاسم",         render: (a) => a.name },
+                { key: "role",   label: "الدور",         render: (a) => <Pill color="cyan">{ROLE_LABELS[a.role]}</Pill> },
+                { key: "active", label: "حالة",          render: (a) => a.isActive ? <Pill color="green">نشط</Pill> : <Pill color="red">موقوف</Pill> },
+                { key: "last",   label: "آخر دخول",      render: (a) => <span className="text-xs text-gray-500">{a.lastLogin ? relativeTime(a.lastLogin) : "—"}</span> },
+                { key: "act",    label: "إجراءات",       render: (a) => (
+                  <ActionMenu row={a} isActive={a.isActive}
+                    onEdit={(r) => setEditing(r)}
+                    onDelete={(r) => setConfirmDelete(r)}
+                    onToggle={(r) => setAdminActive(r.id, !r.isActive)}
+                  />
+                )},
+              ]}
+            />
+          </Section>
+
+          <Section title="الأدوار والصلاحيات">
+            <ul className="space-y-2 text-sm">
+              {Object.entries(ROLE_LABELS).map(([role, label]) => (
+                <li key={role} className="bg-gray-50 rounded-xl p-3">
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="font-semibold text-[#164E63]">{label}</span>
+                    <span className="lat text-[11px] text-gray-400" dir="ltr">{role}</span>
+                  </div>
+                  <p className="text-xs text-gray-500">
+                    {currentUser.role === "super_admin" && role === "super_admin"
+                      ? "كل الصلاحيات"
+                      : (admins.filter((a) => a.role === role).length + " موظفين بهذا الدور")}
+                  </p>
+                </li>
+              ))}
+            </ul>
+          </Section>
+
+          {(editing || creating) && <AdminForm initial={editing ?? undefined} onCancel={() => { setEditing(null); setCreating(false); }} onSubmit={upsert} />}
+          {confirmDelete && (
+            <ConfirmModal title="حذف الموظف" message={`حذف "${confirmDelete.name}"؟`} danger
+              onCancel={() => setConfirmDelete(null)}
+              onConfirm={() => { deleteAdmin(confirmDelete.id); toast.success("تم الحذف"); setConfirmDelete(null); }}
+            />
+          )}
+        </>
+      )}
+
+      {tab === "customers" && <CustomerAccountsAdmin currentUser={currentUser} />}
+      {tab === "nurses"    && <NurseAccountsAdmin    currentUser={currentUser} />}
+    </div>
+  );
+}
+
+function CustomerAccountsAdmin({ currentUser }: { currentUser: AdminUser }) {
+  const toast = useToast();
+  const users = useCustomerUsers();
+  const [editing, setEditing] = useState<import("@/lib/types").AuthUser | null>(null);
+  const [creating, setCreating] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState<import("@/lib/types").AuthUser | null>(null);
+  const [resetTarget, setResetTarget] = useState<import("@/lib/types").AuthUser | null>(null);
+
+  return (
+    <>
+      <div className="flex justify-between items-center">
+        <p className="text-sm text-gray-500">{users.length} عميل</p>
+        <Button size="sm" variant="secondary" onClick={() => setCreating(true)}><Plus size={13} aria-hidden="true" /> إضافة عميل</Button>
+      </div>
+      <Section title="حسابات العملاء">
         <DataTable
-          rows={admins}
+          rows={users}
           columns={[
-            { key: "user",   label: "اسم المستخدم", render: (a) => <span className="lat" dir="ltr">{a.username}</span> },
-            { key: "name",   label: "الاسم",         render: (a) => a.name },
-            { key: "role",   label: "الدور",         render: (a) => <Pill color="cyan">{ROLE_LABELS[a.role]}</Pill> },
-            { key: "active", label: "حالة",          render: (a) => a.isActive ? <Pill color="green">نشط</Pill> : <Pill color="red">موقوف</Pill> },
-            { key: "last",   label: "آخر دخول",      render: (a) => <span className="text-xs text-gray-500">{a.lastLogin ? relativeTime(a.lastLogin) : "—"}</span> },
-            { key: "act",    label: "إجراءات",       render: (a) => (
-              <ActionMenu row={a} isActive={a.isActive}
-                onEdit={(r) => setEditing(r)}
-                onDelete={(r) => setConfirmDelete(r)}
-                onToggle={(r) => setAdmins((prev) => prev.map((x) => x.id === r.id ? { ...x, isActive: !x.isActive } : x))}
-              />
+            { key: "user", label: "اسم المستخدم", render: (u) => <span className="lat" dir="ltr">{u.username}</span> },
+            { key: "name", label: "الاسم",        render: (u) => u.name },
+            { key: "linked", label: "ربط",        render: (u) => <span className="lat text-[11px] text-gray-400" dir="ltr">{u.linkedEntityId}</span> },
+            { key: "active", label: "حالة",       render: (u) => u.isActive ? <Pill color="green">نشط</Pill> : <Pill color="red">موقوف</Pill> },
+            { key: "last", label: "آخر دخول",     render: (u) => <span className="text-xs text-gray-500">{u.lastLoginAt ? relativeTime(u.lastLoginAt) : "—"}</span> },
+            { key: "act", label: "إجراءات",       render: (u) => (
+              <div className="flex items-center gap-2">
+                <Button size="sm" variant="ghost" onClick={() => setResetTarget(u)}>إعادة تعيين كلمة المرور</Button>
+                <ActionMenu row={u} isActive={u.isActive}
+                  onEdit={(r) => setEditing(r)}
+                  onDelete={(r) => setConfirmDelete(r)}
+                  onToggle={(r) => setCustomerUserActive(r.id, !r.isActive)}
+                />
+              </div>
             )},
           ]}
         />
       </Section>
 
-      <Section title="الأدوار والصلاحيات">
-        <ul className="space-y-2 text-sm">
-          {Object.entries(ROLE_LABELS).map(([role, label]) => (
-            <li key={role} className="bg-gray-50 rounded-xl p-3">
-              <div className="flex items-center justify-between mb-1">
-                <span className="font-semibold text-[#164E63]">{label}</span>
-                <span className="lat text-[11px] text-gray-400" dir="ltr">{role}</span>
-              </div>
-              <p className="text-xs text-gray-500">
-                {currentUser.role === "super_admin" && role === "super_admin"
-                  ? "كل الصلاحيات"
-                  : (admins.filter((a) => a.role === role).length + " موظفين بهذا الدور")}
-              </p>
-            </li>
-          ))}
-        </ul>
-      </Section>
+      {(editing || creating) && <AuthUserForm role="customer" initial={editing ?? undefined} onCancel={() => { setEditing(null); setCreating(false); }} onSubmit={(u) => {
+        upsertCustomerUser(u);
+        logActivity({ adminId: currentUser.id, adminName: currentUser.name, role: currentUser.role, action: "user_edit", entity: "customer_user", entityId: u.id, details: editing ? `تعديل حساب العميل ${u.name}` : `إضافة حساب عميل ${u.name}` });
+        toast.success("تم الحفظ بنجاح"); setEditing(null); setCreating(false);
+      }} />}
 
-      {(editing || creating) && <AdminForm initial={editing ?? undefined} onCancel={() => { setEditing(null); setCreating(false); }} onSubmit={upsert} />}
       {confirmDelete && (
-        <ConfirmModal title="حذف الموظف" message={`حذف "${confirmDelete.name}"؟`} danger
+        <ConfirmModal title="حذف الحساب" message={`حذف "${confirmDelete.name}"؟`} danger
           onCancel={() => setConfirmDelete(null)}
-          onConfirm={() => { setAdmins((prev) => prev.filter((x) => x.id !== confirmDelete.id)); toast.success("تم الحذف"); setConfirmDelete(null); }}
+          onConfirm={() => { deleteCustomerUser(confirmDelete.id); toast.success("تم الحذف"); setConfirmDelete(null); }}
         />
       )}
-    </div>
+
+      {resetTarget && (
+        <PasswordResetModal target={resetTarget} onCancel={() => setResetTarget(null)}
+          onConfirm={(pw) => { resetCustomerUserPassword(resetTarget.id, pw); toast.success("تم إعادة تعيين كلمة المرور"); setResetTarget(null); }}
+        />
+      )}
+    </>
+  );
+}
+
+function NurseAccountsAdmin({ currentUser }: { currentUser: AdminUser }) {
+  const toast = useToast();
+  const users = useNurseUsers();
+  const [editing, setEditing] = useState<import("@/lib/types").AuthUser | null>(null);
+  const [creating, setCreating] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState<import("@/lib/types").AuthUser | null>(null);
+  const [resetTarget, setResetTarget] = useState<import("@/lib/types").AuthUser | null>(null);
+
+  return (
+    <>
+      <div className="flex justify-between items-center">
+        <p className="text-sm text-gray-500">{users.length} ممرض</p>
+        <Button size="sm" variant="secondary" onClick={() => setCreating(true)}><Plus size={13} aria-hidden="true" /> إضافة ممرض</Button>
+      </div>
+      <Section title="حسابات الممرضين">
+        <DataTable
+          rows={users}
+          columns={[
+            { key: "user", label: "اسم المستخدم", render: (u) => <span className="lat" dir="ltr">{u.username}</span> },
+            { key: "name", label: "الاسم",        render: (u) => u.name },
+            { key: "linked", label: "ربط",        render: (u) => {
+              const nurse = MOCK_NURSES.find((n) => n.id === u.linkedEntityId);
+              return <span className="text-xs text-gray-500">{nurse ? nurse.name : <span className="lat" dir="ltr">{u.linkedEntityId}</span>}</span>;
+            } },
+            { key: "active", label: "حالة",       render: (u) => u.isActive ? <Pill color="green">نشط</Pill> : <Pill color="red">موقوف</Pill> },
+            { key: "last", label: "آخر دخول",     render: (u) => <span className="text-xs text-gray-500">{u.lastLoginAt ? relativeTime(u.lastLoginAt) : "—"}</span> },
+            { key: "act", label: "إجراءات",       render: (u) => (
+              <div className="flex items-center gap-2">
+                <Button size="sm" variant="ghost" onClick={() => setResetTarget(u)}>إعادة تعيين كلمة المرور</Button>
+                <ActionMenu row={u} isActive={u.isActive}
+                  onEdit={(r) => setEditing(r)}
+                  onDelete={(r) => setConfirmDelete(r)}
+                  onToggle={(r) => setNurseUserActive(r.id, !r.isActive)}
+                />
+              </div>
+            )},
+          ]}
+        />
+      </Section>
+
+      {(editing || creating) && <AuthUserForm role="nurse" initial={editing ?? undefined} onCancel={() => { setEditing(null); setCreating(false); }} onSubmit={(u) => {
+        upsertNurseUser(u);
+        logActivity({ adminId: currentUser.id, adminName: currentUser.name, role: currentUser.role, action: "user_edit", entity: "nurse_user", entityId: u.id, details: editing ? `تعديل حساب الممرض ${u.name}` : `إضافة حساب ممرض ${u.name}` });
+        toast.success("تم الحفظ بنجاح"); setEditing(null); setCreating(false);
+      }} />}
+
+      {confirmDelete && (
+        <ConfirmModal title="حذف الحساب" message={`حذف "${confirmDelete.name}"؟`} danger
+          onCancel={() => setConfirmDelete(null)}
+          onConfirm={() => { deleteNurseUser(confirmDelete.id); toast.success("تم الحذف"); setConfirmDelete(null); }}
+        />
+      )}
+
+      {resetTarget && (
+        <PasswordResetModal target={resetTarget} onCancel={() => setResetTarget(null)}
+          onConfirm={(pw) => { resetNurseUserPassword(resetTarget.id, pw); toast.success("تم إعادة تعيين كلمة المرور"); setResetTarget(null); }}
+        />
+      )}
+    </>
+  );
+}
+
+function AuthUserForm({ role, initial, onCancel, onSubmit }: {
+  role: "customer" | "nurse";
+  initial?: import("@/lib/types").AuthUser;
+  onCancel: () => void;
+  onSubmit: (u: import("@/lib/types").AuthUser) => void;
+}) {
+  const idPrefix = role === "customer" ? "cu" : "nu";
+  const [draft, setDraft] = useState<import("@/lib/types").AuthUser>(() => initial ?? {
+    id: `${idPrefix}-${Date.now()}`,
+    username: "",
+    password: "",
+    name: "",
+    role,
+    linkedEntityId: "",
+    isActive: true,
+  });
+  const set = <K extends keyof import("@/lib/types").AuthUser>(k: K, v: import("@/lib/types").AuthUser[K]) =>
+    setDraft((d) => ({ ...d, [k]: v }));
+  return (
+    <Modal title={initial ? (role === "customer" ? "تعديل عميل" : "تعديل ممرض") : (role === "customer" ? "إضافة عميل" : "إضافة ممرض")} onClose={onCancel}>
+      <div className="space-y-3">
+        <Field label="الاسم *"><TextInput value={draft.name} onChange={(e) => set("name", e.target.value)} /></Field>
+        <Field label="اسم المستخدم *"><TextInput value={draft.username} onChange={(e) => set("username", e.target.value)} style={{ direction: "ltr", textAlign: "right" }} /></Field>
+        <Field label="كلمة المرور *"><TextInput type="text" value={draft.password} onChange={(e) => set("password", e.target.value)} style={{ direction: "ltr", textAlign: "right" }} /></Field>
+        {role === "nurse" ? (
+          <Field label="ربط بسجل الممرض *">
+            <select value={draft.linkedEntityId} onChange={(e) => set("linkedEntityId", e.target.value)} className="w-full h-10 px-3 rounded-xl border border-gray-200 text-sm cursor-pointer">
+              <option value="">— اختر ممرضاً —</option>
+              {MOCK_NURSES.map((n) => <option key={n.id} value={n.id}>{n.name}</option>)}
+            </select>
+          </Field>
+        ) : (
+          <Field label="معرّف العميل *"><TextInput value={draft.linkedEntityId} onChange={(e) => set("linkedEntityId", e.target.value)} placeholder="مثال: u-3" style={{ direction: "ltr", textAlign: "right" }} /></Field>
+        )}
+        <div className="flex items-center justify-between">
+          <span className="text-sm text-[#164E63]">نشط</span>
+          <Toggle checked={draft.isActive} onChange={(v) => set("isActive", v)} label="نشط" />
+        </div>
+      </div>
+      <div className="flex justify-end gap-2 mt-4">
+        <Button variant="outline" onClick={onCancel}>إلغاء</Button>
+        <Button variant="primary" disabled={!draft.username.trim() || !draft.password.trim() || !draft.name.trim() || !draft.linkedEntityId.trim()} onClick={() => onSubmit(draft)}>حفظ</Button>
+      </div>
+    </Modal>
+  );
+}
+
+function PasswordResetModal({ target, onCancel, onConfirm }: {
+  target: import("@/lib/types").AuthUser;
+  onCancel: () => void;
+  onConfirm: (newPassword: string) => void;
+}) {
+  const [pw, setPw] = useState("");
+  return (
+    <Modal title={`إعادة تعيين كلمة مرور — ${target.name}`} onClose={onCancel}>
+      <div className="space-y-3">
+        <Field label="كلمة مرور جديدة *">
+          <TextInput type="text" value={pw} onChange={(e) => setPw(e.target.value)} style={{ direction: "ltr", textAlign: "right" }} />
+        </Field>
+      </div>
+      <div className="flex justify-end gap-2 mt-4">
+        <Button variant="outline" onClick={onCancel}>إلغاء</Button>
+        <Button variant="primary" disabled={!pw.trim()} onClick={() => onConfirm(pw.trim())}>حفظ</Button>
+      </div>
+    </Modal>
   );
 }
 
@@ -2227,7 +2446,7 @@ function SettingsAdmin() {
     eveningShiftEnd:   live.eveningShiftEnd,
     whatsappNumber:    live.whatsappNumber,
     supportedCities:   live.supportedCities,
-    bookingHorizonDays: live.bookingHorizonDays,
+    bookingWindowDays: live.bookingWindowDays,
     maxOrdersPerShift:  live.maxOrdersPerShift,
   });
   const [newCity, setNewCity] = useState("");
@@ -2242,7 +2461,7 @@ function SettingsAdmin() {
     draft.eveningShiftStart        !== live.eveningShiftStart ||
     draft.eveningShiftEnd          !== live.eveningShiftEnd ||
     draft.whatsappNumber           !== live.whatsappNumber ||
-    draft.bookingHorizonDays       !== live.bookingHorizonDays ||
+    draft.bookingWindowDays        !== live.bookingWindowDays ||
     draft.maxOrdersPerShift        !== live.maxOrdersPerShift ||
     JSON.stringify(draft.supportedCities) !== JSON.stringify(live.supportedCities);
 
@@ -2253,7 +2472,7 @@ function SettingsAdmin() {
     if (draft.morningShiftStart >= draft.morningShiftEnd) return "نهاية فترة الصباح يجب أن تكون بعد بدايتها";
     if (draft.eveningShiftStart >= draft.eveningShiftEnd) return "نهاية فترة المساء يجب أن تكون بعد بدايتها";
     if (draft.supportedCities.length === 0) return "يجب وجود مدينة واحدة على الأقل";
-    if (!Number.isFinite(draft.bookingHorizonDays) || draft.bookingHorizonDays < 1) return "أفق الحجز يجب أن يكون يوماً واحداً على الأقل";
+    if (!Number.isFinite(draft.bookingWindowDays) || draft.bookingWindowDays < 0) return "نافذة الحجز يجب أن تكون 0 أو أكثر (0 = اليوم فقط)";
     if (!Number.isFinite(draft.maxOrdersPerShift) || draft.maxOrdersPerShift < 0) return "الحد الأقصى للحجوزات يجب أن يكون 0 أو أكثر (0 = بدون حد)";
     return null;
   };
@@ -2313,12 +2532,16 @@ function SettingsAdmin() {
           <Field label="نهاية فترة المساء">
             <TextInput type="time" value={draft.eveningShiftEnd} onChange={(e) => set("eveningShiftEnd", e.target.value)} />
           </Field>
-          <Field label="أفق الحجز (أيام)">
+          <Field label="نافذة الحجز (عدد الأيام بعد اليوم)">
             <TextInput
               type="number"
-              value={String(draft.bookingHorizonDays)}
-              onChange={(e) => set("bookingHorizonDays", Number(e.target.value))}
+              min="0"
+              value={String(draft.bookingWindowDays)}
+              onChange={(e) => set("bookingWindowDays", Number(e.target.value))}
             />
+            <p className="text-[11px] text-gray-400 mt-1 leading-relaxed">
+              مثال: ٢ يعني يستطيع العميل اختيار اليوم وغداً وبعد غد.
+            </p>
           </Field>
           <Field label="الحد الأقصى للحجوزات في الفترة (0 = بدون حد)">
             <TextInput

@@ -2,16 +2,29 @@
 import { useState } from "react";
 import { motion } from "framer-motion";
 import { Lock, User, Eye, EyeOff, FlaskConical, AlertCircle } from "lucide-react";
-import { MOCK_ADMINS } from "@/lib/mock-data";
-import { ROLE_LABELS } from "@/lib/types";
-import type { AdminUser } from "@/lib/types";
 import { Button } from "@/components/ui/Button";
+import { loginUser } from "@/lib/auth";
+import type { AuthSession, Role } from "@/lib/types";
 
-interface AdminLoginProps {
-  onLogin: (user: AdminUser) => void;
+interface DemoCredential {
+  label: string;
+  username: string;
+  password: string;
 }
 
-export function AdminLogin({ onLogin }: AdminLoginProps) {
+interface Props {
+  brandTitle: string;
+  brandSubtitle?: string;
+  /** Restrict accepted role; mismatched role is treated as invalid credentials. */
+  allowedRoles?: Role[];
+  onSuccess: (session: AuthSession) => void;
+  /** Demo creds shown under a collapsible (prototype only). */
+  demoCredentials?: DemoCredential[];
+}
+
+export function LoginForm({
+  brandTitle, brandSubtitle, allowedRoles, onSuccess, demoCredentials,
+}: Props) {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
@@ -26,20 +39,22 @@ export function AdminLogin({ onLogin }: AdminLoginProps) {
       return;
     }
     setLoading(true);
-    await new Promise((r) => setTimeout(r, 700));
-    const user = MOCK_ADMINS.find(
-      (u) => u.username.toLowerCase() === username.trim().toLowerCase() && u.password === password,
-    );
+    await new Promise((r) => setTimeout(r, 500));
+    const result = loginUser(username, password);
     setLoading(false);
-    if (!user) {
-      setError("اسم المستخدم أو كلمة المرور غير صحيحة");
+    if (!result.ok || !result.session) {
+      setError(
+        result.error === "inactive"
+          ? "هذا الحساب موقوف. تواصل مع المدير العام."
+          : "اسم المستخدم أو كلمة المرور غير صحيحة",
+      );
       return;
     }
-    if (!user.isActive) {
-      setError("هذا الحساب موقوف. تواصل مع المدير العام.");
+    if (allowedRoles && !allowedRoles.includes(result.session.role)) {
+      setError("لا تملك صلاحية الوصول إلى هذه المنصة بهذا الحساب.");
       return;
     }
-    onLogin(user);
+    onSuccess(result.session);
   };
 
   return (
@@ -50,21 +65,19 @@ export function AdminLogin({ onLogin }: AdminLoginProps) {
         transition={{ duration: 0.3, ease: "easeOut" }}
         className="w-full max-w-md bg-white rounded-2xl border border-gray-100 p-6 md:p-8"
       >
-        {/* Brand */}
         <div className="flex items-center gap-3 mb-6">
           <div className="w-12 h-12 rounded-2xl bg-[#ECFEFF] flex items-center justify-center">
             <FlaskConical size={22} className="text-[#0891B2]" aria-hidden="true" />
           </div>
           <div>
-            <h1 className="text-lg font-bold text-[#164E63]">لوحة الإدارة — مختبرك</h1>
-            <p className="text-xs text-gray-500">تسجيل دخول الموظفين</p>
+            <h1 className="text-lg font-bold text-[#164E63]">{brandTitle}</h1>
+            {brandSubtitle && <p className="text-xs text-gray-500">{brandSubtitle}</p>}
           </div>
         </div>
 
         <form onSubmit={submit} className="space-y-4">
-          {/* Username */}
           <div>
-            <label htmlFor="admin-username" className="text-xs font-medium text-gray-500 mb-1.5 block">
+            <label htmlFor="login-username" className="text-xs font-medium text-gray-500 mb-1.5 block">
               اسم المستخدم
             </label>
             <div className="relative">
@@ -74,22 +87,20 @@ export function AdminLogin({ onLogin }: AdminLoginProps) {
                 aria-hidden="true"
               />
               <input
-                id="admin-username"
+                id="login-username"
                 type="text"
                 autoComplete="username"
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
                 className="w-full h-11 ps-10 pe-3 rounded-xl border border-gray-200 text-sm text-[#164E63] placeholder:text-gray-400 focus:border-[#0891B2] focus:ring-2 focus:ring-[#0891B2]/15 outline-none transition-all"
-                placeholder="admin"
                 style={{ direction: "ltr", textAlign: "right" }}
                 required
               />
             </div>
           </div>
 
-          {/* Password */}
           <div>
-            <label htmlFor="admin-password" className="text-xs font-medium text-gray-500 mb-1.5 block">
+            <label htmlFor="login-password" className="text-xs font-medium text-gray-500 mb-1.5 block">
               كلمة المرور
             </label>
             <div className="relative">
@@ -99,7 +110,7 @@ export function AdminLogin({ onLogin }: AdminLoginProps) {
                 aria-hidden="true"
               />
               <input
-                id="admin-password"
+                id="login-password"
                 type={showPassword ? "text" : "password"}
                 autoComplete="current-password"
                 value={password}
@@ -137,18 +148,19 @@ export function AdminLogin({ onLogin }: AdminLoginProps) {
           </Button>
         </form>
 
-        {/* Demo credentials hint */}
-        <details className="mt-6 text-xs text-gray-500">
-          <summary className="cursor-pointer font-semibold text-[#0E7490]">حسابات تجريبية</summary>
-          <ul className="mt-2 space-y-1 leading-relaxed">
-            {MOCK_ADMINS.map((a) => (
-              <li key={a.id} className="flex items-center justify-between border-b border-gray-50 py-1">
-                <span className="text-[#164E63] font-medium">{ROLE_LABELS[a.role]}</span>
-                <span className="lat" dir="ltr">{a.username} / {a.password}</span>
-              </li>
-            ))}
-          </ul>
-        </details>
+        {demoCredentials && demoCredentials.length > 0 && (
+          <details className="mt-6 text-xs text-gray-500">
+            <summary className="cursor-pointer font-semibold text-[#0E7490]">حسابات تجريبية</summary>
+            <ul className="mt-2 space-y-1 leading-relaxed">
+              {demoCredentials.map((c) => (
+                <li key={c.username} className="flex items-center justify-between border-b border-gray-50 py-1">
+                  <span className="text-[#164E63] font-medium">{c.label}</span>
+                  <span className="lat" dir="ltr">{c.username} / {c.password}</span>
+                </li>
+              ))}
+            </ul>
+          </details>
+        )}
       </motion.div>
     </div>
   );

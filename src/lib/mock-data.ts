@@ -7,6 +7,7 @@ import type {
   GamificationConfig, Lab, LabUser, LabPriceAgreement,
   LabSettlement, LabSettlementItem, ContentPage, OrderRating,
   LibraryInstruction, LibraryTool, NurseChecklistDefaults,
+  AuthUser,
 } from "./types";
 import { ROLE_PERMISSIONS } from "./types";
 
@@ -440,6 +441,12 @@ interface ShiftConfigsInput {
   ordersForDate?: { shift: "morning" | "evening"; status: string }[];
   /** 0 = unlimited. */
   maxOrdersPerShift?: number;
+  /**
+   * Days beyond today still considered bookable. Defaults to a permissive 30
+   * if omitted (callers from the customer flow should always pass this from
+   * SystemSettings.bookingWindowDays).
+   */
+  bookingWindowDays?: number;
 }
 
 const NOT_AVAILABLE_AR = "هذا الموعد غير متاح، يرجى اختيار وقت آخر";
@@ -453,9 +460,15 @@ export function getShiftConfigs(input?: ShiftConfigsInput | number): ShiftConfig
 
   const minNotice = cfg.minNoticeMinutes ?? 120;
   const now = new Date();
+  const todayStr = new Date().toISOString().split("T")[0];
+  const todayMidnight = new Date(todayStr + "T00:00:00");
   const target = new Date(cfg.date + "T00:00:00");
-  const isPast = target < new Date(new Date().toISOString().split("T")[0] + "T00:00:00");
-  const isToday = cfg.date === new Date().toISOString().split("T")[0];
+  const isPast = target < todayMidnight;
+  const isToday = cfg.date === todayStr;
+  // Windowed: today + bookingWindowDays additional days are bookable.
+  const windowDays = cfg.bookingWindowDays ?? 30;
+  const daysAhead = Math.round((target.getTime() - todayMidnight.getTime()) / 86_400_000);
+  const isBeyondWindow = daysAhead > windowDays;
 
   const parseHM = (hm: string | undefined, fallback: number): { h: number; m: number } => {
     if (!hm) return { h: fallback, m: 0 };
@@ -474,10 +487,12 @@ export function getShiftConfigs(input?: ShiftConfigsInput | number): ShiftConfig
   ];
 
   return shifts.map((s) => {
-    let available = !isPast;
+    let available = !isPast && !isBeyondWindow;
     let reason: string | undefined;
 
     if (isPast) {
+      reason = NOT_AVAILABLE_AR;
+    } else if (isBeyondWindow) {
       reason = NOT_AVAILABLE_AR;
     } else if (isToday) {
       const shiftStart = new Date(target);
@@ -518,7 +533,7 @@ export const SYSTEM_SETTINGS: SystemSettings = {
   supportedCities: ["دمشق", "ريف دمشق"],
   whatsappNumber: "+963911000000",
   allowCashOrders: true,
-  bookingHorizonDays: 14,
+  bookingWindowDays: 2,
   maxOrdersPerShift: 0, // 0 = unlimited
 };
 
@@ -941,6 +956,21 @@ export const MOCK_LAB_USERS: LabUser[] = [
   { id: "lu-2", labId: "lab-1", username: "sham-acct",  password: "sham456", fullName: "هيا الكفري",   role: "lab_accounting", isActive: true },
   { id: "lu-3", labId: "lab-2", username: "noor-admin", password: "noor123", fullName: "د. سارة الحلبي", role: "lab_admin",      isActive: true },
   { id: "lu-4", labId: "lab-2", username: "noor-acct",  password: "noor456", fullName: "ريم القاسم",   role: "lab_accounting", isActive: true },
+];
+
+// ─── Customer login accounts ────────────────────────────────────────────────
+// linkedEntityId points at the User record (e.g. "u-1" carries the seed
+// patients/addresses/orders that this prototype's store returns globally).
+export const MOCK_CUSTOMER_USERS: AuthUser[] = [
+  { id: "cu-1", username: "customer1", password: "customer123", name: "أحمد محمد علي", role: "customer", linkedEntityId: "u-1", isActive: true },
+  { id: "cu-2", username: "customer2", password: "customer123", name: "فاطمة الحسن",  role: "customer", linkedEntityId: "u-2", isActive: true },
+];
+
+// ─── Nurse login accounts ───────────────────────────────────────────────────
+// linkedEntityId points at the Nurse record in MOCK_NURSES.
+export const MOCK_NURSE_USERS: AuthUser[] = [
+  { id: "nu-1", username: "nurse1", password: "nurse123", name: "محمد الأحمد", role: "nurse", linkedEntityId: "nur-1", isActive: true },
+  { id: "nu-2", username: "nurse2", password: "nurse123", name: "سارة السيد",  role: "nurse", linkedEntityId: "nur-2", isActive: true },
 ];
 
 // ─── Lab price agreements ──────────────────────────────────────────────────
