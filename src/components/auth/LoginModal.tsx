@@ -86,11 +86,9 @@ export function LoginModal({ open, reasonAr, onClose, onSuccess }: Props) {
         return;
       }
 
-      // Email channel
+      // Email channel — always routes through Supabase. The phone-only DEV
+      // OTP fallback never gates email auth.
       if (!isValidEmail(email)) { setError("يرجى إدخال بريد إلكتروني صحيح"); return; }
-      if (!useRemote) {
-        setError("البريد الإلكتروني غير مفعّل في النسخة التجريبية"); return;
-      }
       if (emailMode === "magic_link") {
         const res = await sendEmailMagicLink(email);
         if (!res.ok) { setError(res.error?.message ?? "تعذر إرسال الرابط"); return; }
@@ -126,7 +124,6 @@ export function LoginModal({ open, reasonAr, onClose, onSuccess }: Props) {
   const handleResetPassword = async () => {
     setError(""); setInfo("");
     if (!isValidEmail(email)) { setError("يرجى إدخال بريد إلكتروني صحيح"); return; }
-    if (!useRemote) { setError("غير متاح في النسخة التجريبية"); return; }
     setLoading(true);
     const res = await resetPassword(email);
     setLoading(false);
@@ -162,7 +159,6 @@ export function LoginModal({ open, reasonAr, onClose, onSuccess }: Props) {
           }
         }
       } else {
-        if (!useRemote) { setError("البريد الإلكتروني غير مفعّل في النسخة التجريبية"); return; }
         const res = await verifyEmailOtp(email, code);
         if (!res.ok) { setError(res.error?.message ?? "الرمز غير صحيح، حاول مرة أخرى"); return; }
       }

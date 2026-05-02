@@ -44,7 +44,7 @@ export async function sendCustomerOtp(phone: string): Promise<AuthResult> {
   const sb = getSupabaseBrowser();
   if (!sb) {
     if (USE_DEV_OTP) { console.log("Using DEV OTP fallback"); return { ok: true }; }
-    return { ok: false, error: { message: "supabase not configured" } };
+    return { ok: false, error: { message: "الخدمة غير متاحة، تحقق من إعدادات Supabase" } };
   }
   const { error } = await sb.auth.signInWithOtp({ phone });
   if (error) {
@@ -69,7 +69,7 @@ export async function verifyCustomerOtp(
     };
   }
   const sb = getSupabaseBrowser();
-  if (!sb) return { ok: false, error: { message: "supabase not configured" } };
+  if (!sb) return { ok: false, error: { message: "الخدمة غير متاحة، تحقق من إعدادات Supabase" } };
   const { data, error } = await sb.auth.verifyOtp({ phone, token, type: "sms" });
   if (error) {
     console.error("Supabase OTP error:", error);
@@ -91,7 +91,7 @@ export async function verifyCustomerOtp(
 
 export async function sendEmailMagicLink(email: string): Promise<AuthResult> {
   const sb = getSupabaseBrowser();
-  if (!sb) return { ok: false, error: { message: "supabase not configured" } };
+  if (!sb) return { ok: false, error: { message: "الخدمة غير متاحة، تحقق من إعدادات Supabase" } };
   const { error } = await sb.auth.signInWithOtp({
     email,
     options: {
@@ -110,7 +110,7 @@ export const sendEmailOtp = sendEmailMagicLink;
 
 export async function verifyEmailOtp(email: string, token: string): Promise<AuthResult> {
   const sb = getSupabaseBrowser();
-  if (!sb) return { ok: false, error: { message: "supabase not configured" } };
+  if (!sb) return { ok: false, error: { message: "الخدمة غير متاحة، تحقق من إعدادات Supabase" } };
   const { data, error } = await sb.auth.verifyOtp({ email, token, type: "email" });
   if (error) {
     console.error("Supabase email-OTP error:", error);
@@ -135,7 +135,7 @@ export async function signInWithEmailPassword(
   password: string
 ): Promise<AuthResult> {
   const sb = getSupabaseBrowser();
-  if (!sb) return { ok: false, error: { message: "supabase not configured" } };
+  if (!sb) return { ok: false, error: { message: "الخدمة غير متاحة، تحقق من إعدادات Supabase" } };
   const { data, error } = await sb.auth.signInWithPassword({ email, password });
   if (error) {
     console.error("Supabase signIn error:", error);
@@ -154,7 +154,7 @@ export async function signUpWithEmailPassword(
   password: string
 ): Promise<AuthResult> {
   const sb = getSupabaseBrowser();
-  if (!sb) return { ok: false, error: { message: "supabase not configured" } };
+  if (!sb) return { ok: false, error: { message: "الخدمة غير متاحة، تحقق من إعدادات Supabase" } };
   const { data, error } = await sb.auth.signUp({
     email, password,
     options: {
@@ -175,7 +175,7 @@ export async function signUpWithEmailPassword(
 
 export async function resetPassword(email: string): Promise<AuthResult> {
   const sb = getSupabaseBrowser();
-  if (!sb) return { ok: false, error: { message: "supabase not configured" } };
+  if (!sb) return { ok: false, error: { message: "الخدمة غير متاحة، تحقق من إعدادات Supabase" } };
   const { error } = await sb.auth.resetPasswordForEmail(email, {
     redirectTo: typeof window !== "undefined" ? `${window.location.origin}/reset-password` : undefined,
   });
