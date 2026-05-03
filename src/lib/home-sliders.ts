@@ -5,10 +5,11 @@ import { MOCK_SLIDERS } from "./mock-data";
 import { USE_SUPABASE } from "./supabase/flags";
 import { hydrateAdminSliders } from "./admin-catalog-api";
 
-// Customer-facing slider list. Hydrates from Supabase via the existing
-// /api/admin/sliders GET (the GET handler has no admin gate; only the
-// POST/DELETE require an admin session). MOCK_SLIDERS seeds the first paint
-// for flag-off mock mode and during the network round-trip.
+// Customer-facing slider list. Hydrates from Supabase via /api/admin/sliders
+// GET (no admin gate on GET — only POST/DELETE). Mock sliders seed the first
+// paint and act as the offline/empty fallback so the home hero never
+// disappears just because the DB has no rows yet.
+const MOCK_ACTIVE = MOCK_SLIDERS.filter((s) => s.isActive);
 let _sliders: SliderItem[] = [...MOCK_SLIDERS];
 let _hydratedOnce = false;
 const listeners = new Set<() => void>();
@@ -27,10 +28,13 @@ export function useSliders(): SliderItem[] {
     if (!USE_SUPABASE) return;
     void (async () => {
       const remote = await hydrateAdminSliders();
-      if (remote) {
-        _sliders = remote;
-        emit();
-      }
+      if (!remote) return;
+      // If the admin DB has no sliders (or none active), keep the mock
+      // fallback visible — an empty home hero is worse than a default one,
+      // and admins can replace it any time.
+      const activeRemote = remote.filter((s) => s.isActive);
+      _sliders = activeRemote.length > 0 ? remote : MOCK_ACTIVE;
+      emit();
     })();
   }, []);
   return useSyncExternalStore(subscribe, getSliders, () => MOCK_SLIDERS);

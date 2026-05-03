@@ -388,15 +388,22 @@ export function createOrder(input: CreateOrderInput): Order {
     bodyAr: initialNotifBody,
   });
   // Background remote write — Phase 1 routes through /api/orders (server-side
-  // service-role). Falls back to local-only when flag off or when the session
-  // isn't a customer (admin can't place orders in Phase 1).
-  void writeOrderRemote(order, input);
+  // service-role). The Promise is tracked by idempotencyKey so the caller
+  // (cart confirm) can await full hydration before navigating to the success
+  // screen, instead of showing success on a half-created remote order.
+  _remoteOrderPromises.set(input.idempotencyKey, writeOrderRemote(order, input));
   return order;
 }
 
-async function writeOrderRemote(order: Order, input: CreateOrderInput): Promise<void> {
-  if (!USE_SUPABASE) return;
-  if (!input.session || input.session.role !== "customer") return;
+const _remoteOrderPromises = new Map<string, Promise<{ ok: boolean; error?: string }>>();
+
+export function awaitOrderRemote(idempotencyKey: string): Promise<{ ok: boolean; error?: string }> {
+  return _remoteOrderPromises.get(idempotencyKey) ?? Promise.resolve({ ok: true });
+}
+
+async function writeOrderRemote(order: Order, input: CreateOrderInput): Promise<{ ok: boolean; error?: string }> {
+  if (!USE_SUPABASE) return { ok: true };
+  if (!input.session || input.session.role !== "customer") return { ok: true };
   const result = await apiCreateOrder(input.idempotencyKey, {
     type: order.type,
     packageId: order.packageSnapshot?.packageId,
@@ -420,7 +427,7 @@ async function writeOrderRemote(order: Order, input: CreateOrderInput): Promise<
   });
   if ("error" in result) {
     console.warn("[api/orders] create failed; keeping local order", result.error);
-    return;
+    return { ok: false, error: result.error };
   }
   // Swap the in-memory placeholder id for the real Supabase UUID so subsequent
   // reads (refresh → hydrate) align without duplicates. The `created` server
@@ -430,6 +437,7 @@ async function writeOrderRemote(order: Order, input: CreateOrderInput): Promise<
     _idempotency.set(input.idempotencyKey, result.order.id);
     emit();
   }
+  return { ok: true };
 }
 
 interface ActorRef { actor: OrderEvent["actor"]; actorName?: string }

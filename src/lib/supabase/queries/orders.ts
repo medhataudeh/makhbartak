@@ -19,6 +19,7 @@ const ORDER_SELECT = `
   subtotal, coupon_code, coupon_discount, total,
   payment_method, payment_status,
   nurse_id, lab_id, internal_notes, failed_reason,
+  patient_official_name, patient_national_id,
   package_snapshot, created_at, updated_at,
   address:addresses ( id, customer_id, label, description, city, lat, lng, is_default ),
   patient:patients ( id, customer_id, name, national_id, note, is_default ),
@@ -26,6 +27,20 @@ const ORDER_SELECT = `
   events:order_status_history ( id, status, actor_role, actor_name, note, created_at ),
   result_files:lab_result_files ( id, storage_path, file_name, mime_type, size_bytes, status, uploaded_at, archived_at ),
   issues:lab_issues ( id, lab_id, type, description, customer_message_ar, status, created_by_role, created_by_name, created_at, resolved_at, resolved_by_name, resolution_note )
+`;
+
+// Minimal fallback select — used when the full embedded select errors (e.g.
+// missing optional table on staging). Returns enough data to render the
+// success screen + customer order list without exposing nulls.
+const ORDER_SELECT_BARE = `
+  id, public_number, customer_id, kind, status,
+  visit_date, shift, shift_start_time, shift_end_time,
+  subtotal, coupon_code, coupon_discount, total,
+  payment_method, payment_status,
+  nurse_id, lab_id, internal_notes, failed_reason,
+  patient_official_name, patient_national_id,
+  package_snapshot, created_at, updated_at,
+  patient_id, address_id
 `;
 
 export async function fetchOrdersForCustomer(
@@ -155,14 +170,85 @@ export async function fetchOrderById(sb: SupabaseClient, id: string): Promise<Or
     .is("deleted_at", null)
     .maybeSingle();
   if (error) {
-    console.error("[supabase] fetchOrderById failed", { id, error });
-    return null;
+    console.error("[supabase] fetchOrderById embed failed; falling back to bare fetch", {
+      id,
+      code: error.code,
+      message: error.message,
+      details: error.details,
+      hint: error.hint,
+    });
+    return fetchOrderByIdBare(sb, id);
   }
   if (!data) {
     console.warn("[supabase] fetchOrderById: no row for id", id);
     return null;
   }
   return mapRowToOrder(data as unknown as RawOrderRow);
+}
+
+// Last-resort hydration when the embedded select fails (missing optional
+// table, schema drift, RLS surprise). Pulls the order row and its
+// dependencies one query at a time so we never return null on a row that
+// definitely exists.
+async function fetchOrderByIdBare(sb: SupabaseClient, id: string): Promise<Order | null> {
+  const { data: row, error } = await sb
+    .from("orders")
+    .select(ORDER_SELECT_BARE)
+    .eq("id", id)
+    .is("deleted_at", null)
+    .maybeSingle();
+  if (error) {
+    console.error("[supabase] fetchOrderByIdBare also failed", {
+      id, code: error.code, message: error.message, details: error.details,
+    });
+    return null;
+  }
+  if (!row) {
+    console.warn("[supabase] fetchOrderByIdBare: no row for id", id);
+    return null;
+  }
+  type Bare = {
+    id: string; public_number: string; customer_id: string; kind: string; status: string;
+    visit_date: string; shift: string;
+    shift_start_time: string | null; shift_end_time: string | null;
+    subtotal: number | string; coupon_code: string | null;
+    coupon_discount: number | string; total: number | string;
+    payment_method: string; payment_status: string;
+    nurse_id: string | null; lab_id: string | null;
+    internal_notes: string | null; failed_reason: string | null;
+    patient_official_name: string | null; patient_national_id: string | null;
+    package_snapshot: unknown;
+    created_at: string; updated_at: string;
+    patient_id: string; address_id: string;
+  };
+  const r = row as unknown as Bare;
+  const [{ data: patient }, { data: address }, { data: items }] = await Promise.all([
+    sb.from("patients").select("id, customer_id, name, national_id, note, is_default").eq("id", r.patient_id).maybeSingle(),
+    sb.from("addresses").select("id, customer_id, label, description, city, lat, lng, is_default").eq("id", r.address_id).maybeSingle(),
+    sb.from("order_items").select("id, lab_test_id, name_ar_snapshot, name_en_snapshot, price_snapshot, display_order").eq("order_id", id),
+  ]);
+  const composed: RawOrderRow = {
+    id: r.id, public_number: r.public_number, customer_id: r.customer_id,
+    kind: r.kind, status: r.status,
+    visit_date: r.visit_date, shift: r.shift,
+    shift_start_time: r.shift_start_time, shift_end_time: r.shift_end_time,
+    subtotal: r.subtotal, coupon_code: r.coupon_code,
+    coupon_discount: r.coupon_discount, total: r.total,
+    payment_method: r.payment_method, payment_status: r.payment_status,
+    nurse_id: r.nurse_id, lab_id: r.lab_id,
+    internal_notes: r.internal_notes, failed_reason: r.failed_reason,
+    patient_official_name: r.patient_official_name,
+    patient_national_id: r.patient_national_id,
+    package_snapshot: r.package_snapshot,
+    created_at: r.created_at, updated_at: r.updated_at,
+    address: (address ?? null) as RawAddress | null,
+    patient: (patient ?? null) as RawPatient | null,
+    items: (items ?? null) as RawItem[] | null,
+    events: null,
+    result_files: null,
+    issues: null,
+  };
+  return mapRowToOrder(composed);
 }
 
 function mapRowToOrder(r: RawOrderRow): Order {
@@ -212,6 +298,13 @@ function mapRowToOrder(r: RawOrderRow): Order {
       labId: r.lab_id ?? undefined,
       internalNotes: r.internal_notes ?? undefined,
       failedReason: r.failed_reason ?? undefined,
+      patientVerification: (r.patient_official_name || r.patient_national_id)
+        ? {
+            orderId: r.id,
+            officialName: r.patient_official_name ?? "",
+            nationalId: r.patient_national_id ?? "",
+          }
+        : undefined,
       events: ((r.events ?? []) as RawEvent[]).map<OrderEvent>((e) => ({
         id: e.id,
         orderId: r.id,
@@ -303,6 +396,8 @@ interface RawOrderRow {
   lab_id: string | null;
   internal_notes: string | null;
   failed_reason: string | null;
+  patient_official_name: string | null;
+  patient_national_id: string | null;
   package_snapshot: unknown;
   created_at: string;
   updated_at: string;

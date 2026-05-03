@@ -19,7 +19,7 @@ import { AccountScreen } from "@/components/account/AccountScreen";
 import { ShoppingCart, ChevronLeft } from "lucide-react";
 
 import type { Test, Package, Shift, Address, Patient, PaymentMethod } from "@/lib/types";
-import { useCustomerNotifications, createOrder, useOrderByIdempotencyKey, hydrateNotificationsForCustomer } from "@/lib/store";
+import { useCustomerNotifications, createOrder, useOrderByIdempotencyKey, hydrateNotificationsForCustomer, awaitOrderRemote } from "@/lib/store";
 import { useSystemSettings } from "@/lib/system-settings";
 import { COMMON_INSTRUCTIONS } from "@/lib/mock-data";
 import { dedupeInstructions, generateOrderNumber } from "@/lib/order-utils";
@@ -85,7 +85,7 @@ function CustomerApp({ userId }: { userId: string }) {
   const cartCount = booking.pkg ? 1 : (booking.tests?.length ?? 0);
   const hasCart = !!booking.pkg || (booking.tests?.length ?? 0) > 0;
 
-  const confirmPurchase = (snapshot: import("@/components/cart/CartScreen").CartConfirmSnapshot) => {
+  const confirmPurchase = async (snapshot: import("@/components/cart/CartScreen").CartConfirmSnapshot) => {
     // Local placeholder for the optimistic in-memory order; the server
     // generates the canonical HL-YYYY-NNNNNN and the store swaps it in.
     const publicNumber = generateOrderNumber();
@@ -119,6 +119,15 @@ function CustomerApp({ userId }: { userId: string }) {
     });
     setLastIdempotencyKey(snapshot.idempotencyKey);
     setBooking((b) => ({ ...b, paymentMethod: snapshot.paymentMethod }));
+    // Wait for the server to confirm the order is fully hydrated before
+    // navigating to the success screen. If the remote write fails, surface
+    // the error and stay on cart so the user doesn't see a "success" state
+    // for an order the backend never finished creating.
+    const remote = await awaitOrderRemote(snapshot.idempotencyKey);
+    if (!remote.ok) {
+      toast.error(remote.error ?? "تعذر إتمام الطلب. حاول مرة أخرى.");
+      return;
+    }
     setView("success");
   };
 

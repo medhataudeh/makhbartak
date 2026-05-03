@@ -105,6 +105,10 @@ export async function POST(req: NextRequest) {
     idempotency_key: idempotencyKey,
   });
   if (rpcErr || !orderId) {
+    console.error("[api/orders] place_order_admin failed", {
+      code: rpcErr?.code, message: rpcErr?.message,
+      details: rpcErr?.details, hint: rpcErr?.hint, customerId,
+    });
     return NextResponse.json({ error: rpcErr?.message ?? "place_order_admin returned no id" }, { status: 500 });
   }
 
@@ -112,17 +116,23 @@ export async function POST(req: NextRequest) {
   // — the row is already in `orders` and admin can assign manually later.
   const { error: autoErr } = await sb.rpc("auto_assign_order", { p_order_id: orderId });
   if (autoErr) {
-    console.warn("[api/orders] auto_assign_order failed; order created without assignment", autoErr.message);
+    console.warn("[api/orders] auto_assign_order failed; order created without assignment", {
+      code: autoErr.code, message: autoErr.message, details: autoErr.details, orderId,
+    });
   }
 
-  // Fetch the just-created order by its UUID via service role. This bypasses
-  // any customer-scoped filter and surfaces the underlying join/select error
-  // so we never return a 200 with order:null on a successful insert.
+  // Fetch the just-created order by its UUID via service role. fetchOrderById
+  // already retries with a bare select if the embedded select errors, so a
+  // null here means the row genuinely cannot be read — surface that to the
+  // client instead of pretending the create succeeded.
   const hydrated = await fetchOrderById(sb, orderId);
   if (!hydrated) {
-    console.error("[api/orders] place_order_admin succeeded but fetchOrderById returned null", { orderId, customerId });
+    console.error("[api/orders] place_order_admin succeeded but order could not be hydrated", { orderId, customerId });
     return NextResponse.json(
-      { error: "تم إنشاء الطلب لكن تعذر تحميل بياناته. حدّث الصفحة لعرض الطلب." },
+      {
+        error: "تعذر تحميل بيانات الطلب بعد إنشائه. حاول مرة أخرى أو راجع الدعم.",
+        orderId,
+      },
       { status: 500 },
     );
   }

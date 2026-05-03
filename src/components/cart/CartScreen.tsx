@@ -35,7 +35,7 @@ interface CartScreenProps {
   shift: Shift;
   address: Address;
   patient: Patient;
-  onConfirm: (snapshot: CartConfirmSnapshot) => void;
+  onConfirm: (snapshot: CartConfirmSnapshot) => void | Promise<void>;
   onBack: () => void;
 }
 
@@ -115,21 +115,27 @@ export function CartScreen({ tests, pkg, shift, address, patient, onConfirm, onB
       ? pkg.tests.map((t, i) => ({ id: `oi-${idempotencyKey}-${i}`, testId: t.id, nameAr: t.nameAr, nameEn: t.nameEn, priceSnapshot: t.sellPrice }))
       : localTests.map((t, i) => ({ id: `oi-${idempotencyKey}-${i}`, testId: t.id, nameAr: t.nameAr, nameEn: t.nameEn, priceSnapshot: t.sellPrice }));
 
-    onConfirm({
-      paymentMethod,
-      idempotencyKey,
-      subtotal,
-      couponCode: appliedDiscount > 0 ? couponCode : undefined,
-      couponDiscount,
-      total,
-      packageSnapshot: pkg ? {
-        packageId: pkg.id, nameAr: pkg.nameAr, nameEn: pkg.nameEn,
-        image: pkg.mainImage, testsCount: pkg.tests.length, price: pkg.price,
-      } : undefined,
-      items,
-      type: pkg ? "package" : "custom",
-      packageNameAr: pkg?.nameAr,
-    });
+    try {
+      await onConfirm({
+        paymentMethod,
+        idempotencyKey,
+        subtotal,
+        couponCode: appliedDiscount > 0 ? couponCode : undefined,
+        couponDiscount,
+        total,
+        packageSnapshot: pkg ? {
+          packageId: pkg.id, nameAr: pkg.nameAr, nameEn: pkg.nameEn,
+          image: pkg.mainImage, testsCount: pkg.tests.length, price: pkg.price,
+        } : undefined,
+        items,
+        type: pkg ? "package" : "custom",
+        packageNameAr: pkg?.nameAr,
+      });
+    } finally {
+      // Reset only on failure-stay-on-screen path. On success the screen has
+      // already navigated away, so this is a no-op.
+      setOrderLoading(false);
+    }
   };
 
   const choosePayment = (m: PaymentMethod) => {

@@ -39,7 +39,34 @@ export async function POST(
     p_actor_id: auth.session.userId,
     p_actor_name: auth.session.fullName ?? null,
   });
-  if (rpcErr) return NextResponse.json({ error: rpcErr.message }, { status: 500 });
+  if (rpcErr) {
+    console.error("[api/orders/verify-patient] rpc failed", {
+      code: rpcErr.code, message: rpcErr.message, details: rpcErr.details, orderId,
+    });
+    return NextResponse.json({ error: rpcErr.message }, { status: 500 });
+  }
+
+  // Back-fill the patient row's national_id when the nurse confirms one and
+  // the patient record didn't have it. Subsequent orders for the same
+  // patient then prefill automatically; the nurse never re-types the same id.
+  const trimmedNationalId = body.nationalId?.trim();
+  if (trimmedNationalId) {
+    const { data: orderRow } = await sb
+      .from("orders").select("patient_id").eq("id", orderId).maybeSingle();
+    if (orderRow?.patient_id) {
+      const { data: patientRow } = await sb
+        .from("patients").select("id, national_id").eq("id", orderRow.patient_id).maybeSingle();
+      if (patientRow && !patientRow.national_id) {
+        const { error: updErr } = await sb
+          .from("patients")
+          .update({ national_id: trimmedNationalId })
+          .eq("id", patientRow.id);
+        if (updErr) {
+          console.warn("[api/orders/verify-patient] patient national_id back-fill failed", updErr.message);
+        }
+      }
+    }
+  }
 
   const hydrated = await fetchOrderById(sb, orderId);
   const [enriched] = hydrated ? await enrichOrdersWithSignedUrls(sb, [hydrated]) : [null];

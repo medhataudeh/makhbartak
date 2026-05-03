@@ -14,6 +14,7 @@ import type { Test, Package, Shift, Address, Patient } from "@/lib/types";
 import { Button } from "@/components/ui/Button";
 import { BottomSheet } from "@/components/ui/BottomSheet";
 import { BackButton } from "@/components/ui/BackButton";
+import { MapPinPicker } from "@/components/booking/MapPinPicker";
 
 interface BookingFlowProps {
   tests?: Test[];
@@ -38,42 +39,56 @@ export function BookingFlow({ tests, pkg, onContinue, onBack }: BookingFlowProps
   const settings = useSystemSettings();
   const liveOrders = useOrders();
 
-  // Default visit date = today. Customer must explicitly confirm (the date row
-  // is required just like shift), but they don't have to manually pick today.
-  const [visitDate, setVisitDate] = useState<string>(() => ymd(new Date()));
+  // Patient/date stays unselected until the user explicitly chooses one — we
+  // never auto-fill the patient slot from the account name (those are two
+  // distinct entities; see PatientInlineForm copy).
+  const [visitDate, setVisitDate] = useState<string>("");
   const [shift, setShift] = useState<Shift | null>(null);
   const [address, setAddress] = useState<Address | null>(allAddresses.find((a) => a.isDefault) ?? allAddresses[0] ?? null);
-  const [patient, setPatient] = useState<Patient | null>(allPatients.find((p) => p.isDefault) ?? allPatients[0] ?? null);
-  const [dateSheet, setDateSheet] = useState(false);
-  const [shiftSheet, setShiftSheet] = useState(false);
+  const [patient, setPatient] = useState<Patient | null>(null);
+  const [whenSheet, setWhenSheet] = useState(false);
   const [addressSheet, setAddressSheet] = useState(false);
   const [patientSheet, setPatientSheet] = useState(false);
   const [addingAddress, setAddingAddress] = useState(false);
   const [addingPatient, setAddingPatient] = useState(false);
   const toast = useToast();
 
-  // Resolve shifts for the selected date, taking into account min-notice +
-  // per-shift capacity from the live orders set.
-  const ordersForDate = liveOrders
-    .filter((o) => o.visitDate === visitDate)
-    .map((o) => ({ shift: o.shift, status: o.status }));
-  const shifts = getShiftConfigs({
-    date: visitDate,
-    minNoticeMinutes: settings.minBookingNoticeMinutes,
-    morningStart: settings.morningShiftStart,
-    morningEnd:   settings.morningShiftEnd,
-    eveningStart: settings.eveningShiftStart,
-    eveningEnd:   settings.eveningShiftEnd,
-    ordersForDate,
-    maxOrdersPerShift: settings.maxOrdersPerShift,
-    bookingWindowDays: settings.bookingWindowDays,
-  });
+  // Compute up to the next 3 candidate days starting today, then keep only
+  // those with at least one available shift. This is the source of truth
+  // for both the picker UI and the submit guard.
+  const candidateDays: { date: string; shifts: ReturnType<typeof getShiftConfigs> }[] = (() => {
+    const today = new Date(); today.setHours(0, 0, 0, 0);
+    const window = Math.min(2, Math.max(0, settings.bookingWindowDays));
+    const out: { date: string; shifts: ReturnType<typeof getShiftConfigs> }[] = [];
+    for (let i = 0; i <= window; i++) {
+      const d = new Date(today);
+      d.setDate(today.getDate() + i);
+      const date = ymd(d);
+      const ordersForDate = liveOrders
+        .filter((o) => o.visitDate === date)
+        .map((o) => ({ shift: o.shift, status: o.status }));
+      const shifts = getShiftConfigs({
+        date,
+        minNoticeMinutes: settings.minBookingNoticeMinutes,
+        morningStart: settings.morningShiftStart,
+        morningEnd:   settings.morningShiftEnd,
+        eveningStart: settings.eveningShiftStart,
+        eveningEnd:   settings.eveningShiftEnd,
+        ordersForDate,
+        maxOrdersPerShift: settings.maxOrdersPerShift,
+        bookingWindowDays: settings.bookingWindowDays,
+      });
+      if (shifts.some((s) => s.available)) out.push({ date, shifts });
+    }
+    return out;
+  })();
 
   const canContinue = shift && address && patient && visitDate;
 
   const submit = () => {
     if (!canContinue) return;
-    const sCfg = shifts.find((x) => x.shift === shift);
+    const day = candidateDays.find((d) => d.date === visitDate);
+    const sCfg = day?.shifts.find((x) => x.shift === shift);
     // Logic guard: even if the UI was bypassed, refuse a date/shift that
     // getShiftConfigs() considers unavailable (out-of-window, past, or
     // inside the min-notice cushion).
@@ -119,24 +134,18 @@ export function BookingFlow({ tests, pkg, onContinue, onBack }: BookingFlowProps
           </p>
         </div>
 
-        {/* Date */}
+        {/* Day + slot — single step */}
         <SectionRow
           icon={<CalendarIcon size={18} className="text-[#0891B2]" />}
-          title="تاريخ الزيارة"
-          value={visitDate ? `${WEEKDAYS_AR[new Date(visitDate + "T00:00:00").getDay()]} · ${formatDate(visitDate)}` : null}
-          placeholder="اختر التاريخ"
+          title="موعد الزيارة"
+          value={
+            visitDate && shift
+              ? `${WEEKDAYS_AR[new Date(visitDate + "T00:00:00").getDay()]} · ${formatDate(visitDate)} — ${getShiftLabel(shift)}`
+              : null
+          }
+          placeholder={candidateDays.length === 0 ? "لا توجد مواعيد متاحة حالياً" : "اختر اليوم والفترة"}
           required
-          onClick={() => setDateSheet(true)}
-        />
-
-        {/* Shift — depends on date */}
-        <SectionRow
-          icon={<Clock size={18} className="text-[#0891B2]" />}
-          title="فترة الزيارة"
-          value={shift ? getShiftLabel(shift) : null}
-          placeholder={visitDate ? "اختر الفترة الزمنية" : "اختر التاريخ أولاً"}
-          required
-          onClick={() => { if (visitDate) setShiftSheet(true); }}
+          onClick={() => { if (candidateDays.length > 0) setWhenSheet(true); }}
         />
 
         {/* Address */}
@@ -149,18 +158,20 @@ export function BookingFlow({ tests, pkg, onContinue, onBack }: BookingFlowProps
           onClick={() => setAddressSheet(true)}
         />
 
-        {/* Patient */}
+        {/* Patient — explicit selection. We never auto-fill the patient slot
+           from the account name; the patient is a distinct entity (it may
+           be a relative). The picker copy spells that out. */}
         <SectionRow
           icon={<User size={18} className="text-purple-600" />}
           title="اسم المريض"
           value={patient?.name ?? null}
-          placeholder="اختر أو أضف مريضاً"
+          placeholder="اختر أو أضف المريض"
           required
           onClick={() => setPatientSheet(true)}
         />
 
         <p className="text-xs text-gray-400 px-1 leading-relaxed">
-          سيتحقق الممرض من هوية المريض عند الوصول.
+          المريض هو الشخص الذي ستؤخذ منه العينة، وقد يكون شخصاً آخر غير صاحب الحساب. سيتحقق الممرض من هويته عند الوصول.
         </p>
       </div>
 
@@ -177,73 +188,19 @@ export function BookingFlow({ tests, pkg, onContinue, onBack }: BookingFlowProps
         </Button>
       </div>
 
-      {/* Date Sheet — visible window of N days starting today */}
-      <BottomSheet open={dateSheet} onClose={() => setDateSheet(false)} title="تاريخ الزيارة">
+      {/* Combined day + slot picker — single step */}
+      <BottomSheet open={whenSheet} onClose={() => setWhenSheet(false)} title="اختر اليوم والفترة">
         <div className="px-4 py-4">
-          <DateGrid
-            windowDays={settings.bookingWindowDays}
-            selected={visitDate}
-            onPick={(d) => {
-              setVisitDate(d);
-              // Reset shift if it became unavailable on the new date.
-              setShift(null);
-              setDateSheet(false);
-              setShiftSheet(true);
+          <WhenPicker
+            days={candidateDays}
+            selectedDate={visitDate}
+            selectedShift={shift}
+            onPick={(date, picked) => {
+              setVisitDate(date);
+              setShift(picked);
+              setWhenSheet(false);
             }}
           />
-        </div>
-      </BottomSheet>
-
-      {/* Shift Sheet */}
-      <BottomSheet open={shiftSheet} onClose={() => setShiftSheet(false)} title="موعد الزيارة">
-        <div className="px-4 py-4 space-y-3">
-          {shifts.every((s) => !s.available) && (
-            <div className="bg-amber-50 border border-amber-100 rounded-xl px-4 py-3">
-              <p className="text-sm font-semibold text-amber-700">لا توجد مواعيد متاحة في هذا اليوم.</p>
-              <p className="text-[11px] text-amber-700/80 mt-1 leading-relaxed">جرّب اختيار يوم آخر من الأيام المتاحة.</p>
-            </div>
-          )}
-          {shifts.map((s) => {
-            const isSelected = shift === s.shift;
-            return (
-              <motion.button
-                key={s.shift}
-                whileTap={{ scale: 0.97 }}
-                onClick={() => { if (s.available) { setShift(s.shift); setShiftSheet(false); } }}
-                disabled={!s.available}
-                aria-pressed={isSelected}
-                aria-disabled={!s.available}
-                className={`w-full flex items-center gap-4 p-4 rounded-xl border-2 cursor-pointer transition-all duration-150 ${
-                  isSelected ? "border-[#0891B2] bg-[#ECFEFF]" : s.available ? "border-gray-200 bg-white active:bg-gray-50" : "border-gray-100 bg-gray-50/80 opacity-60 cursor-not-allowed"
-                }`}
-              >
-                {/* Shift icon — SVG, no emoji */}
-                <div className={`w-11 h-11 rounded-xl flex items-center justify-center flex-shrink-0 ${s.shift === "morning" ? "bg-amber-50" : "bg-indigo-50"}`}>
-                  {s.shift === "morning" ? (
-                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#D97706" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
-                      <circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/>
-                    </svg>
-                  ) : (
-                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#6366f1" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
-                      <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
-                    </svg>
-                  )}
-                </div>
-                <div className="flex-1 text-start">
-                  <p className="text-sm font-bold text-[#164E63]">{s.labelAr}</p>
-                  <p className="text-xs text-gray-500 mt-0.5">
-                    {s.shift === "morning" ? "8:00 – 10:00 صباحاً" : "4:00 – 6:00 مساءً"}
-                  </p>
-                  {!s.available && (
-                    <p className="text-xs text-red-500 mt-1">{s.unavailableReason}</p>
-                  )}
-                </div>
-                <div className={`w-5 h-5 rounded-full border-2 flex-shrink-0 flex items-center justify-center ${isSelected ? "border-[#0891B2] bg-[#0891B2]" : "border-gray-300"}`}>
-                  {isSelected && <div className="w-2 h-2 bg-white rounded-full" />}
-                </div>
-              </motion.button>
-            );
-          })}
         </div>
       </BottomSheet>
 
@@ -276,8 +233,11 @@ export function BookingFlow({ tests, pkg, onContinue, onBack }: BookingFlowProps
       </BottomSheet>
 
       {/* Patient Sheet */}
-      <BottomSheet open={patientSheet} onClose={() => setPatientSheet(false)} title="المريض">
+      <BottomSheet open={patientSheet} onClose={() => setPatientSheet(false)} title="اختر المريض">
         <div className="px-4 py-4 space-y-2">
+          <p className="text-[11px] text-gray-500 leading-relaxed mb-1">
+            المريض شخص مستقل عن صاحب الحساب. اختر من القائمة أو أضف مريضاً جديداً.
+          </p>
           {allPatients.map((p) => (
             <motion.button
               key={p.id}
@@ -341,15 +301,31 @@ function AddressInlineForm({ onCancel, onSubmit }: { onCancel: () => void; onSub
   const [description, setDescription] = useState("");
   const [city, setCity] = useState<string>("دمشق");
   const [makeDefault, setMakeDefault] = useState(false);
+  // Coordinates start at the city center; the map records that the user
+  // actively placed a pin so we don't accept an unmoved default as "located".
+  const [lat, setLat] = useState<number>(33.5138);
+  const [lng, setLng] = useState<number>(36.2765);
+  const [pinPlaced, setPinPlaced] = useState(false);
   return (
     <div className="px-4 pb-4 space-y-3">
+      <Field label="حدد الموقع على الخريطة">
+        <MapPinPicker
+          lat={lat}
+          lng={lng}
+          onChange={(nLat, nLng) => {
+            setLat(nLat);
+            setLng(nLng);
+            setPinPlaced(true);
+          }}
+        />
+      </Field>
       <Field label="التسمية">
         <input value={label} onChange={(e) => setLabel(e.target.value)} placeholder="المنزل / العمل" className="w-full h-11 px-3 rounded-xl border border-gray-200 text-sm" />
       </Field>
-      <Field label="العنوان">
-        <textarea value={description} onChange={(e) => setDescription(e.target.value)} rows={2} placeholder="الحي، الشارع، رقم البناء، الطابق" className="w-full p-3 rounded-xl border border-gray-200 text-sm resize-none" />
+      <Field label="تفاصيل العنوان (الحي، الشارع، رقم البناء، الطابق)">
+        <textarea value={description} onChange={(e) => setDescription(e.target.value)} rows={2} placeholder="مثال: المزة – شارع الفردوس، بناء 12، الطابق 3" className="w-full p-3 rounded-xl border border-gray-200 text-sm resize-none" />
       </Field>
-      <Field label="المدينة">
+      <Field label="المدينة / المنطقة">
         <select value={city} onChange={(e) => setCity(e.target.value)} className="w-full h-11 px-3 rounded-xl border border-gray-200 text-sm cursor-pointer">
           <option value="دمشق">دمشق</option>
           <option value="ريف دمشق">ريف دمشق</option>
@@ -359,17 +335,20 @@ function AddressInlineForm({ onCancel, onSubmit }: { onCancel: () => void; onSub
         <input type="checkbox" checked={makeDefault} onChange={(e) => setMakeDefault(e.target.checked)} className="w-4 h-4" />
         اجعله العنوان الافتراضي
       </label>
+      {!pinPlaced && (
+        <p className="text-[11px] text-amber-600">يرجى تحديد الموقع على الخريطة قبل الحفظ.</p>
+      )}
       <div className="flex gap-2 pt-2">
         <Button variant="outline" className="flex-1" onClick={onCancel}>إلغاء</Button>
         <Button
           variant="primary" className="flex-1"
-          disabled={!label.trim() || !description.trim()}
+          disabled={!label.trim() || !description.trim() || !pinPlaced}
           onClick={() => onSubmit({
             id: `addr-${Date.now()}`,
             userId: SEED_CUSTOMER_1_ID,
             label: label.trim(),
             description: description.trim(),
-            lat: 33.5138, lng: 36.2765,
+            lat, lng,
             city, isDefault: makeDefault,
           })}
         >حفظ</Button>
@@ -384,8 +363,11 @@ function PatientInlineForm({ onCancel, onSubmit }: { onCancel: () => void; onSub
   const [makeDefault, setMakeDefault] = useState(false);
   return (
     <div className="px-4 pb-4 space-y-3">
-      <Field label="اسم المريض">
-        <input value={name} onChange={(e) => setName(e.target.value)} className="w-full h-11 px-3 rounded-xl border border-gray-200 text-sm" />
+      <p className="text-[11px] text-gray-500 leading-relaxed">
+        أدخل اسم المريض كما هو مدوّن في وثائقه الرسمية. لا تستخدم اسم صاحب الحساب إن لم يكن هو المريض.
+      </p>
+      <Field label="اسم المريض الكامل">
+        <input value={name} onChange={(e) => setName(e.target.value)} placeholder="مثال: أحمد محمد علي" className="w-full h-11 px-3 rounded-xl border border-gray-200 text-sm" />
       </Field>
       <Field label="الرقم الوطني (اختياري)">
         <input value={nationalId} onChange={(e) => setNationalId(e.target.value)} className="w-full h-11 px-3 rounded-xl border border-gray-200 text-sm lat" dir="ltr" />
@@ -450,60 +432,89 @@ function SectionRow({ icon, title, value, placeholder, required, onClick }: {
   );
 }
 
-// ─── Date grid: today + windowDays additional days ──────────────────────────
-function DateGrid({ windowDays, selected, onPick }: {
-  windowDays: number;
-  selected: string;
-  onPick: (date: string) => void;
+// ─── Combined day + slot picker (single step) ───────────────────────────────
+// Lists only days that have at least one available shift (`candidateDays`
+// upstream filters them). Within each day, only the shifts whose
+// `available` flag is true render. Picking either commits both selections
+// and closes the sheet.
+function WhenPicker({
+  days,
+  selectedDate,
+  selectedShift,
+  onPick,
+}: {
+  days: { date: string; shifts: { shift: Shift; labelAr: string; startHour: number; endHour: number; available: boolean; unavailableReason?: string }[] }[];
+  selectedDate: string;
+  selectedShift: Shift | null;
+  onPick: (date: string, shift: Shift) => void;
 }) {
   const today = new Date(); today.setHours(0, 0, 0, 0);
-  const cells = Math.max(1, windowDays + 1);
-  const days: { date: string; day: number; weekday: string; isToday: boolean; offset: number }[] = [];
-  for (let i = 0; i < cells; i++) {
-    const d = new Date(today);
-    d.setDate(today.getDate() + i);
-    days.push({
-      date: ymd(d),
-      day: d.getDate(),
-      weekday: WEEKDAYS_AR[d.getDay()].slice(0, 3),
-      isToday: i === 0,
-      offset: i,
-    });
-  }
-  const labelFor = (offset: number) => {
-    if (offset === 0) return "اليوم";
-    if (offset === 1) return "غداً";
-    if (offset === 2) return "بعد غد";
+  const offsetTag = (date: string) => {
+    const d = new Date(date + "T00:00:00");
+    const diff = Math.round((d.getTime() - today.getTime()) / 86_400_000);
+    if (diff === 0) return "اليوم";
+    if (diff === 1) return "غداً";
+    if (diff === 2) return "بعد غد";
     return null;
   };
-  return (
-    <div>
-      <p className="text-[12px] text-[#164E63] font-medium mb-1">يمكنك اختيار موعد خلال الأيام المتاحة فقط.</p>
-      <p className="text-[11px] text-gray-400 mb-2">
-        {windowDays === 0
-          ? "متاح اليوم فقط"
-          : `متاح اليوم وحتى ${windowDays} ${windowDays === 1 ? "يوم" : "أيام"} لاحقاً`}
-      </p>
-      <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
-        {days.map((d) => {
-          const active = d.date === selected;
-          const tag = labelFor(d.offset);
-          return (
-            <button
-              key={d.date}
-              onClick={() => onPick(d.date)}
-              aria-pressed={active}
-              className={`flex flex-col items-center justify-center py-3 rounded-xl border-2 cursor-pointer transition-all ${
-                active ? "border-[#0891B2] bg-[#ECFEFF] text-[#0891B2]" : "border-gray-200 bg-white text-[#164E63] active:bg-gray-50"
-              }`}
-            >
-              <span className="text-[10px] font-medium opacity-70">{d.weekday}</span>
-              <span className="text-lg font-bold lat" dir="ltr">{d.day}</span>
-              {tag && <span className="text-[9px] font-semibold mt-0.5">{tag}</span>}
-            </button>
-          );
-        })}
+  if (days.length === 0) {
+    return (
+      <div className="bg-amber-50 border border-amber-100 rounded-xl px-4 py-4">
+        <p className="text-sm font-semibold text-amber-700">لا توجد مواعيد متاحة حالياً.</p>
+        <p className="text-[11px] text-amber-700/80 mt-1 leading-relaxed">سيتم إعادة فتح الحجز فور توفّر مواعيد ضمن نطاق الحجز.</p>
       </div>
+    );
+  }
+  return (
+    <div className="space-y-4">
+      <p className="text-[12px] text-[#164E63] font-medium">اختر يوماً وفترة من الأيام المتاحة.</p>
+      {days.map((day) => {
+        const tag = offsetTag(day.date);
+        const dObj = new Date(day.date + "T00:00:00");
+        return (
+          <div key={day.date} className="rounded-2xl border border-gray-100 bg-white p-3">
+            <div className="flex items-center justify-between mb-2 px-1">
+              <div className="flex items-center gap-2">
+                <div className="w-9 h-9 rounded-xl bg-[#ECFEFF] flex items-center justify-center">
+                  <span className="text-sm font-bold text-[#0891B2] lat" dir="ltr">{dObj.getDate()}</span>
+                </div>
+                <div>
+                  <p className="text-sm font-bold text-[#164E63]">{WEEKDAYS_AR[dObj.getDay()]}</p>
+                  <p className="text-[11px] text-gray-400">{formatDate(day.date)}</p>
+                </div>
+              </div>
+              {tag && (
+                <span className="text-[10px] font-semibold text-[#0891B2] bg-[#ECFEFF] rounded-full px-2 py-1">
+                  {tag}
+                </span>
+              )}
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              {day.shifts.filter((s) => s.available).map((s) => {
+                const isSelected = selectedDate === day.date && selectedShift === s.shift;
+                return (
+                  <motion.button
+                    key={s.shift}
+                    whileTap={{ scale: 0.97 }}
+                    onClick={() => onPick(day.date, s.shift)}
+                    aria-pressed={isSelected}
+                    className={`flex flex-col items-start gap-1 p-3 rounded-xl border-2 cursor-pointer transition-all ${
+                      isSelected
+                        ? "border-[#0891B2] bg-[#ECFEFF]"
+                        : "border-gray-200 bg-white active:bg-gray-50"
+                    }`}
+                  >
+                    <span className={`text-sm font-bold ${isSelected ? "text-[#0891B2]" : "text-[#164E63]"}`}>{s.labelAr}</span>
+                    <span className="text-[11px] text-gray-500 lat" dir="ltr">
+                      {String(s.startHour).padStart(2, "0")}:00 – {String(s.endHour).padStart(2, "0")}:00
+                    </span>
+                  </motion.button>
+                );
+              })}
+            </div>
+          </div>
+        );
+      })}
     </div>
   );
 }

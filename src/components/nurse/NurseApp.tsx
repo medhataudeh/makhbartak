@@ -982,8 +982,10 @@ function NurseVisitDetail({
   const [failOpen, setFailOpen] = useState(false);
   const [failReason, setFailReason] = useState<string>("");
   const [verifyOpen, setVerifyOpen] = useState(false);
+  // Verify form prefill: prior verification > saved patient national_id > blank.
+  // The nurse never re-types the id when it's already on file.
   const [vName, setVName] = useState(o.patientVerification?.officialName ?? o.patient.name);
-  const [vId, setVId] = useState(o.patientVerification?.nationalId ?? "");
+  const [vId, setVId] = useState(o.patientVerification?.nationalId ?? o.patient.nationalId ?? "");
   const [vNote, setVNote] = useState(o.patientVerification?.note ?? "");
   const verified = !!o.patientVerification;
   void nurseName; // currently unused — reserved for displaying the actor on the timeline.
@@ -1141,65 +1143,33 @@ function NurseVisitDetail({
 
         {/* Aggregated, deduped customer instructions for this order */}
         <NurseInstructionsBlock order={o} />
-
-        {/* Granular status updates — reflect into admin OCC + customer Orders */}
-        <section className="bg-white rounded-2xl border border-gray-100 p-4">
-          <p className="text-[11px] text-gray-400 mb-2 uppercase tracking-wide">حدّث حالة الزيارة</p>
-          <div className="grid grid-cols-2 gap-2">
-            <Button
-              variant="outline" size="sm"
-              loading={pendingAction === "on_the_way"}
-              disabled={!!pendingAction && pendingAction !== "on_the_way"}
-              onClick={handleOnTheWay}
-            >
-              <Navigation size={14} aria-hidden="true" />
-              أنا في الطريق
-            </Button>
-            <Button
-              variant="outline" size="sm"
-              loading={pendingAction === "arrived"}
-              disabled={!!pendingAction && pendingAction !== "arrived"}
-              onClick={handleArrived}
-            >
-              <CheckCircle2 size={14} aria-hidden="true" />
-              وصلت
-            </Button>
-            <Button
-              variant="outline" size="sm" className="col-span-2"
-              loading={pendingAction === "delivered"}
-              disabled={!!pendingAction && pendingAction !== "delivered"}
-              onClick={handleDeliveredToLab}
-            >
-              <Package size={14} aria-hidden="true" />
-              تم تسليم العينة للمخبر
-            </Button>
-          </div>
-          <p className="text-[11px] text-gray-400 mt-2">يصل التحديث للعميل والإدارة فوراً.</p>
-        </section>
       </div>
 
-      {/* Actions */}
+      {/* Actions — one dynamic primary CTA per order state, secondary "support"
+         link, and a quiet "مشكلة؟" trigger that opens the failure sheet. The
+         actual status APIs are unchanged. */}
       <footer className="bg-white border-t border-gray-100 px-4 py-3 safe-bottom space-y-2">
-        <Button
-          variant="primary" size="lg" className="w-full"
-          loading={pendingAction === "collected"}
-          disabled={!verified || (!!pendingAction && pendingAction !== "collected")}
-          onClick={handleComplete}
-        >
-          تم أخذ العينة
-        </Button>
-        <Button
-          variant="outline" size="md" className="w-full"
-          disabled={!!pendingAction}
-          onClick={() => setFailOpen(true)}
-        >
-          تعذّر أخذ العينة
-        </Button>
-        {!verified && (
-          <p className="text-[11px] text-amber-600 text-center">
-            يجب التحقق من هوية المريض قبل أخذ العينة.
-          </p>
-        )}
+        <NursePrimaryAction
+          status={status}
+          verified={verified}
+          pendingAction={pendingAction}
+          onOnTheWay={handleOnTheWay}
+          onArrived={handleArrived}
+          onVerify={() => setVerifyOpen(true)}
+          onCollected={handleComplete}
+          onDelivered={handleDeliveredToLab}
+        />
+        <div className="flex items-center justify-between">
+          <SupportLink />
+          <button
+            type="button"
+            onClick={() => setFailOpen(true)}
+            disabled={!!pendingAction}
+            className="text-[12px] font-medium text-gray-500 underline-offset-2 hover:underline disabled:opacity-50 cursor-pointer"
+          >
+            مشكلة؟
+          </button>
+        </div>
       </footer>
 
       {/* Verify patient sheet */}
@@ -1268,6 +1238,115 @@ function NurseVisitDetail({
         </div>
       </BottomSheet>
     </motion.div>
+  );
+}
+
+// One dynamic primary CTA whose label + action follow the order status.
+// Rare/problem actions are intentionally NOT here; the footer surfaces them
+// behind a quiet "مشكلة؟" link to keep this button as the only thing the
+// nurse needs to read.
+function NursePrimaryAction({
+  status, verified, pendingAction,
+  onOnTheWay, onArrived, onVerify, onCollected, onDelivered,
+}: {
+  status: Order["status"];
+  verified: boolean;
+  pendingAction: string | null;
+  onOnTheWay: () => void;
+  onArrived: () => void;
+  onVerify: () => void;
+  onCollected: () => void;
+  onDelivered: () => void;
+}) {
+  // After sample_collected the nurse usually delivers to the lab; once
+  // delivered the order is read-only from the nurse's side.
+  if (["sent_to_lab", "lab_processing", "result_ready", "completed", "cancelled", "lab_issue", "failed_to_collect"].includes(status)) {
+    return (
+      <div className="w-full text-center text-[13px] font-medium text-gray-400 bg-gray-50 rounded-xl py-3">
+        لا يوجد إجراء مطلوب من الممرض الآن
+      </div>
+    );
+  }
+  if (status === "sample_collected") {
+    return (
+      <Button
+        variant="primary" size="lg" className="w-full"
+        loading={pendingAction === "delivered"}
+        disabled={!!pendingAction && pendingAction !== "delivered"}
+        onClick={onDelivered}
+      >
+        <Package size={16} aria-hidden="true" />
+        تم تسليم العينة للمخبر
+      </Button>
+    );
+  }
+  if (status === "arrived") {
+    if (!verified) {
+      return (
+        <Button
+          variant="primary" size="lg" className="w-full"
+          disabled={!!pendingAction}
+          onClick={onVerify}
+        >
+          <BadgeCheck size={16} aria-hidden="true" />
+          تأكيد بيانات المريض
+        </Button>
+      );
+    }
+    return (
+      <Button
+        variant="primary" size="lg" className="w-full"
+        loading={pendingAction === "collected"}
+        disabled={!!pendingAction && pendingAction !== "collected"}
+        onClick={onCollected}
+      >
+        <CheckCircle2 size={16} aria-hidden="true" />
+        تم أخذ العينة
+      </Button>
+    );
+  }
+  if (status === "on_the_way") {
+    return (
+      <Button
+        variant="primary" size="lg" className="w-full"
+        loading={pendingAction === "arrived"}
+        disabled={!!pendingAction && pendingAction !== "arrived"}
+        onClick={onArrived}
+      >
+        <CheckCircle2 size={16} aria-hidden="true" />
+        وصلت
+      </Button>
+    );
+  }
+  // pending / scheduled / confirmed / nurse_assigned → "أنا في الطريق"
+  return (
+    <Button
+      variant="primary" size="lg" className="w-full"
+      loading={pendingAction === "on_the_way"}
+      disabled={!!pendingAction && pendingAction !== "on_the_way"}
+      onClick={onOnTheWay}
+    >
+      <Navigation size={16} aria-hidden="true" />
+      أنا في الطريق
+    </Button>
+  );
+}
+
+function SupportLink() {
+  const settings = useSystemSettings();
+  const raw = settings.whatsappNumber?.trim() ?? "";
+  const digits = raw.replace(/[^\d+]/g, "");
+  const href = digits ? `https://wa.me/${digits.replace(/^\+/, "")}` : "#";
+  return (
+    <a
+      href={href}
+      target={digits ? "_blank" : undefined}
+      rel={digits ? "noopener noreferrer" : undefined}
+      className="inline-flex items-center gap-1.5 text-[12px] font-medium text-[#0891B2] cursor-pointer"
+    >
+      <Phone size={13} aria-hidden="true" />
+      التواصل مع الدعم
+    </a>
   );
 }
 
