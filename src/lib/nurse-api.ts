@@ -1,15 +1,13 @@
 "use client";
-import type { AuthSession } from "@/lib/types";
 
 export async function apiUpdateNurseProfile(
-  session: AuthSession,
   nurseId: string,
   patch: { name?: string; city?: string; photoUrl?: string },
 ): Promise<{ ok: boolean; error?: string; nurse?: unknown }> {
   const res = await fetch(`/api/nurses/${encodeURIComponent(nurseId)}/profile`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ session, ...patch }),
+    body: JSON.stringify(patch),
   });
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
@@ -46,7 +44,6 @@ export async function apiGetNursePrep(
 }
 
 export async function apiSetNursePrep(
-  session: AuthSession,
   nurseId: string,
   day: string,
   patch: { started: boolean; checkedIds: string[] },
@@ -54,7 +51,7 @@ export async function apiSetNursePrep(
   const res = await fetch(`/api/nurses/${encodeURIComponent(nurseId)}/prep`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ session, day, started: patch.started, checkedIds: patch.checkedIds }),
+    body: JSON.stringify({ day, started: patch.started, checkedIds: patch.checkedIds }),
   });
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
@@ -117,7 +114,6 @@ export async function apiListShortageRequests(nurseId: string): Promise<NurseSho
 }
 
 export async function apiSubmitShortageRequest(
-  session: AuthSession,
   nurseId: string,
   payload: {
     day?: string;
@@ -128,7 +124,7 @@ export async function apiSubmitShortageRequest(
   const res = await fetch(`/api/nurses/${encodeURIComponent(nurseId)}/shortage-requests`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ session, ...payload }),
+    body: JSON.stringify(payload),
   });
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
@@ -139,14 +135,13 @@ export async function apiSubmitShortageRequest(
 }
 
 export async function apiSetShortageRequestStatus(
-  session: AuthSession,
   requestId: string,
   status: "pending" | "acknowledged" | "resolved",
 ): Promise<{ ok: boolean; error?: string }> {
   const res = await fetch(`/api/shortage-requests/${encodeURIComponent(requestId)}/status`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ session, status }),
+    body: JSON.stringify({ status }),
   });
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));

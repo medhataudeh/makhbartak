@@ -1,5 +1,5 @@
 "use client";
-import type { Address, AuthSession, Patient } from "@/lib/types";
+import type { Address, Patient } from "@/lib/types";
 
 interface RawPatient {
   id: string; customer_id: string; name: string;
@@ -65,14 +65,13 @@ export interface PatientPatch {
 }
 
 export async function apiCreatePatient(
-  session: AuthSession,
   customerId: string,
   patch: PatientPatch,
 ): Promise<{ patient: Patient } | { error: string }> {
   const res = await fetch(`/api/customers/${encodeURIComponent(customerId)}/patients`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ session, ...patch }),
+    body: JSON.stringify(patch),
   });
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
@@ -83,7 +82,6 @@ export async function apiCreatePatient(
 }
 
 export async function apiUpdatePatient(
-  session: AuthSession,
   customerId: string,
   patientId: string,
   patch: Partial<PatientPatch>,
@@ -93,7 +91,7 @@ export async function apiUpdatePatient(
     {
       method: "PATCH",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ session, ...patch }),
+      body: JSON.stringify(patch),
     },
   );
   if (!res.ok) {
@@ -105,17 +103,12 @@ export async function apiUpdatePatient(
 }
 
 export async function apiDeletePatient(
-  session: AuthSession,
   customerId: string,
   patientId: string,
 ): Promise<{ ok: boolean; error?: string }> {
   const res = await fetch(
     `/api/customers/${encodeURIComponent(customerId)}/patients/${encodeURIComponent(patientId)}`,
-    {
-      method: "DELETE",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ session }),
-    },
+    { method: "DELETE" },
   );
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
@@ -135,14 +128,13 @@ export interface AddressPatch {
 }
 
 export async function apiCreateAddress(
-  session: AuthSession,
   customerId: string,
   patch: AddressPatch,
 ): Promise<{ address: Address } | { error: string }> {
   const res = await fetch(`/api/customers/${encodeURIComponent(customerId)}/addresses`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ session, ...patch }),
+    body: JSON.stringify(patch),
   });
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
@@ -153,7 +145,6 @@ export async function apiCreateAddress(
 }
 
 export async function apiUpdateAddress(
-  session: AuthSession,
   customerId: string,
   addressId: string,
   patch: Partial<AddressPatch>,
@@ -163,7 +154,7 @@ export async function apiUpdateAddress(
     {
       method: "PATCH",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ session, ...patch }),
+      body: JSON.stringify(patch),
     },
   );
   if (!res.ok) {
@@ -175,17 +166,12 @@ export async function apiUpdateAddress(
 }
 
 export async function apiDeleteAddress(
-  session: AuthSession,
   customerId: string,
   addressId: string,
 ): Promise<{ ok: boolean; error?: string }> {
   const res = await fetch(
     `/api/customers/${encodeURIComponent(customerId)}/addresses/${encodeURIComponent(addressId)}`,
-    {
-      method: "DELETE",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ session }),
-    },
+    { method: "DELETE" },
   );
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
@@ -195,14 +181,13 @@ export async function apiDeleteAddress(
 }
 
 export async function apiSetPaymentPreference(
-  session: AuthSession,
   customerId: string,
   method: "cash" | "online",
 ): Promise<{ ok: boolean; error?: string }> {
   const res = await fetch(`/api/customers/${encodeURIComponent(customerId)}/payment-preference`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ session, method }),
+    body: JSON.stringify({ method }),
   });
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));

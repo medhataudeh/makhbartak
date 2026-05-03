@@ -1,10 +1,13 @@
-import type { AuthSession } from "@/lib/types";
+// Phase 8: legacy `requireAdminSession(body.session)` is gone. Use
+// `requireAdminFromCookie()` in admin routes instead — it reads the JWT
+// from cookies via the route-auth helper. Re-exported below for callers
+// that still want the same name.
+//
+// Routes call:
+//   const auth = await requireAdminFromCookie();
+//   if (!auth.ok) return NextResponse.json({error: auth.error}, {status: auth.status});
+//   const session = auth.session;
 
-// Tiny helper used by every Stage F admin route. Returns null if the session
-// is allowed to write, or an error message otherwise. The server route
-// converts the message into a 401/403 response.
-export function requireAdminSession(session: AuthSession | undefined | null): string | null {
-  if (!session) return "session required";
-  if (session.role !== "admin") return "only admin can perform this action";
-  return null;
-}
+import { requireAdmin } from "@/lib/route-auth";
+
+export const requireAdminFromCookie = requireAdmin;

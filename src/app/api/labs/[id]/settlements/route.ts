@@ -1,12 +1,11 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabase/server-admin";
 import { isUuid } from "@/lib/supabase/uuid";
-import type { AuthSession } from "@/lib/types";
+import { requireAdmin, requireAuthedUser } from "@/lib/route-auth";
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
 interface GenerateBody {
-  session: AuthSession;
   periodStart: string;
   periodEnd: string;
 }
@@ -19,6 +18,16 @@ export async function GET(
   if (!isUuid(labId)) {
     return NextResponse.json({ error: "lab id must be a uuid" }, { status: 400 });
   }
+  const auth = await requireAuthedUser();
+  if (!auth.ok) return NextResponse.json({ error: auth.error }, { status: auth.status });
+  if (auth.session.role === "lab") {
+    if (!auth.session.labId || auth.session.labId !== labId) {
+      return NextResponse.json({ error: "cannot view another lab" }, { status: 403 });
+    }
+  } else if (auth.session.role !== "admin") {
+    return NextResponse.json({ error: "role not authorized" }, { status: 403 });
+  }
+
   const sb = getSupabaseAdmin();
   const { data, error } = await sb
     .from("settlements")
@@ -41,15 +50,13 @@ export async function POST(
   if (!isUuid(labId)) {
     return NextResponse.json({ error: "lab id must be a uuid" }, { status: 400 });
   }
+  const auth = await requireAdmin();
+  if (!auth.ok) return NextResponse.json({ error: auth.error }, { status: auth.status });
   let body: GenerateBody;
   try { body = await req.json(); } catch {
     return NextResponse.json({ error: "invalid json" }, { status: 400 });
   }
-  const { session, periodStart, periodEnd } = body ?? {};
-  if (!session) return NextResponse.json({ error: "session required" }, { status: 401 });
-  if (session.role !== "admin") {
-    return NextResponse.json({ error: "only admin can generate settlements" }, { status: 403 });
-  }
+  const { periodStart, periodEnd } = body ?? {};
   if (!DATE_RE.test(periodStart ?? "") || !DATE_RE.test(periodEnd ?? "")) {
     return NextResponse.json({ error: "periodStart and periodEnd must be YYYY-MM-DD" }, { status: 400 });
   }
@@ -59,9 +66,9 @@ export async function POST(
     p_lab_id: labId,
     p_period_start: periodStart,
     p_period_end: periodEnd,
-    p_actor_role: session.role,
-    p_actor_id: null,
-    p_actor_name: session.name ?? null,
+    p_actor_role: "admin",
+    p_actor_id: auth.session.userId,
+    p_actor_name: auth.session.fullName ?? null,
   });
   if (rpcErr) return NextResponse.json({ error: rpcErr.message }, { status: 500 });
   return NextResponse.json({ ok: true, settlementId });

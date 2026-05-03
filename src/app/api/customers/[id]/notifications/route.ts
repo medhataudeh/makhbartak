@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabase/server-admin";
 import { isUuid } from "@/lib/supabase/uuid";
+import { requireCustomerSelfOrAdmin } from "@/lib/route-auth";
 
 export async function GET(
   _req: NextRequest,
@@ -10,6 +11,9 @@ export async function GET(
   if (!isUuid(customerId)) {
     return NextResponse.json({ error: "customer id must be a uuid" }, { status: 400 });
   }
+  const auth = await requireCustomerSelfOrAdmin(customerId);
+  if (!auth.ok) return NextResponse.json({ error: auth.error }, { status: auth.status });
+
   const sb = getSupabaseAdmin();
   const { data: customer, error: cErr } = await sb
     .from("customers").select("profile_id").eq("id", customerId).maybeSingle();

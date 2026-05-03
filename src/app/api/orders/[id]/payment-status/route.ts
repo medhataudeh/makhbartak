@@ -2,13 +2,12 @@ import { NextResponse, type NextRequest } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabase/server-admin";
 import { enrichOrdersWithSignedUrls, fetchOrderById } from "@/lib/supabase/queries/orders";
 import { isUuid } from "@/lib/supabase/uuid";
-import type { AuthSession } from "@/lib/types";
+import { requireAdmin } from "@/lib/route-auth";
 
 const ALLOWED = ["pending", "paid", "failed", "refunded"] as const;
 type AllowedPaymentStatus = (typeof ALLOWED)[number];
 
 interface SetPaymentStatusBody {
-  session: AuthSession;
   paymentStatus: AllowedPaymentStatus;
   note?: string;
 }
@@ -18,18 +17,14 @@ export async function POST(
   ctx: { params: Promise<{ id: string }> },
 ) {
   const { id: orderId } = await ctx.params;
-  if (!isUuid(orderId)) {
-    return NextResponse.json({ error: "order id must be a uuid" }, { status: 400 });
-  }
+  if (!isUuid(orderId)) return NextResponse.json({ error: "order id must be a uuid" }, { status: 400 });
+  const auth = await requireAdmin();
+  if (!auth.ok) return NextResponse.json({ error: auth.error }, { status: auth.status });
   let body: SetPaymentStatusBody;
   try { body = await req.json(); } catch {
     return NextResponse.json({ error: "invalid json" }, { status: 400 });
   }
-  const { session, paymentStatus, note } = body ?? {};
-  if (!session) return NextResponse.json({ error: "session required" }, { status: 401 });
-  if (session.role !== "admin") {
-    return NextResponse.json({ error: "only admin can change payment status" }, { status: 403 });
-  }
+  const { paymentStatus, note } = body ?? {};
   if (!ALLOWED.includes(paymentStatus as AllowedPaymentStatus)) {
     return NextResponse.json({ error: "invalid payment status" }, { status: 400 });
   }
@@ -38,9 +33,9 @@ export async function POST(
   const { error: rpcErr } = await sb.rpc("set_payment_status_admin", {
     p_order_id: orderId,
     p_payment_status: paymentStatus,
-    p_actor_role: session.role,
-    p_actor_id: null,
-    p_actor_name: session.name ?? null,
+    p_actor_role: auth.session.role,
+    p_actor_id: auth.session.userId,
+    p_actor_name: auth.session.fullName ?? null,
     p_note: note ?? null,
   });
   if (rpcErr) return NextResponse.json({ error: rpcErr.message }, { status: 500 });

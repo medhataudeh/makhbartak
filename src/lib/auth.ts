@@ -1,269 +1,386 @@
 "use client";
 import { useSyncExternalStore } from "react";
-import type {
-  AdminUser, AuthSession, AuthUser, LabUser, Nurse, Role,
-} from "./types";
-import {
-  MOCK_ADMINS, MOCK_CUSTOMER_USERS, MOCK_LAB_USERS, MOCK_NURSES,
-  MOCK_NURSE_USERS,
-} from "./mock-data";
+import { getSupabaseBrowser } from "./supabase/client";
+import type { AuthSession, Role } from "./types";
 
-// One unified credential store fronts four role tables. Admin and lab keep
-// their richer entity types (AdminRole, LabUserRole, labId) and CRUD writes
-// through to those; customers and nurses live as AuthUser since they have
-// no extra credential-bearing fields.
+// Phase 8: Real Supabase Auth is the source of truth. Email + password via
+// supabase.auth.signInWithPassword. Session shape stays compatible with
+// every legacy caller (userId / username / name / role / linkedEntityId)
+// plus role-specific extras (customerId / nurseId / labUserId / labId /
+// labRole / adminRole) populated server-side by /api/me.
+//
+// useSession() subscribes to supabase.auth.onAuthStateChange and refetches
+// the enriched session from /api/me whenever the auth state flips. The
+// cached session lives in module-local memory; localStorage is no longer
+// involved in operational auth.
 
-const SESSION_KEY = "makhbartak.session.v1";
-const CUSTOMERS_KEY = "makhbartak.auth.customers.v1";
-const NURSES_KEY = "makhbartak.auth.nurses.v1";
-const ADMINS_KEY = "makhbartak.auth.admins.v1";
-const LAB_USERS_KEY = "makhbartak.auth.lab-users.v1";
-
-// ─── Generic mutable+persisted list helper ──────────────────────────────────
-function makeStore<T extends { id: string }>(key: string, seed: T[]) {
-  let list: T[] = [...seed];
-  let hydrated = false;
-  const ls = new Set<() => void>();
-  const emit = () => ls.forEach((l) => l());
-  const subscribe = (l: () => void) => { ls.add(l); return () => { ls.delete(l); }; };
-  const hydrate = () => {
-    if (hydrated || typeof window === "undefined") return;
-    hydrated = true;
-    try {
-      const raw = window.localStorage.getItem(key);
-      if (raw) {
-        const overrides = JSON.parse(raw) as T[];
-        const byId = new Map(overrides.map((u) => [u.id, u]));
-        list = seed
-          .map((u) => byId.get(u.id) ?? u)
-          .concat(overrides.filter((o) => !seed.find((s) => s.id === o.id)));
-      }
-    } catch {}
-    emit();
-  };
-  const persist = () => {
-    try { window.localStorage.setItem(key, JSON.stringify(list)); } catch {}
-  };
-  return {
-    get(): T[] { if (!hydrated) hydrate(); return list; },
-    subscribe,
-    initial: [...seed] as T[],
-    upsert(item: T) {
-      if (!hydrated) hydrate();
-      const exists = list.find((u) => u.id === item.id);
-      list = exists ? list.map((u) => u.id === item.id ? item : u) : [...list, item];
-      persist();
-      emit();
-    },
-    remove(id: string) {
-      if (!hydrated) hydrate();
-      list = list.filter((u) => u.id !== id);
-      persist();
-      emit();
-    },
-    patch(id: string, patch: Partial<T>) {
-      if (!hydrated) hydrate();
-      list = list.map((u) => u.id === id ? { ...u, ...patch } : u);
-      persist();
-      emit();
-    },
-  };
-}
-
-// ─── Per-role stores ────────────────────────────────────────────────────────
-const customers = makeStore<AuthUser>(CUSTOMERS_KEY, MOCK_CUSTOMER_USERS);
-const nurses = makeStore<AuthUser>(NURSES_KEY, MOCK_NURSE_USERS);
-const admins = makeStore<AdminUser>(ADMINS_KEY, MOCK_ADMINS);
-const labUsers = makeStore<LabUser>(LAB_USERS_KEY, MOCK_LAB_USERS);
-
-// Customers
-export const getCustomerUsers = customers.get;
-export function useCustomerUsers(): AuthUser[] {
-  return useSyncExternalStore(customers.subscribe, customers.get, () => customers.initial);
-}
-export const upsertCustomerUser = customers.upsert;
-export const deleteCustomerUser = customers.remove;
-export function setCustomerUserActive(id: string, isActive: boolean) { customers.patch(id, { isActive }); }
-export function resetCustomerUserPassword(id: string, password: string) { customers.patch(id, { password }); }
-
-// Nurses
-export const getNurseUsers = nurses.get;
-export function useNurseUsers(): AuthUser[] {
-  return useSyncExternalStore(nurses.subscribe, nurses.get, () => nurses.initial);
-}
-export const upsertNurseUser = nurses.upsert;
-export const deleteNurseUser = nurses.remove;
-export function setNurseUserActive(id: string, isActive: boolean) { nurses.patch(id, { isActive }); }
-export function resetNurseUserPassword(id: string, password: string) { nurses.patch(id, { password }); }
-
-// Admins
-export const getAdmins = admins.get;
-export function useAdmins(): AdminUser[] {
-  return useSyncExternalStore(admins.subscribe, admins.get, () => admins.initial);
-}
-export const upsertAdmin = admins.upsert;
-export const deleteAdmin = admins.remove;
-export function setAdminActive(id: string, isActive: boolean) { admins.patch(id, { isActive }); }
-export function resetAdminPassword(id: string, password: string) { admins.patch(id, { password }); }
-
-// Lab users (replaces the old lib/lab-auth.ts API)
-export const getLabUsers = labUsers.get;
-export function useLabUsers(): LabUser[] {
-  return useSyncExternalStore(labUsers.subscribe, labUsers.get, () => labUsers.initial);
-}
-export const upsertLabUser = labUsers.upsert;
-export const deleteLabUser = labUsers.remove;
-export function setLabUserActive(id: string, isActive: boolean) { labUsers.patch(id, { isActive }); }
-export function resetLabUserPassword(id: string, password: string) { labUsers.patch(id, { password }); }
-
-// ─── Login / logout / session ───────────────────────────────────────────────
-export interface LoginResult {
-  ok: boolean;
-  session?: AuthSession;
-  error?: "invalid" | "inactive";
-}
-
-const sessionListeners = new Set<() => void>();
-// Cached parsed session — read once from localStorage on first access, then
-// updated only on login/logout/storage events. This is required for
-// useSyncExternalStore's getSnapshot to return a stable reference between
-// renders (React bails out of re-renders by reference equality).
 let _cachedSession: AuthSession | null = null;
-let _sessionHydrated = false;
+let _hydrating: Promise<AuthSession | null> | null = null;
+const sessionListeners = new Set<() => void>();
+function emitSession() { sessionListeners.forEach((l) => l()); }
 
-function readSessionFromStorage(): AuthSession | null {
-  if (typeof window === "undefined") return null;
+async function fetchEnrichedSession(): Promise<AuthSession | null> {
   try {
-    const raw = window.localStorage.getItem(SESSION_KEY);
-    if (!raw) return null;
-    return JSON.parse(raw) as AuthSession;
+    const res = await fetch("/api/me", { cache: "no-store" });
+    if (!res.ok) return null;
+    const body = await res.json().catch(() => null);
+    const r = body?.session;
+    if (!r) return null;
+    const session: AuthSession = {
+      userId: r.userId,
+      username: r.email ?? "",
+      name: r.fullName ?? "",
+      role: r.role as Role,
+      linkedEntityId:
+        r.role === "customer" ? (r.customerId ?? r.userId) :
+        r.role === "nurse"    ? (r.nurseId ?? r.userId) :
+        r.role === "lab"      ? (r.labUserId ?? r.userId) :
+        r.userId,
+      customerId: r.customerId ?? undefined,
+      nurseId: r.nurseId ?? undefined,
+      labUserId: r.labUserId ?? undefined,
+      labId: r.labId ?? undefined,
+      labRole: r.labRole ?? undefined,
+      adminRole: r.adminRole ?? undefined,
+    };
+    return session;
   } catch {
     return null;
   }
 }
 
-function refreshCachedSession() {
-  _cachedSession = readSessionFromStorage();
-  _sessionHydrated = true;
+async function refreshSession(): Promise<void> {
+  if (_hydrating) { await _hydrating; return; }
+  _hydrating = fetchEnrichedSession();
+  try {
+    const next = await _hydrating;
+    _cachedSession = next;
+  } finally {
+    _hydrating = null;
+    emitSession();
+  }
 }
 
-function ensureSessionHydrated() {
-  if (!_sessionHydrated) refreshCachedSession();
-}
-
-function emitSession() {
-  refreshCachedSession();
-  sessionListeners.forEach((l) => l());
-}
-
-if (typeof window !== "undefined") {
-  // Cross-tab sync for logout.
-  window.addEventListener("storage", (e) => {
-    if (e.key === SESSION_KEY) emitSession();
+let _wired = false;
+function ensureAuthListenerWired() {
+  if (_wired || typeof window === "undefined") return;
+  _wired = true;
+  const sb = getSupabaseBrowser();
+  if (!sb) {
+    // Env vars missing — flag-off mock mode (no real auth available).
+    emitSession();
+    return;
+  }
+  // First fetch: populate the cache from the cookie.
+  void refreshSession();
+  // Cross-tab sign-in/sign-out + token refresh propagate via this listener.
+  sb.auth.onAuthStateChange((event) => {
+    if (event === "SIGNED_OUT") {
+      _cachedSession = null;
+      emitSession();
+      return;
+    }
+    void refreshSession();
   });
 }
 
 function subscribeSession(l: () => void) {
+  ensureAuthListenerWired();
   sessionListeners.add(l);
   return () => { sessionListeners.delete(l); };
 }
 
-function matchUsername(a: string, b: string) {
-  return a.toLowerCase() === b.trim().toLowerCase();
-}
-
-interface LookupHit {
-  user: { id: string; username: string; password: string; isActive: boolean };
-  session: AuthSession;
-  stamp: () => void;
-}
-
-function lookup(username: string): LookupHit[] {
-  const hits: LookupHit[] = [];
-  for (const u of getCustomerUsers()) {
-    if (matchUsername(u.username, username)) hits.push({
-      user: u,
-      session: { userId: u.id, username: u.username, name: u.name, role: "customer", linkedEntityId: u.linkedEntityId },
-      stamp: () => customers.patch(u.id, { lastLoginAt: new Date().toISOString() }),
-    });
-  }
-  for (const u of getNurseUsers()) {
-    if (matchUsername(u.username, username)) hits.push({
-      user: u,
-      session: { userId: u.id, username: u.username, name: u.name, role: "nurse", linkedEntityId: u.linkedEntityId },
-      stamp: () => nurses.patch(u.id, { lastLoginAt: new Date().toISOString() }),
-    });
-  }
-  for (const a of getAdmins()) {
-    if (matchUsername(a.username, username)) hits.push({
-      user: a,
-      session: { userId: `admin:${a.id}`, username: a.username, name: a.name, role: "admin", linkedEntityId: a.id },
-      stamp: () => admins.patch(a.id, { lastLogin: new Date().toISOString() }),
-    });
-  }
-  for (const l of getLabUsers()) {
-    if (matchUsername(l.username, username)) hits.push({
-      user: l,
-      session: { userId: `lab:${l.id}`, username: l.username, name: l.fullName, role: "lab", linkedEntityId: l.id },
-      stamp: () => labUsers.patch(l.id, { lastLoginAt: new Date().toISOString() }),
-    });
-  }
-  return hits;
-}
-
-export function loginUser(username: string, password: string): LoginResult {
-  const hits = lookup(username);
-  if (hits.length === 0) return { ok: false, error: "invalid" };
-  const hit = hits.find((h) => h.user.password === password);
-  if (!hit) return { ok: false, error: "invalid" };
-  if (!hit.user.isActive) return { ok: false, error: "inactive" };
-  hit.stamp();
-  try { window.localStorage.setItem(SESSION_KEY, JSON.stringify(hit.session)); } catch {}
-  emitSession();
-  return { ok: true, session: hit.session };
-}
-
-export function logout(): void {
-  try { window.localStorage.removeItem(SESSION_KEY); } catch {}
-  emitSession();
-}
-
 export function getStoredSession(): AuthSession | null {
-  ensureSessionHydrated();
-  const session = _cachedSession;
-  if (!session) return null;
-  // Re-validate: an admin may have deactivated this user since last login.
-  const stillActive = (() => {
-    switch (session.role) {
-      case "customer": return getCustomerUsers().some((u) => u.id === session.userId && u.isActive);
-      case "nurse":    return getNurseUsers().some((u) => u.id === session.userId && u.isActive);
-      case "admin":    return getAdmins().some((a) => a.id === session.linkedEntityId && a.isActive);
-      case "lab":      return getLabUsers().some((u) => u.id === session.linkedEntityId && u.isActive);
-    }
-  })();
-  return stillActive ? session : null;
+  ensureAuthListenerWired();
+  return _cachedSession;
 }
 
 export function useSession(): AuthSession | null {
   return useSyncExternalStore(subscribeSession, getStoredSession, () => null);
 }
 
-// ─── Resolvers ──────────────────────────────────────────────────────────────
+export interface LoginResult {
+  ok: boolean;
+  session?: AuthSession;
+  error?: string;
+}
+
+export async function loginUser(
+  email: string,
+  password: string,
+  opts?: { allowedRoles?: Role[] },
+): Promise<LoginResult> {
+  const sb = getSupabaseBrowser();
+  if (!sb) return { ok: false, error: "Supabase client not configured" };
+  const { error } = await sb.auth.signInWithPassword({
+    email: email.trim(),
+    password,
+  });
+  if (error) {
+    const msg = error.message?.toLowerCase().includes("invalid")
+      ? "اسم المستخدم أو كلمة المرور غير صحيحة"
+      : error.message ?? "تعذر تسجيل الدخول";
+    return { ok: false, error: msg };
+  }
+  // Pull the enriched session and confirm role.
+  const next = await fetchEnrichedSession();
+  if (!next) {
+    await sb.auth.signOut().catch(() => {});
+    return { ok: false, error: "تعذر تحميل بيانات الجلسة" };
+  }
+  if (opts?.allowedRoles && !opts.allowedRoles.includes(next.role)) {
+    await sb.auth.signOut().catch(() => {});
+    _cachedSession = null;
+    emitSession();
+    return {
+      ok: false,
+      error: "لا تملك صلاحية الوصول إلى هذه المنصة بهذا الحساب.",
+    };
+  }
+  _cachedSession = next;
+  emitSession();
+  return { ok: true, session: next };
+}
+
+export async function logout(): Promise<void> {
+  const sb = getSupabaseBrowser();
+  if (sb) await sb.auth.signOut().catch(() => {});
+  _cachedSession = null;
+  emitSession();
+}
+
+// ─── Role helpers (kept for callers) ───────────────────────────────────────
 export function hasRole(session: AuthSession | null, role: Role): boolean {
   return !!session && session.role === role;
 }
 
+import { MOCK_NURSES } from "./mock-data";
+import type { Nurse, LabUser, AdminUser, AuthUser } from "./types";
+import {
+  fetchAdminUsers, fetchCustomerUsers, fetchNurseUsers, fetchLabUsers,
+  apiCreateUser, apiPatchUser, apiDeleteUser, apiResetUserPassword,
+} from "./admin-users-api";
+
+// Phase 8 — nurse seed metadata (photo, city) is still in MOCK_NURSES until
+// nurse rows in Supabase carry photo_url. Real auth still gates routing; this
+// helper just enriches the session view.
 export function nurseFromSession(session: AuthSession | null): Nurse | null {
   if (!session || session.role !== "nurse") return null;
-  return MOCK_NURSES.find((n) => n.id === session.linkedEntityId) ?? null;
+  const id = session.nurseId ?? session.linkedEntityId;
+  return MOCK_NURSES.find((n) => n.id === id) ?? null;
 }
 
 export function labUserFromSession(session: AuthSession | null): LabUser | null {
   if (!session || session.role !== "lab") return null;
-  return getLabUsers().find((u) => u.id === session.linkedEntityId) ?? null;
+  // Synthesize a LabUser from session fields rather than looking up a mock row.
+  return {
+    id: session.labUserId ?? "",
+    username: session.username,
+    password: "",
+    fullName: session.name,
+    labId: session.labId ?? "",
+    role: session.labRole ?? "lab_admin",
+    isActive: true,
+  };
 }
 
 export function adminFromSession(session: AuthSession | null): AdminUser | null {
   if (!session || session.role !== "admin") return null;
-  return getAdmins().find((a) => a.id === session.linkedEntityId) ?? null;
+  return {
+    id: session.userId,
+    username: session.username,
+    password: "",
+    name: session.name || session.username,
+    role: session.adminRole ?? "super_admin",
+    isActive: true,
+  };
+}
+
+// ─── Phase 8.5 admin user CRUD — Supabase-backed ──────────────────────────
+// AdminDashboard sub-sections call useAdmins / useCustomerUsers / useNurseUsers
+// / useLabUsers as plain hooks, plus upsert / delete / setActive / reset
+// mutators. We back each list with a tiny reactive cache that hydrates on
+// first use and on every successful mutation.
+
+function makeListStore<T>(fetcher: () => Promise<T[]>) {
+  let _items: T[] = [];
+  let _hydrated = false;
+  let _hydrating = false;
+  const ls = new Set<() => void>();
+  const emit = () => ls.forEach((l) => l());
+  const subscribe = (l: () => void) => {
+    ls.add(l);
+    if (!_hydrated && !_hydrating) {
+      _hydrating = true;
+      void fetcher().then((rows) => {
+        _items = rows;
+        _hydrated = true;
+        _hydrating = false;
+        emit();
+      });
+    }
+    return () => { ls.delete(l); };
+  };
+  const get = () => _items;
+  return {
+    use(): T[] {
+      return useSyncExternalStore(subscribe, get, () => []);
+    },
+    async refresh(): Promise<void> {
+      const next = await fetcher();
+      _items = next;
+      _hydrated = true;
+      emit();
+    },
+  };
+}
+
+const adminStore     = makeListStore<AdminUser>(fetchAdminUsers);
+const customerStore  = makeListStore<AuthUser>(fetchCustomerUsers);
+const nurseStore     = makeListStore<AuthUser>(fetchNurseUsers);
+const labUserStore   = makeListStore<LabUser>(fetchLabUsers);
+
+export const useAdmins        = () => adminStore.use();
+export const useCustomerUsers = () => customerStore.use();
+export const useNurseUsers    = () => nurseStore.use();
+export const useLabUsers      = () => labUserStore.use();
+
+// Upsert mutators — translate the AuthUser/AdminUser/LabUser shape into the
+// payload the /api/admin/users routes expect. New rows (id missing) hit POST;
+// existing rows hit PATCH. Password is optional on PATCH; if present, callers
+// should use resetXxxPassword instead.
+export async function upsertAdmin(a: AdminUser): Promise<{ ok: boolean; error?: string }> {
+  const isCreate = !a.id;
+  const result = isCreate
+    ? await apiCreateUser({
+        role: "admin",
+        email: a.username,
+        password: a.password || "phase8-admin-temp-password",
+        fullName: a.name,
+        adminRole: a.role,
+        isActive: a.isActive,
+      })
+    : await apiPatchUser(a.id, {
+        fullName: a.name,
+        adminRole: a.role,
+        isActive: a.isActive,
+      });
+  if (result.ok) await adminStore.refresh();
+  return result;
+}
+
+export async function deleteAdmin(id: string): Promise<{ ok: boolean; error?: string }> {
+  const result = await apiDeleteUser(id);
+  if (result.ok) await adminStore.refresh();
+  return result;
+}
+
+export async function setAdminActive(id: string, isActive: boolean): Promise<{ ok: boolean; error?: string }> {
+  const result = await apiPatchUser(id, { isActive });
+  if (result.ok) await adminStore.refresh();
+  return result;
+}
+
+export async function resetAdminPassword(id: string, password: string): Promise<{ ok: boolean; error?: string }> {
+  return apiResetUserPassword(id, password);
+}
+
+export async function upsertCustomerUser(u: AuthUser): Promise<{ ok: boolean; error?: string }> {
+  const isCreate = !u.id;
+  const result = isCreate
+    ? await apiCreateUser({
+        role: "customer",
+        email: u.username,
+        password: u.password || "phase8-customer-temp-password",
+        fullName: u.name,
+        isActive: u.isActive,
+      })
+    : await apiPatchUser(u.id, { fullName: u.name, isActive: u.isActive });
+  if (result.ok) await customerStore.refresh();
+  return result;
+}
+
+export async function deleteCustomerUser(id: string): Promise<{ ok: boolean; error?: string }> {
+  const result = await apiDeleteUser(id);
+  if (result.ok) await customerStore.refresh();
+  return result;
+}
+
+export async function setCustomerUserActive(id: string, isActive: boolean): Promise<{ ok: boolean; error?: string }> {
+  const result = await apiPatchUser(id, { isActive });
+  if (result.ok) await customerStore.refresh();
+  return result;
+}
+
+export async function resetCustomerUserPassword(id: string, password: string): Promise<{ ok: boolean; error?: string }> {
+  return apiResetUserPassword(id, password);
+}
+
+export async function upsertNurseUser(u: AuthUser): Promise<{ ok: boolean; error?: string }> {
+  const isCreate = !u.id;
+  const result = isCreate
+    ? await apiCreateUser({
+        role: "nurse",
+        email: u.username,
+        password: u.password || "phase8-nurse-temp-password",
+        fullName: u.name,
+        isActive: u.isActive,
+      })
+    : await apiPatchUser(u.id, { fullName: u.name, isActive: u.isActive });
+  if (result.ok) await nurseStore.refresh();
+  return result;
+}
+
+export async function deleteNurseUser(id: string): Promise<{ ok: boolean; error?: string }> {
+  const result = await apiDeleteUser(id);
+  if (result.ok) await nurseStore.refresh();
+  return result;
+}
+
+export async function setNurseUserActive(id: string, isActive: boolean): Promise<{ ok: boolean; error?: string }> {
+  const result = await apiPatchUser(id, { isActive });
+  if (result.ok) await nurseStore.refresh();
+  return result;
+}
+
+export async function resetNurseUserPassword(id: string, password: string): Promise<{ ok: boolean; error?: string }> {
+  return apiResetUserPassword(id, password);
+}
+
+export async function upsertLabUser(u: LabUser): Promise<{ ok: boolean; error?: string }> {
+  const isCreate = !u.id;
+  const result = isCreate
+    ? await apiCreateUser({
+        role: "lab",
+        email: u.username,
+        password: u.password || "phase8-lab-temp-password",
+        fullName: u.fullName,
+        labId: u.labId,
+        labRole: u.role,
+        isActive: u.isActive,
+      })
+    : await apiPatchUser(u.id, {
+        fullName: u.fullName,
+        labId: u.labId,
+        labRole: u.role,
+        isActive: u.isActive,
+      });
+  if (result.ok) await labUserStore.refresh();
+  return result;
+}
+
+export async function deleteLabUser(id: string): Promise<{ ok: boolean; error?: string }> {
+  const result = await apiDeleteUser(id);
+  if (result.ok) await labUserStore.refresh();
+  return result;
+}
+
+export async function setLabUserActive(id: string, isActive: boolean): Promise<{ ok: boolean; error?: string }> {
+  const result = await apiPatchUser(id, { isActive });
+  if (result.ok) await labUserStore.refresh();
+  return result;
+}
+
+export async function resetLabUserPassword(id: string, password: string): Promise<{ ok: boolean; error?: string }> {
+  return apiResetUserPassword(id, password);
 }

@@ -2,41 +2,33 @@ import { NextResponse, type NextRequest } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabase/server-admin";
 import { enrichOrdersWithSignedUrls, fetchOrderById } from "@/lib/supabase/queries/orders";
 import { isUuid } from "@/lib/supabase/uuid";
-import type { AuthSession } from "@/lib/types";
+import { requireAdmin } from "@/lib/route-auth";
 
-interface ForceCompleteBody {
-  session: AuthSession;
-  reason: string;
-}
+interface ForceCompleteBody { reason: string }
 
 export async function POST(
   req: NextRequest,
   ctx: { params: Promise<{ id: string }> },
 ) {
   const { id: orderId } = await ctx.params;
-  if (!isUuid(orderId)) {
-    return NextResponse.json({ error: "order id must be a uuid" }, { status: 400 });
-  }
+  if (!isUuid(orderId)) return NextResponse.json({ error: "order id must be a uuid" }, { status: 400 });
+  const auth = await requireAdmin();
+  if (!auth.ok) return NextResponse.json({ error: auth.error }, { status: auth.status });
   let body: ForceCompleteBody;
   try { body = await req.json(); } catch {
     return NextResponse.json({ error: "invalid json" }, { status: 400 });
   }
-  const { session, reason } = body ?? {};
-  if (!session) return NextResponse.json({ error: "session required" }, { status: 401 });
-  if (session.role !== "admin") {
-    return NextResponse.json({ error: "only admin can force-complete an order" }, { status: 403 });
-  }
-  if (!reason || !reason.trim()) {
+  if (!body.reason || !body.reason.trim()) {
     return NextResponse.json({ error: "reason is required" }, { status: 400 });
   }
 
   const sb = getSupabaseAdmin();
   const { error: rpcErr } = await sb.rpc("force_complete_order_admin", {
     p_order_id: orderId,
-    p_reason: reason,
-    p_actor_role: session.role,
-    p_actor_id: null,
-    p_actor_name: session.name ?? null,
+    p_reason: body.reason,
+    p_actor_role: auth.session.role,
+    p_actor_id: auth.session.userId,
+    p_actor_name: auth.session.fullName ?? null,
   });
   if (rpcErr) return NextResponse.json({ error: rpcErr.message }, { status: 500 });
 

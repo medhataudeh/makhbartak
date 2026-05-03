@@ -90,5 +90,5 @@ async function persistLabSelfViaApi(
     if (snake) wire[snake] = v;
   }
   const { apiPatchLab } = await import("./lab-api");
-  return apiPatchLab(session, labId, wire);
+  return apiPatchLab(labId, wire);
 }

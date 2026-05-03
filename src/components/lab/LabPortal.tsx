@@ -8,7 +8,7 @@ import {
 import type { Lab, LabUser, Order, LabSettlement } from "@/lib/types";
 import { LAB_USER_ROLE_LABELS } from "@/lib/types";
 import {
-  MOCK_LABS, MOCK_LAB_USERS, LAB_ISSUE_REASONS, computeOrderLabAmount,
+  MOCK_LABS, LAB_ISSUE_REASONS, computeOrderLabAmount,
 } from "@/lib/mock-data";
 import {
   useOrders, uploadResultFile, archiveResultFile, openLabIssue, setOrderStatus,
@@ -16,6 +16,9 @@ import {
 } from "@/lib/store";
 import { useSession, logout, labUserFromSession } from "@/lib/auth";
 import { LoginForm } from "@/components/auth/LoginForm";
+import { DEMO_LAB_CREDENTIALS } from "@/lib/demo-credentials";
+
+const SHOW_DEMO = process.env.NEXT_PUBLIC_SHOW_DEMO_CREDS === "true";
 import { useSettlementsForLab, useSettlementItems, hydrateSettlementsForLab } from "@/lib/settlements";
 import { useEditableLab, updateLabSelf } from "@/lib/lab-overrides";
 import { formatDate, formatPrice, getShiftLabel } from "@/lib/utils";
@@ -32,7 +35,22 @@ const LAB_STATUSES = [
 
 export function LabPortal() {
   const auth = useSession();
-  const labUser = labUserFromSession(auth);
+  // Phase 8: build the LabUser shape from the enriched session. Older
+  // builds resolved this through MOCK_LAB_USERS; the session now carries
+  // labUserId / labId / labRole directly from the server.
+  const labUser: LabUser | null = useMemo(() => {
+    if (!auth || auth.role !== "lab" || !auth.labUserId || !auth.labId) return null;
+    const fallback = labUserFromSession(auth);
+    return {
+      id: auth.labUserId,
+      labId: auth.labId,
+      username: auth.username,
+      password: "",
+      fullName: auth.name || fallback?.fullName || auth.username,
+      role: (auth.labRole ?? fallback?.role ?? "lab_admin"),
+      isActive: true,
+    };
+  }, [auth]);
   const lab = useMemo(
     () => (labUser ? MOCK_LABS.find((l) => l.id === labUser.labId) ?? null : null),
     [labUser],
@@ -60,11 +78,9 @@ export function LabPortal() {
         brandSubtitle="سجّل دخولك ببيانات الحساب الذي زوّدتك به الإدارة."
         allowedRoles={["lab"]}
         onSuccess={() => { /* useSession() re-renders LabPortal */ }}
-        demoCredentials={MOCK_LAB_USERS.map((u) => ({
-          label: `${u.fullName} · ${LAB_USER_ROLE_LABELS[u.role]}`,
-          username: u.username,
-          password: u.password,
-        }))}
+        demoCredentials={SHOW_DEMO ? DEMO_LAB_CREDENTIALS.map((c) => ({
+          label: c.label, username: c.email, password: c.password,
+        })) : undefined}
       />
     );
   }

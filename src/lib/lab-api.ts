@@ -1,15 +1,14 @@
 "use client";
-import type { AuthSession, LabIssueType, Order } from "@/lib/types";
+import type { LabIssueType, Order } from "@/lib/types";
 
 export async function apiOpenLabIssue(
-  session: AuthSession,
   orderId: string,
   payload: { type: LabIssueType; description: string; customerMessageAr?: string },
 ): Promise<{ order: Order | null; issueId: string } | { error: string }> {
   const res = await fetch(`/api/orders/${encodeURIComponent(orderId)}/lab-issues`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ session, ...payload }),
+    body: JSON.stringify(payload),
   });
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
@@ -19,14 +18,13 @@ export async function apiOpenLabIssue(
 }
 
 export async function apiUpdateLabIssueMessage(
-  session: AuthSession,
   issueId: string,
   customerMessageAr: string,
 ): Promise<{ ok: boolean; error?: string }> {
   const res = await fetch(`/api/lab-issues/${encodeURIComponent(issueId)}/message`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ session, customerMessageAr }),
+    body: JSON.stringify({ customerMessageAr }),
   });
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
@@ -36,14 +34,13 @@ export async function apiUpdateLabIssueMessage(
 }
 
 export async function apiResolveLabIssue(
-  session: AuthSession,
   issueId: string,
   note?: string,
 ): Promise<{ ok: boolean; error?: string }> {
   const res = await fetch(`/api/lab-issues/${encodeURIComponent(issueId)}/resolve`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ session, note }),
+    body: JSON.stringify({ note }),
   });
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
@@ -53,14 +50,13 @@ export async function apiResolveLabIssue(
 }
 
 export async function apiPatchLab(
-  session: AuthSession,
   labId: string,
   patch: Record<string, unknown>,
 ): Promise<{ ok: boolean; error?: string; lab?: unknown }> {
   const res = await fetch(`/api/labs/${encodeURIComponent(labId)}`, {
     method: "PATCH",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ session, patch }),
+    body: JSON.stringify({ patch }),
   });
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
@@ -93,7 +89,6 @@ export async function apiListSettlements(labId: string): Promise<RawSettlementRo
 }
 
 export async function apiGenerateSettlement(
-  session: AuthSession,
   labId: string,
   periodStart: string,
   periodEnd: string,
@@ -101,7 +96,7 @@ export async function apiGenerateSettlement(
   const res = await fetch(`/api/labs/${encodeURIComponent(labId)}/settlements`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ session, periodStart, periodEnd }),
+    body: JSON.stringify({ periodStart, periodEnd }),
   });
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
@@ -112,7 +107,6 @@ export async function apiGenerateSettlement(
 }
 
 export async function apiSetSettlementStatus(
-  session: AuthSession,
   settlementId: string,
   status: "pending" | "partially_paid" | "paid",
   totalPaid?: number,
@@ -120,7 +114,7 @@ export async function apiSetSettlementStatus(
   const res = await fetch(`/api/settlements/${encodeURIComponent(settlementId)}/status`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ session, status, totalPaid }),
+    body: JSON.stringify({ status, totalPaid }),
   });
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));

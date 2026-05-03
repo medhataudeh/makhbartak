@@ -99,10 +99,10 @@ export async function upsertPatient(p: Patient): Promise<{ ok: boolean; patient?
 
   const isUpdate = isUuid(p.id) && _patients.some((x) => x.id === p.id);
   const result = isUpdate
-    ? await apiUpdatePatient(session, session.linkedEntityId, p.id, {
+    ? await apiUpdatePatient(session.linkedEntityId, p.id, {
         name: p.name, nationalId: p.nationalId, note: p.note, isDefault: p.isDefault,
       })
-    : await apiCreatePatient(session, session.linkedEntityId, {
+    : await apiCreatePatient(session.linkedEntityId, {
         name: p.name, nationalId: p.nationalId, note: p.note, isDefault: p.isDefault,
       });
   if ("error" in result) {
@@ -149,7 +149,7 @@ export async function deletePatient(id: string): Promise<{ ok: boolean; error?: 
   if (!isUuid(id)) return { ok: true };
   const session = await getSession();
   if (!session || session.role !== "customer" || !isUuid(session.linkedEntityId)) return { ok: true };
-  return apiDeletePatient(session, session.linkedEntityId, id);
+  return apiDeletePatient(session.linkedEntityId, id);
 }
 
 // ─── Addresses ─────────────────────────────────────────────────────────────
@@ -174,11 +174,11 @@ export async function upsertAddress(a: Address): Promise<{ ok: boolean; address?
 
   const isUpdate = isUuid(a.id) && _addresses.some((x) => x.id === a.id);
   const result = isUpdate
-    ? await apiUpdateAddress(session, session.linkedEntityId, a.id, {
+    ? await apiUpdateAddress(session.linkedEntityId, a.id, {
         label: a.label, description: a.description, city: a.city,
         lat: a.lat || null, lng: a.lng || null, isDefault: a.isDefault,
       })
-    : await apiCreateAddress(session, session.linkedEntityId, {
+    : await apiCreateAddress(session.linkedEntityId, {
         label: a.label, description: a.description, city: a.city,
         lat: a.lat || null, lng: a.lng || null, isDefault: a.isDefault,
       });
@@ -222,5 +222,5 @@ export async function deleteAddress(id: string): Promise<{ ok: boolean; error?: 
   if (!isUuid(id)) return { ok: true };
   const session = await getSession();
   if (!session || session.role !== "customer" || !isUuid(session.linkedEntityId)) return { ok: true };
-  return apiDeleteAddress(session, session.linkedEntityId, id);
+  return apiDeleteAddress(session.linkedEntityId, id);
 }

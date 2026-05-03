@@ -1,8 +1,9 @@
 "use client";
-import type { AuthSession, Order, OrderStatus, PaymentMethod, Shift } from "@/lib/types";
+import type { Order, OrderStatus, PaymentMethod, Shift } from "@/lib/types";
 
 // Thin client-side fetch wrappers around /api/orders. They translate between
-// the TS Order shape and the JSON the route handlers expect.
+// the TS Order shape and the JSON the route handlers expect. Auth comes from
+// the Supabase cookie set by middleware; routes call requireAuthedUser.
 
 export interface ApiCreateOrderInput {
   type: "package" | "custom" | "prescription";
@@ -25,14 +26,13 @@ export interface ApiCreateOrderInput {
 }
 
 export async function apiCreateOrder(
-  session: AuthSession,
   idempotencyKey: string,
   order: ApiCreateOrderInput,
 ): Promise<{ order: Order | null; orderId: string } | { error: string }> {
   const res = await fetch("/api/orders", {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ session, idempotencyKey, order }),
+    body: JSON.stringify({ idempotencyKey, order }),
   });
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
@@ -63,7 +63,6 @@ export async function apiListOrdersForNurse(nurseId: string): Promise<Order[] | 
 }
 
 export async function apiAssignNurse(
-  session: import("@/lib/types").AuthSession,
   orderId: string,
   nurseId: string | null,
   note?: string,
@@ -71,7 +70,7 @@ export async function apiAssignNurse(
   const res = await fetch(`/api/orders/${encodeURIComponent(orderId)}/assign-nurse`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ session, nurseId, note }),
+    body: JSON.stringify({ nurseId, note }),
   });
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
@@ -81,7 +80,6 @@ export async function apiAssignNurse(
 }
 
 export async function apiAssignLab(
-  session: import("@/lib/types").AuthSession,
   orderId: string,
   labId: string | null,
   note?: string,
@@ -89,7 +87,7 @@ export async function apiAssignLab(
   const res = await fetch(`/api/orders/${encodeURIComponent(orderId)}/assign-lab`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ session, labId, note }),
+    body: JSON.stringify({ labId, note }),
   });
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
@@ -99,13 +97,11 @@ export async function apiAssignLab(
 }
 
 export async function apiUploadLabResultFile(
-  session: import("@/lib/types").AuthSession,
   orderId: string,
   file: File,
   opts?: { fileName?: string; replacesFileId?: string; note?: string },
 ): Promise<{ order: Order | null; fileId: string } | { error: string }> {
   const fd = new FormData();
-  fd.append("session", JSON.stringify(session));
   fd.append("file", file);
   fd.append("fileName", opts?.fileName ?? file.name);
   if (opts?.replacesFileId) fd.append("replacesFileId", opts.replacesFileId);
@@ -122,7 +118,6 @@ export async function apiUploadLabResultFile(
 }
 
 export async function apiArchiveLabResultFile(
-  session: import("@/lib/types").AuthSession,
   orderId: string,
   fileId: string,
   note?: string,
@@ -130,7 +125,7 @@ export async function apiArchiveLabResultFile(
   const res = await fetch(`/api/orders/${encodeURIComponent(orderId)}/lab/files/${encodeURIComponent(fileId)}/archive`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ session, note }),
+    body: JSON.stringify({ note }),
   });
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
@@ -140,13 +135,12 @@ export async function apiArchiveLabResultFile(
 }
 
 export async function apiConfirmLabResults(
-  session: import("@/lib/types").AuthSession,
   orderId: string,
 ): Promise<{ order: Order | null } | { error: string }> {
   const res = await fetch(`/api/orders/${encodeURIComponent(orderId)}/lab/confirm`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ session }),
+    body: JSON.stringify({}),
   });
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
@@ -156,14 +150,13 @@ export async function apiConfirmLabResults(
 }
 
 export async function apiAddOrderNote(
-  session: import("@/lib/types").AuthSession,
   orderId: string,
   text: string,
 ): Promise<{ order: Order | null } | { error: string }> {
   const res = await fetch(`/api/orders/${encodeURIComponent(orderId)}/notes`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ session, text }),
+    body: JSON.stringify({ text }),
   });
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
@@ -173,7 +166,6 @@ export async function apiAddOrderNote(
 }
 
 export async function apiApplyCoupon(
-  session: import("@/lib/types").AuthSession,
   orderId: string,
   couponCode: string | null,
   couponDiscount: number,
@@ -182,7 +174,7 @@ export async function apiApplyCoupon(
   const res = await fetch(`/api/orders/${encodeURIComponent(orderId)}/coupon`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ session, couponCode, couponDiscount, total }),
+    body: JSON.stringify({ couponCode, couponDiscount, total }),
   });
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
@@ -192,7 +184,6 @@ export async function apiApplyCoupon(
 }
 
 export async function apiSetPaymentStatus(
-  session: import("@/lib/types").AuthSession,
   orderId: string,
   paymentStatus: "pending" | "paid" | "failed" | "refunded",
   note?: string,
@@ -200,7 +191,7 @@ export async function apiSetPaymentStatus(
   const res = await fetch(`/api/orders/${encodeURIComponent(orderId)}/payment-status`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ session, paymentStatus, note }),
+    body: JSON.stringify({ paymentStatus, note }),
   });
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
@@ -210,14 +201,13 @@ export async function apiSetPaymentStatus(
 }
 
 export async function apiCancelOrder(
-  session: import("@/lib/types").AuthSession,
   orderId: string,
   reason?: string,
 ): Promise<{ order: Order | null } | { error: string }> {
   const res = await fetch(`/api/orders/${encodeURIComponent(orderId)}/cancel`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ session, reason }),
+    body: JSON.stringify({ reason }),
   });
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
@@ -227,7 +217,6 @@ export async function apiCancelOrder(
 }
 
 export async function apiRescheduleOrder(
-  session: import("@/lib/types").AuthSession,
   orderId: string,
   visitDate: string,
   shift: import("@/lib/types").Shift,
@@ -237,7 +226,7 @@ export async function apiRescheduleOrder(
   const res = await fetch(`/api/orders/${encodeURIComponent(orderId)}/reschedule`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ session, visitDate, shift, shiftStartTime, shiftEndTime }),
+    body: JSON.stringify({ visitDate, shift, shiftStartTime, shiftEndTime }),
   });
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
@@ -247,7 +236,6 @@ export async function apiRescheduleOrder(
 }
 
 export async function apiVerifyPatient(
-  session: import("@/lib/types").AuthSession,
   orderId: string,
   officialName: string,
   nationalId?: string,
@@ -256,7 +244,7 @@ export async function apiVerifyPatient(
   const res = await fetch(`/api/orders/${encodeURIComponent(orderId)}/verify-patient`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ session, officialName, nationalId, note }),
+    body: JSON.stringify({ officialName, nationalId, note }),
   });
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
@@ -266,14 +254,13 @@ export async function apiVerifyPatient(
 }
 
 export async function apiForceCompleteOrder(
-  session: import("@/lib/types").AuthSession,
   orderId: string,
   reason: string,
 ): Promise<{ order: Order | null } | { error: string }> {
   const res = await fetch(`/api/orders/${encodeURIComponent(orderId)}/force-complete`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ session, reason }),
+    body: JSON.stringify({ reason }),
   });
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
@@ -283,7 +270,6 @@ export async function apiForceCompleteOrder(
 }
 
 export async function apiSetOrderStatus(
-  session: import("@/lib/types").AuthSession,
   orderId: string,
   status: import("@/lib/types").OrderStatus,
   opts?: { note?: string; reason?: string },
@@ -291,7 +277,7 @@ export async function apiSetOrderStatus(
   const res = await fetch(`/api/orders/${encodeURIComponent(orderId)}/status`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ session, status, note: opts?.note, reason: opts?.reason }),
+    body: JSON.stringify({ status, note: opts?.note, reason: opts?.reason }),
   });
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));

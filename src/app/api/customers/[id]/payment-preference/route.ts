@@ -1,10 +1,9 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabase/server-admin";
 import { isUuid } from "@/lib/supabase/uuid";
-import type { AuthSession } from "@/lib/types";
+import { requireCustomerSelfOrAdmin } from "@/lib/route-auth";
 
 interface SetPrefBody {
-  session: AuthSession;
   method: "cash" | "online";
 }
 
@@ -16,19 +15,13 @@ export async function POST(
   if (!isUuid(customerId)) {
     return NextResponse.json({ error: "customer id must be a uuid" }, { status: 400 });
   }
+  const auth = await requireCustomerSelfOrAdmin(customerId);
+  if (!auth.ok) return NextResponse.json({ error: auth.error }, { status: auth.status });
   let body: SetPrefBody;
   try { body = await req.json(); } catch {
     return NextResponse.json({ error: "invalid json" }, { status: 400 });
   }
-  const { session, method } = body ?? {};
-  if (!session) return NextResponse.json({ error: "session required" }, { status: 401 });
-  if (session.role === "customer") {
-    if (session.linkedEntityId !== customerId) {
-      return NextResponse.json({ error: "you can only edit your own payment preference" }, { status: 403 });
-    }
-  } else if (session.role !== "admin") {
-    return NextResponse.json({ error: "role not authorized" }, { status: 403 });
-  }
+  const { method } = body ?? {};
   if (method !== "cash" && method !== "online") {
     return NextResponse.json({ error: "method must be cash or online" }, { status: 400 });
   }

@@ -231,8 +231,6 @@ async function persistNotificationReadViaApi(
   try {
     await fetch(`/api/customers/${encodeURIComponent(customerId)}/notifications/${encodeURIComponent(notificationId)}/read`, {
       method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ session }),
     });
   } catch (err) {
     console.warn("[api/customers/notifications/read] failed", err);
@@ -399,7 +397,7 @@ export function createOrder(input: CreateOrderInput): Order {
 async function writeOrderRemote(order: Order, input: CreateOrderInput): Promise<void> {
   if (!USE_SUPABASE) return;
   if (!input.session || input.session.role !== "customer") return;
-  const result = await apiCreateOrder(input.session, input.idempotencyKey, {
+  const result = await apiCreateOrder(input.idempotencyKey, {
     type: order.type,
     packageId: order.packageSnapshot?.packageId,
     packageSnapshot: order.packageSnapshot,
@@ -454,7 +452,7 @@ async function persistNotificationViaApi(payload: {
     await fetch("/api/admin/notifications", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ session, ...payload }),
+      body: JSON.stringify(payload),
     });
   } catch (err) {
     console.warn("[api/admin/notifications] failed", err);
@@ -577,7 +575,7 @@ async function persistOrderStatusViaApi(
   if (!session || (session.role !== "nurse" && session.role !== "admin")) {
     return { ok: true };
   }
-  const result = await apiSetOrderStatus(session, orderId, status, { note });
+  const result = await apiSetOrderStatus(orderId, status, { note });
   if ("error" in result) {
     console.warn("[api/orders/status] failed; keeping local update", result.error);
     return { ok: false, error: result.error };
@@ -628,16 +626,16 @@ export function applyCoupon(orderId: string, code: string, discount: number, ref
     };
   });
   appendEvent(orderId, "coupon_applied", ref, `${code} (-${discount})`);
-  return persistOrderActionViaApi(orderId, async (session) =>
-    apiApplyCoupon(session, orderId, code || null, discount, nextTotal),
+  return persistOrderActionViaApi(orderId, async () =>
+    apiApplyCoupon(orderId, code || null, discount, nextTotal),
   );
 }
 
 export function setPaymentStatus(orderId: string, status: Order["paymentStatus"], ref: ActorRef): Promise<{ ok: boolean; error?: string }> {
   mutateOrder(orderId, (o) => ({ ...o, paymentStatus: status, updatedAt: new Date().toISOString() }));
   appendEvent(orderId, "payment_status_changed", ref, status);
-  return persistOrderActionViaApi(orderId, async (session) =>
-    apiSetPaymentStatus(session, orderId, status as "pending" | "paid" | "failed" | "refunded"),
+  return persistOrderActionViaApi(orderId, async () =>
+    apiSetPaymentStatus(orderId, status as "pending" | "paid" | "failed" | "refunded"),
   );
 }
 
@@ -650,8 +648,8 @@ export function addNote(orderId: string, note: Omit<OrderNote, "id" | "orderId" 
   };
   mutateOrder(orderId, (o) => ({ ...o, notes: [...(o.notes ?? []), full] }));
   appendEvent(orderId, "note_added", { actor: note.authorRole === "nurse" ? "nurse" : note.authorRole === "lab" ? "lab" : "admin", actorName: note.authorName });
-  return persistOrderActionViaApi(orderId, async (session) =>
-    apiAddOrderNote(session, orderId, note.text),
+  return persistOrderActionViaApi(orderId, async () =>
+    apiAddOrderNote(orderId, note.text),
   );
 }
 
@@ -740,7 +738,7 @@ async function persistUploadViaApi(
     ? file.replacesFileId
     : undefined;
 
-  const result = await apiUploadLabResultFile(session, orderId, file.blob, {
+  const result = await apiUploadLabResultFile(orderId, file.blob, {
     fileName: file.fileName, replacesFileId: replacesId, note: file.note,
   });
   if ("error" in result) {
@@ -790,7 +788,7 @@ async function persistArchiveViaApi(
   }
   const session = (await import("./auth")).getStoredSession();
   if (!session || (session.role !== "lab" && session.role !== "admin")) return { ok: true };
-  const result = await apiArchiveLabResultFile(session, orderId, fileId, note);
+  const result = await apiArchiveLabResultFile(orderId, fileId, note);
   if ("error" in result) {
     console.warn("[api/orders/lab/files/archive] failed; keeping local archive", result.error);
     return { ok: false, error: result.error };
@@ -852,7 +850,7 @@ async function persistConfirmViaApi(orderId: string): Promise<void> {
   if (!isUuid(orderId)) return;
   const session = (await import("./auth")).getStoredSession();
   if (!session || (session.role !== "lab" && session.role !== "admin")) return;
-  const result = await apiConfirmLabResults(session, orderId);
+  const result = await apiConfirmLabResults(orderId);
   if ("error" in result) {
     console.warn("[api/orders/lab/confirm] failed; status update may not be canonical", result.error);
     return;
@@ -871,8 +869,8 @@ export function forceCompleteOrder(orderId: string, ref: ActorRef, reason: strin
   // history row with note='force:<reason>', overriding the generic note
   // produced by setOrderStatus.
   void setOrderStatus(orderId, "completed", ref, `إغلاق دون نتائج: ${reason}`);
-  return persistOrderActionViaApi(orderId, async (session) =>
-    apiForceCompleteOrder(session, orderId, reason),
+  return persistOrderActionViaApi(orderId, async () =>
+    apiForceCompleteOrder(orderId, reason),
   );
 }
 
@@ -931,7 +929,7 @@ async function persistOpenLabIssueViaApi(
   const session = (await import("./auth")).getStoredSession();
   if (!session || (session.role !== "lab" && session.role !== "admin")) return { ok: true };
   const { apiOpenLabIssue } = await import("./lab-api");
-  const result = await apiOpenLabIssue(session, issue.orderId, {
+  const result = await apiOpenLabIssue(issue.orderId, {
     type: issue.type,
     description: issue.description,
     customerMessageAr: issue.customerMessageAr,
@@ -974,7 +972,7 @@ async function persistUpdateLabIssueMessageViaApi(
   const session = (await import("./auth")).getStoredSession();
   if (!session || session.role !== "admin") return { ok: true };
   const { apiUpdateLabIssueMessage } = await import("./lab-api");
-  return apiUpdateLabIssueMessage(session, issueId, customerMessageAr);
+  return apiUpdateLabIssueMessage(issueId, customerMessageAr);
 }
 
 export function resolveLabIssue(issueId: string, note: string, ref: ActorRef): Promise<{ ok: boolean; error?: string }> {
@@ -998,7 +996,7 @@ async function persistResolveLabIssueViaApi(
   const session = (await import("./auth")).getStoredSession();
   if (!session || (session.role !== "admin" && session.role !== "lab")) return { ok: true };
   const { apiResolveLabIssue } = await import("./lab-api");
-  return apiResolveLabIssue(session, issueId, note);
+  return apiResolveLabIssue(issueId, note);
 }
 
 export function assignNurse(orderId: string, nurseId: string, ref: ActorRef): Promise<{ ok: boolean; error?: string }> {
@@ -1023,7 +1021,7 @@ async function persistAssignNurseViaApi(
   }
   const session = (await import("./auth")).getStoredSession();
   if (!session || session.role !== "admin") return { ok: true };
-  const result = await apiAssignNurse(session, orderId, nurseId);
+  const result = await apiAssignNurse(orderId, nurseId);
   if ("error" in result) {
     console.warn("[api/orders/assign-nurse] failed; keeping local assignment", result.error);
     return { ok: false, error: result.error };
@@ -1046,7 +1044,7 @@ async function persistAssignLabViaApi(
   }
   const session = (await import("./auth")).getStoredSession();
   if (!session || session.role !== "admin") return { ok: true };
-  const result = await apiAssignLab(session, orderId, labId);
+  const result = await apiAssignLab(orderId, labId);
   if ("error" in result) {
     console.warn("[api/orders/assign-lab] failed; keeping local assignment", result.error);
     return { ok: false, error: result.error };
@@ -1068,7 +1066,7 @@ async function persistAssignLabViaApi(
 type ActionApiResult = { order: import("./types").Order | null } | { error: string };
 async function persistOrderActionViaApi(
   orderId: string,
-  call: (session: AuthSession) => Promise<ActionApiResult>,
+  call: () => Promise<ActionApiResult>,
 ): Promise<{ ok: boolean; error?: string }> {
   if (!USE_SUPABASE) return { ok: true };
   if (!isUuid(orderId)) {
@@ -1081,7 +1079,7 @@ async function persistOrderActionViaApi(
   if (!session || (session.role !== "admin" && session.role !== "nurse" && session.role !== "lab")) {
     return { ok: true };
   }
-  const result = await call(session);
+  const result = await call();
   if ("error" in result) {
     console.warn("[api/orders/<action>] failed; keeping local change", result.error);
     return { ok: false, error: result.error };
@@ -1097,16 +1095,16 @@ async function persistOrderActionViaApi(
 export function cancelOrder(orderId: string, ref: ActorRef, reason?: string): Promise<{ ok: boolean; error?: string }> {
   mutateOrder(orderId, (o) => ({ ...o, status: "cancelled", updatedAt: new Date().toISOString() }));
   appendEvent(orderId, "cancelled", ref, reason);
-  return persistOrderActionViaApi(orderId, async (session) =>
-    apiCancelOrder(session, orderId, reason),
+  return persistOrderActionViaApi(orderId, async () =>
+    apiCancelOrder(orderId, reason),
   );
 }
 
 export function rescheduleOrder(orderId: string, visitDate: string, shift: Order["shift"], ref: ActorRef): Promise<{ ok: boolean; error?: string }> {
   mutateOrder(orderId, (o) => ({ ...o, visitDate, shift, updatedAt: new Date().toISOString() }));
   appendEvent(orderId, "rescheduled", ref, `${visitDate} / ${shift}`);
-  return persistOrderActionViaApi(orderId, async (session) =>
-    apiRescheduleOrder(session, orderId, visitDate, shift),
+  return persistOrderActionViaApi(orderId, async () =>
+    apiRescheduleOrder(orderId, visitDate, shift),
   );
 }
 
@@ -1121,7 +1119,7 @@ export function verifyPatient(
     updatedAt: new Date().toISOString(),
   }));
   appendEvent(orderId, "note_added", ref, `تحقق من المريض: ${verification.officialName} / ${verification.nationalId}`);
-  return persistOrderActionViaApi(orderId, async (session) =>
-    apiVerifyPatient(session, orderId, verification.officialName, verification.nationalId, verification.note),
+  return persistOrderActionViaApi(orderId, async () =>
+    apiVerifyPatient(orderId, verification.officialName, verification.nationalId, verification.note),
   );
 }

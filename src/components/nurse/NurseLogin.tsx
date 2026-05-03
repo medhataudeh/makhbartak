@@ -1,6 +1,8 @@
 "use client";
 import { LoginForm } from "@/components/auth/LoginForm";
-import { MOCK_NURSE_USERS } from "@/lib/mock-data";
+import { DEMO_NURSE_CREDENTIALS } from "@/lib/demo-credentials";
+
+const SHOW_DEMO = process.env.NEXT_PUBLIC_SHOW_DEMO_CREDS === "true";
 
 export function NurseLogin() {
   return (
@@ -9,9 +11,9 @@ export function NurseLogin() {
       brandSubtitle="تسجيل دخول الممرضين"
       allowedRoles={["nurse"]}
       onSuccess={() => { /* useSession() in NurseApp will re-render */ }}
-      demoCredentials={MOCK_NURSE_USERS.map((u) => ({
-        label: u.name, username: u.username, password: u.password,
-      }))}
+      demoCredentials={SHOW_DEMO ? DEMO_NURSE_CREDENTIALS.map((c) => ({
+        label: c.label, username: c.email, password: c.password,
+      })) : undefined}
     />
   );
 }

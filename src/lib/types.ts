@@ -708,12 +708,25 @@ export interface AuthUser {
   lastLoginAt?: string;
 }
 
+// Phase 8: AuthSession is now derived from Supabase Auth + /api/me (which
+// joins profiles + the role-specific extension table). The shape preserves
+// every field legacy callers read (`linkedEntityId`) plus role-specific
+// fields populated by the server.
 export interface AuthSession {
-  userId: string;
-  username: string;
-  name: string;
+  userId: string;          // auth.users.id == profiles.id
+  username: string;        // email (kept under the legacy field name)
+  name: string;            // profiles.full_name
   role: Role;
-  linkedEntityId: string;
+  linkedEntityId: string;  // role-specific id: customers.id / nurses.id /
+                           // lab_users.id / profiles.id (admin)
+  customerId?: string;
+  nurseId?: string;
+  labUserId?: string;
+  labId?: string;
+  labRole?: "lab_admin" | "lab_accounting" | "lab_uploader";
+  adminRole?:
+    | "super_admin" | "operations_admin" | "lab_admin"
+    | "customer_support" | "finance_admin" | "content_admin";
 }
 
 export type AdminRole =

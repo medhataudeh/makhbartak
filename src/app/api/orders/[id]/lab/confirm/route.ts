@@ -2,40 +2,21 @@ import { NextResponse, type NextRequest } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabase/server-admin";
 import { enrichOrdersWithSignedUrls, fetchOrderById } from "@/lib/supabase/queries/orders";
 import { isUuid } from "@/lib/supabase/uuid";
-import type { AuthSession } from "@/lib/types";
-
-interface ConfirmBody {
-  session: AuthSession;
-}
+import { requireAuthedUser } from "@/lib/route-auth";
 
 export async function POST(
-  req: NextRequest,
+  _req: NextRequest,
   ctx: { params: Promise<{ id: string }> },
 ) {
   const { id: orderId } = await ctx.params;
-  if (!isUuid(orderId)) {
-    return NextResponse.json({ error: "order id must be a uuid" }, { status: 400 });
-  }
-
-  let body: ConfirmBody;
-  try {
-    body = await req.json();
-  } catch {
-    return NextResponse.json({ error: "invalid json" }, { status: 400 });
-  }
-  const { session } = body ?? {};
-  if (!session) {
-    return NextResponse.json({ error: "session required" }, { status: 401 });
-  }
-  if (session.role !== "lab" && session.role !== "admin") {
+  if (!isUuid(orderId)) return NextResponse.json({ error: "order id must be a uuid" }, { status: 400 });
+  const auth = await requireAuthedUser();
+  if (!auth.ok) return NextResponse.json({ error: auth.error }, { status: auth.status });
+  if (auth.session.role !== "lab" && auth.session.role !== "admin") {
     return NextResponse.json({ error: "role not authorized" }, { status: 403 });
   }
 
   const sb = getSupabaseAdmin();
-
-  // Refuse if no active result files exist — same guard as the mock
-  // confirmResultsReady. Surface a friendly Arabic-ready error key so the
-  // client can match it without parsing English.
   const { count, error: countErr } = await sb
     .from("lab_result_files")
     .select("id", { count: "exact", head: true })
@@ -49,14 +30,12 @@ export async function POST(
   const { error: rpcErr } = await sb.rpc("set_order_status_admin", {
     p_order_id: orderId,
     p_status: "completed",
-    p_actor_role: session.role,
-    p_actor_id: null,
-    p_actor_name: session.name ?? null,
+    p_actor_role: auth.session.role,
+    p_actor_id: auth.session.userId,
+    p_actor_name: auth.session.fullName ?? null,
     p_note: "تأكيد إرسال النتائج",
   });
-  if (rpcErr) {
-    return NextResponse.json({ error: rpcErr.message }, { status: 500 });
-  }
+  if (rpcErr) return NextResponse.json({ error: rpcErr.message }, { status: 500 });
 
   const hydrated = await fetchOrderById(sb, orderId);
   const [enriched] = hydrated ? await enrichOrdersWithSignedUrls(sb, [hydrated]) : [null];

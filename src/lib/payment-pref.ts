@@ -49,7 +49,7 @@ export async function setPreferredPayment(p: PaymentMethod): Promise<{ ok: boole
   if (!USE_SUPABASE) return { ok: true };
   const session: AuthSession | null = (await import("./auth")).getStoredSession();
   if (!session || session.role !== "customer" || !isUuid(session.linkedEntityId)) return { ok: true };
-  return apiSetPaymentPreference(session, session.linkedEntityId, p);
+  return apiSetPaymentPreference(session.linkedEntityId, p);
 }
 
 export function usePreferredPayment() {

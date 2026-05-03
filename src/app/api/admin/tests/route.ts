@@ -1,9 +1,8 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabase/server-admin";
-import { requireAdminSession } from "@/lib/admin-auth";
+import { requireAdmin } from "@/lib/route-auth";
 
 interface UpsertBody {
-  session: import("@/lib/types").AuthSession;
   id?: string;
   categoryId?: string;
   nameAr: string;
@@ -30,10 +29,10 @@ export async function GET() {
 }
 
 export async function POST(req: NextRequest) {
+  const auth = await requireAdmin();
+  if (!auth.ok) return NextResponse.json({ error: auth.error }, { status: auth.status });
   const body = (await req.json().catch(() => null)) as UpsertBody | null;
   if (!body) return NextResponse.json({ error: "invalid json" }, { status: 400 });
-  const denied = requireAdminSession(body.session);
-  if (denied) return NextResponse.json({ error: denied }, { status: body.session ? 403 : 401 });
 
   const sb = getSupabaseAdmin();
   const { data: id, error } = await sb.rpc("upsert_test_admin", {

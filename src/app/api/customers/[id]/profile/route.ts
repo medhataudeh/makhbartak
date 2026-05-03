@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabase/server-admin";
 import { isUuid } from "@/lib/supabase/uuid";
+import { requireCustomerSelfOrAdmin } from "@/lib/route-auth";
 
 // One-shot read of every profile row a customer needs: patients, addresses,
 // preferred payment method. Customer-side hydration uses this on mount.
@@ -12,6 +13,9 @@ export async function GET(
   if (!isUuid(customerId)) {
     return NextResponse.json({ error: "customer id must be a uuid" }, { status: 400 });
   }
+  const auth = await requireCustomerSelfOrAdmin(customerId);
+  if (!auth.ok) return NextResponse.json({ error: auth.error }, { status: auth.status });
+
   const sb = getSupabaseAdmin();
   const [{ data: patients, error: pErr }, { data: addresses, error: aErr }, { data: customer, error: cErr }] = await Promise.all([
     sb.from("patients").select("id, customer_id, name, national_id, note, is_default")

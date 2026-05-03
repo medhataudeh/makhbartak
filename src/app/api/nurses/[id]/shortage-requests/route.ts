@@ -1,10 +1,9 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabase/server-admin";
 import { isUuid } from "@/lib/supabase/uuid";
-import type { AuthSession } from "@/lib/types";
+import { requireNurseSelfOrAdmin } from "@/lib/route-auth";
 
 interface SubmitBody {
-  session: AuthSession;
   day?: string;
   note?: string;
   items: Array<{ toolId?: string | null; nameSnapshot: string; quantity?: number }>;
@@ -18,6 +17,9 @@ export async function GET(
   if (!isUuid(nurseId)) {
     return NextResponse.json({ error: "nurse id must be a uuid" }, { status: 400 });
   }
+  const auth = await requireNurseSelfOrAdmin(nurseId);
+  if (!auth.ok) return NextResponse.json({ error: auth.error }, { status: auth.status });
+
   const sb = getSupabaseAdmin();
   const { data, error } = await sb
     .from("nurse_shortage_requests")
@@ -40,19 +42,13 @@ export async function POST(
   if (!isUuid(nurseId)) {
     return NextResponse.json({ error: "nurse id must be a uuid" }, { status: 400 });
   }
+  const auth = await requireNurseSelfOrAdmin(nurseId);
+  if (!auth.ok) return NextResponse.json({ error: auth.error }, { status: auth.status });
   let body: SubmitBody;
   try { body = await req.json(); } catch {
     return NextResponse.json({ error: "invalid json" }, { status: 400 });
   }
-  const { session, day, note, items } = body ?? {};
-  if (!session) return NextResponse.json({ error: "session required" }, { status: 401 });
-  if (session.role === "nurse") {
-    if (session.linkedEntityId !== nurseId) {
-      return NextResponse.json({ error: "you can only file your own shortage requests" }, { status: 403 });
-    }
-  } else if (session.role !== "admin") {
-    return NextResponse.json({ error: "role not authorized" }, { status: 403 });
-  }
+  const { day, note, items } = body ?? {};
   if (!Array.isArray(items) || items.length === 0) {
     return NextResponse.json({ error: "items[] is required" }, { status: 400 });
   }
@@ -60,7 +56,7 @@ export async function POST(
   const sb = getSupabaseAdmin();
   const { data: requestId, error: rpcErr } = await sb.rpc("submit_shortage_request_admin", {
     p_nurse_id: nurseId,
-    p_nurse_name: session.name ?? null,
+    p_nurse_name: auth.session.fullName ?? null,
     p_day: day ?? null,
     p_note: note ?? null,
     p_items: items.map((it) => ({

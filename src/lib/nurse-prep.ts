@@ -96,7 +96,7 @@ async function persistPrepViaApi(
   if (!isUuid(nurseId)) return { ok: true };
   const session: AuthSession | null = (await import("./auth")).getStoredSession();
   if (!session || (session.role !== "nurse" && session.role !== "admin")) return { ok: true };
-  return apiSetNursePrep(session, nurseId, day, entry);
+  return apiSetNursePrep(nurseId, day, entry);
 }
 
 export function clearPrepForDay(day: string) {

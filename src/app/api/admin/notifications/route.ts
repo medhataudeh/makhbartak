@@ -1,10 +1,9 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabase/server-admin";
 import { isUuid } from "@/lib/supabase/uuid";
-import type { AuthSession } from "@/lib/types";
+import { requireAuthedUser } from "@/lib/route-auth";
 
 interface InsertBody {
-  session: AuthSession;
   /** One of these must be set; the route resolves to profiles.id. */
   recipientCustomerId?: string;
   recipientNurseId?: string;
@@ -16,13 +15,12 @@ interface InsertBody {
 }
 
 export async function POST(req: NextRequest) {
+  const auth = await requireAuthedUser();
+  if (!auth.ok) return NextResponse.json({ error: auth.error }, { status: auth.status });
+  // Any authenticated role can fire a notification through this route; the
+  // recipient resolution below is the gate.
   const body = (await req.json().catch(() => null)) as InsertBody | null;
   if (!body) return NextResponse.json({ error: "invalid json" }, { status: 400 });
-  const { session } = body;
-  if (!session) return NextResponse.json({ error: "session required" }, { status: 401 });
-  // Any authenticated mock role can fire a notification through this route;
-  // the API guards the recipient mapping itself. Admin gets to fire to
-  // arbitrary customers/nurses; nurses/labs typically only fire their own.
   if (!body.type || !body.titleAr || !body.bodyAr) {
     return NextResponse.json({ error: "type, titleAr, bodyAr are required" }, { status: 400 });
   }

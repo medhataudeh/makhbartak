@@ -1,10 +1,9 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabase/server-admin";
 import { isUuid } from "@/lib/supabase/uuid";
-import type { AuthSession } from "@/lib/types";
+import { requireNurseSelfOrAdmin } from "@/lib/route-auth";
 
 interface UpdateNurseProfileBody {
-  session: AuthSession;
   name?: string;
   city?: string;
   photoUrl?: string;
@@ -18,20 +17,13 @@ export async function POST(
   if (!isUuid(nurseId)) {
     return NextResponse.json({ error: "nurse id must be a uuid" }, { status: 400 });
   }
+  const auth = await requireNurseSelfOrAdmin(nurseId);
+  if (!auth.ok) return NextResponse.json({ error: auth.error }, { status: auth.status });
   let body: UpdateNurseProfileBody;
   try { body = await req.json(); } catch {
     return NextResponse.json({ error: "invalid json" }, { status: 400 });
   }
-  const { session, name, city, photoUrl } = body ?? {};
-  if (!session) return NextResponse.json({ error: "session required" }, { status: 401 });
-  // Nurse self-edit (only their own row) or admin override.
-  if (session.role === "nurse") {
-    if (session.linkedEntityId !== nurseId) {
-      return NextResponse.json({ error: "you can only edit your own profile" }, { status: 403 });
-    }
-  } else if (session.role !== "admin") {
-    return NextResponse.json({ error: "role not authorized" }, { status: 403 });
-  }
+  const { name, city, photoUrl } = body ?? {};
   if (name == null && city == null && photoUrl == null) {
     return NextResponse.json({ error: "nothing to update" }, { status: 400 });
   }
@@ -45,7 +37,6 @@ export async function POST(
   });
   if (rpcErr) return NextResponse.json({ error: rpcErr.message }, { status: 500 });
 
-  // Hydrate the nurse + linked profile so the client can swap its mirror.
   const { data: nurse } = await sb
     .from("nurses")
     .select("id, city, is_active, profile_id, profiles ( full_name, phone, photo_url )")

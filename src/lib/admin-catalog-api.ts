@@ -1,7 +1,5 @@
 "use client";
-import type {
-  AuthSession, Coupon, Package, SliderItem, Test,
-} from "@/lib/types";
+import type { Coupon, Package, SliderItem, Test } from "@/lib/types";
 
 // Stage F follow-up: thin client wrappers around the existing Stage F admin
 // routes. Wires the AdminDashboard sub-component setters through Supabase so
@@ -21,12 +19,8 @@ async function postJson<T>(url: string, body: unknown): Promise<T | { error: str
   return res.json() as Promise<T>;
 }
 
-async function deleteJson(url: string, session: AuthSession): Promise<{ ok: boolean; error?: string }> {
-  const res = await fetch(url, {
-    method: "DELETE",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ session }),
-  });
+async function deleteJson(url: string): Promise<{ ok: boolean; error?: string }> {
+  const res = await fetch(url, { method: "DELETE" });
   if (!res.ok) {
     const j = await res.json().catch(() => ({}));
     return { ok: false, error: j.error ?? `HTTP ${res.status}` };
@@ -70,10 +64,9 @@ export async function hydrateAdminTests(): Promise<Test[] | null> {
 }
 
 export async function apiUpsertTest(
-  session: AuthSession, t: Test,
+  t: Test,
 ): Promise<{ ok: boolean; test?: Test; error?: string }> {
   const wire = {
-    session,
     id: t.id || undefined,
     categoryId: t.categoryId || undefined,
     nameAr: t.nameAr,
@@ -91,10 +84,8 @@ export async function apiUpsertTest(
   return { ok: true, test: { ...t, id: result.id } };
 }
 
-export async function apiDeleteTest(
-  session: AuthSession, id: string,
-): Promise<{ ok: boolean; error?: string }> {
-  return deleteJson(`/api/admin/tests/${encodeURIComponent(id)}`, session);
+export async function apiDeleteTest(id: string): Promise<{ ok: boolean; error?: string }> {
+  return deleteJson(`/api/admin/tests/${encodeURIComponent(id)}`);
 }
 
 // ─── Packages ───────────────────────────────────────────────────────────────
@@ -145,10 +136,9 @@ export async function hydrateAdminPackages(allTests: Test[]): Promise<Package[] 
 }
 
 export async function apiUpsertPackage(
-  session: AuthSession, p: Package,
+  p: Package,
 ): Promise<{ ok: boolean; pkg?: Package; error?: string }> {
   const wire = {
-    session,
     id: p.id || undefined,
     nameAr: p.nameAr,
     nameEn: p.nameEn || undefined,
@@ -171,10 +161,8 @@ export async function apiUpsertPackage(
   return { ok: true, pkg: { ...p, id: result.id } };
 }
 
-export async function apiDeletePackage(
-  session: AuthSession, id: string,
-): Promise<{ ok: boolean; error?: string }> {
-  return deleteJson(`/api/admin/packages/${encodeURIComponent(id)}`, session);
+export async function apiDeletePackage(id: string): Promise<{ ok: boolean; error?: string }> {
+  return deleteJson(`/api/admin/packages/${encodeURIComponent(id)}`);
 }
 
 // ─── Coupons ───────────────────────────────────────────────────────────────
@@ -211,10 +199,9 @@ export async function hydrateAdminCoupons(): Promise<Coupon[] | null> {
 }
 
 export async function apiUpsertCoupon(
-  session: AuthSession, c: Coupon,
+  c: Coupon,
 ): Promise<{ ok: boolean; coupon?: Coupon; error?: string }> {
   const wire = {
-    session,
     id: c.id || undefined,
     code: c.code,
     type: c.type,
@@ -231,10 +218,8 @@ export async function apiUpsertCoupon(
   return { ok: true, coupon: { ...c, id: result.id } };
 }
 
-export async function apiDeleteCoupon(
-  session: AuthSession, id: string,
-): Promise<{ ok: boolean; error?: string }> {
-  return deleteJson(`/api/admin/coupons/${encodeURIComponent(id)}`, session);
+export async function apiDeleteCoupon(id: string): Promise<{ ok: boolean; error?: string }> {
+  return deleteJson(`/api/admin/coupons/${encodeURIComponent(id)}`);
 }
 
 // Customer/admin-side coupon validation. Single source of truth: server.
@@ -297,10 +282,9 @@ export async function hydrateAdminSliders(): Promise<SliderItem[] | null> {
 }
 
 export async function apiUpsertSlider(
-  session: AuthSession, s: SliderItem,
+  s: SliderItem,
 ): Promise<{ ok: boolean; slider?: SliderItem; error?: string }> {
   const wire = {
-    session,
     id: s.id || undefined,
     titleAr: s.titleAr,
     subtitleAr: s.subtitleAr || undefined,
@@ -320,8 +304,6 @@ export async function apiUpsertSlider(
   return { ok: true, slider: { ...s, id: result.id } };
 }
 
-export async function apiDeleteSlider(
-  session: AuthSession, id: string,
-): Promise<{ ok: boolean; error?: string }> {
-  return deleteJson(`/api/admin/sliders/${encodeURIComponent(id)}`, session);
+export async function apiDeleteSlider(id: string): Promise<{ ok: boolean; error?: string }> {
+  return deleteJson(`/api/admin/sliders/${encodeURIComponent(id)}`);
 }

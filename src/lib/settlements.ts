@@ -117,7 +117,7 @@ async function persistSettlementStatusViaApi(
   if (!isUuid(settlementId)) return { ok: true };
   const session = (await import("./auth")).getStoredSession();
   if (!session || session.role !== "admin") return { ok: true };
-  return apiSetSettlementStatus(session, settlementId, status, totalPaid);
+  return apiSetSettlementStatus(settlementId, status, totalPaid);
 }
 
 export function updateSettlementNotes(id: string, notes: string): void {
@@ -177,7 +177,7 @@ export async function generateSettlementRemote(
   if (!isUuid(labId)) return { ok: false, error: "lab not in supabase" };
   const session = (await import("./auth")).getStoredSession();
   if (!session || session.role !== "admin") return { ok: false, error: "admin only" };
-  const result = await apiGenerateSettlement(session, labId, periodStart, periodEnd);
+  const result = await apiGenerateSettlement(labId, periodStart, periodEnd);
   if (!result.ok) return result;
   await hydrateSettlementsForLab(labId);
   return result;

@@ -1,13 +1,12 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabase/server-admin";
 import { isUuid } from "@/lib/supabase/uuid";
-import type { AuthSession } from "@/lib/types";
+import { requireAdmin } from "@/lib/route-auth";
 
 const ALLOWED = ["pending", "acknowledged", "resolved"] as const;
 type Status = (typeof ALLOWED)[number];
 
 interface SetStatusBody {
-  session: AuthSession;
   status: Status;
 }
 
@@ -19,15 +18,13 @@ export async function POST(
   if (!isUuid(requestId)) {
     return NextResponse.json({ error: "request id must be a uuid" }, { status: 400 });
   }
+  const auth = await requireAdmin();
+  if (!auth.ok) return NextResponse.json({ error: auth.error }, { status: auth.status });
   let body: SetStatusBody;
   try { body = await req.json(); } catch {
     return NextResponse.json({ error: "invalid json" }, { status: 400 });
   }
-  const { session, status } = body ?? {};
-  if (!session) return NextResponse.json({ error: "session required" }, { status: 401 });
-  if (session.role !== "admin") {
-    return NextResponse.json({ error: "only admin can change shortage request status" }, { status: 403 });
-  }
+  const { status } = body ?? {};
   if (!ALLOWED.includes(status)) {
     return NextResponse.json({ error: "invalid status" }, { status: 400 });
   }
@@ -36,8 +33,8 @@ export async function POST(
   const { error: rpcErr } = await sb.rpc("set_shortage_request_status_admin", {
     p_request_id: requestId,
     p_status: status,
-    p_admin_id: null,
-    p_admin_name: session.name ?? null,
+    p_admin_id: auth.session.userId,
+    p_admin_name: auth.session.fullName ?? null,
   });
   if (rpcErr) return NextResponse.json({ error: rpcErr.message }, { status: 500 });
   return NextResponse.json({ ok: true });

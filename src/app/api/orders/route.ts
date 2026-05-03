@@ -3,15 +3,10 @@ import { getSupabaseAdmin } from "@/lib/supabase/server-admin";
 import { fetchOrdersForAdmin, fetchOrdersForCustomer, fetchOrdersForNurse, enrichOrdersWithSignedUrls } from "@/lib/supabase/queries/orders";
 import { tsStatusToSql } from "@/lib/supabase/order-status";
 import { isUuid } from "@/lib/supabase/uuid";
-import type { AuthSession, Order, OrderStatus, PaymentMethod, Shift } from "@/lib/types";
-
-// Phase 1: trust the mock session passed by the client (mock auth has no
-// stronger boundary than this — same trust level as today's localStorage).
-// When real Supabase Auth lands, this trust is replaced by an auth-cookie
-// check and these routes shrink to passthroughs or are removed.
+import { requireAuthedUser } from "@/lib/route-auth";
+import type { Order, OrderStatus, PaymentMethod, Shift } from "@/lib/types";
 
 interface CreateOrderBody {
-  session: AuthSession;
   idempotencyKey: string;
   order: {
     type: "package" | "custom" | "prescription";
@@ -40,41 +35,33 @@ interface CreateOrderBody {
 }
 
 export async function POST(req: NextRequest) {
+  const auth = await requireAuthedUser();
+  if (!auth.ok) return NextResponse.json({ error: auth.error }, { status: auth.status });
+  if (auth.session.role !== "customer") {
+    return NextResponse.json({ error: "customer session required" }, { status: 403 });
+  }
+  const customerId = auth.session.customerId;
+  if (!customerId) {
+    return NextResponse.json({ error: "no customer record for this session" }, { status: 403 });
+  }
+
   let body: CreateOrderBody;
   try {
     body = await req.json();
   } catch {
     return NextResponse.json({ error: "invalid json" }, { status: 400 });
   }
-  const { session, idempotencyKey, order } = body ?? {};
-  if (!session || session.role !== "customer") {
-    return NextResponse.json({ error: "customer session required" }, { status: 403 });
-  }
+  const { idempotencyKey, order } = body ?? {};
   if (!idempotencyKey || typeof idempotencyKey !== "string") {
     return NextResponse.json({ error: "idempotencyKey required" }, { status: 400 });
   }
-  const customerId = session.linkedEntityId;
-  if (!isUuid(customerId)) {
-    return NextResponse.json({ error: "session.linkedEntityId is not a uuid; reseed Phase 1 demo data" }, { status: 400 });
-  }
-  if (!isUuid(order.patientId) || !isUuid(order.addressId)) {
+  if (!isUuid(order?.patientId) || !isUuid(order?.addressId)) {
     return NextResponse.json({ error: "patient_id and address_id must be uuids that exist in supabase" }, { status: 400 });
   }
 
   const sb = getSupabaseAdmin();
 
-  // Verify the customer row exists (deterministic 403 vs cryptic FK error).
-  const { data: c, error: cErr } = await sb
-    .from("customers")
-    .select("id")
-    .eq("id", customerId)
-    .maybeSingle();
-  if (cErr) return NextResponse.json({ error: cErr.message }, { status: 500 });
-  if (!c) {
-    return NextResponse.json({ error: "customer not found in supabase; run migration 010" }, { status: 404 });
-  }
-
-  // Verify patient + address belong to this customer.
+  // Verify patient + address belong to the authenticated customer.
   const [{ data: p }, { data: a }] = await Promise.all([
     sb.from("patients").select("id, customer_id").eq("id", order.patientId).maybeSingle(),
     sb.from("addresses").select("id, customer_id").eq("id", order.addressId).maybeSingle(),
@@ -86,9 +73,6 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "address does not belong to this customer" }, { status: 400 });
   }
 
-  // public_number is generated server-side by the RPC (migration 011) and any
-  // value the client sends is intentionally ignored to prevent collisions
-  // after a localStorage reset.
   const payload = {
     patient_id: order.patientId,
     address_id: order.addressId,
@@ -126,47 +110,56 @@ export async function POST(req: NextRequest) {
 
   // Stage A: auto-assign nurse + lab. Failures here do not block the order
   // — the row is already in `orders` and admin can assign manually later.
-  // The RPC tolerates a no-eligible-row outcome (leaves the field null).
   const { error: autoErr } = await sb.rpc("auto_assign_order", { p_order_id: orderId });
   if (autoErr) {
     console.warn("[api/orders] auto_assign_order failed; order created without assignment", autoErr.message);
   }
 
-  // Hydrate the row so the client gets a full TS Order back. Falls back to
-  // a minimal stub if the read fails (rare; the row was just inserted).
   const orders = await fetchOrdersForCustomer(sb, customerId);
   const enriched = orders ? await enrichOrdersWithSignedUrls(sb, orders) : [];
   const created = enriched.find((o) => o.id === orderId) ?? null;
   return NextResponse.json({ order: created, orderId } satisfies { order: Order | null; orderId: string });
 }
 
-export async function GET(req: NextRequest) {
-  const url = new URL(req.url);
-  const role = url.searchParams.get("role");
-  const customerId = url.searchParams.get("customerId");
-  const nurseId = url.searchParams.get("nurseId");
+export async function GET() {
+  const auth = await requireAuthedUser();
+  if (!auth.ok) return NextResponse.json({ error: auth.error }, { status: auth.status });
   const sb = getSupabaseAdmin();
 
-  if (role === "admin") {
+  if (auth.session.role === "admin") {
     const orders = await fetchOrdersForAdmin(sb);
     const enriched = orders ? await enrichOrdersWithSignedUrls(sb, orders) : [];
     return NextResponse.json({ orders: enriched });
   }
-  if (role === "customer") {
-    if (!customerId || !isUuid(customerId)) {
-      return NextResponse.json({ error: "customerId uuid required for customer role" }, { status: 400 });
+  if (auth.session.role === "customer") {
+    if (!auth.session.customerId) {
+      return NextResponse.json({ orders: [] });
     }
-    const orders = await fetchOrdersForCustomer(sb, customerId);
+    const orders = await fetchOrdersForCustomer(sb, auth.session.customerId);
     const enriched = orders ? await enrichOrdersWithSignedUrls(sb, orders) : [];
     return NextResponse.json({ orders: enriched });
   }
-  if (role === "nurse") {
-    if (!nurseId || !isUuid(nurseId)) {
-      return NextResponse.json({ error: "nurseId uuid required for nurse role" }, { status: 400 });
+  if (auth.session.role === "nurse") {
+    if (!auth.session.nurseId) {
+      return NextResponse.json({ orders: [] });
     }
-    const orders = await fetchOrdersForNurse(sb, nurseId);
+    const orders = await fetchOrdersForNurse(sb, auth.session.nurseId);
     const enriched = orders ? await enrichOrdersWithSignedUrls(sb, orders) : [];
     return NextResponse.json({ orders: enriched });
   }
-  return NextResponse.json({ error: "role must be 'customer', 'admin', or 'nurse'" }, { status: 400 });
+  if (auth.session.role === "lab") {
+    if (!auth.session.labId) {
+      return NextResponse.json({ orders: [] });
+    }
+    // Lab portal sees orders assigned to the lab.
+    const { data, error } = await sb
+      .from("orders").select("id").eq("lab_id", auth.session.labId).limit(1);
+    if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+    if (!data) return NextResponse.json({ orders: [] });
+    const all = await fetchOrdersForAdmin(sb);
+    const filtered = (all ?? []).filter((o) => o.labId === auth.session.labId);
+    const enriched = await enrichOrdersWithSignedUrls(sb, filtered);
+    return NextResponse.json({ orders: enriched });
+  }
+  return NextResponse.json({ error: "role not supported" }, { status: 403 });
 }

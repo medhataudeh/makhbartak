@@ -130,7 +130,7 @@ async function persistShortageSubmitViaApi(input: SubmitInput): Promise<void> {
   if (!isUuid(input.nurseId)) return;
   const session: AuthSession | null = (await import("./auth")).getStoredSession();
   if (!session || (session.role !== "nurse" && session.role !== "admin")) return;
-  await apiSubmitShortageRequest(session, input.nurseId, {
+  await apiSubmitShortageRequest(input.nurseId, {
     day: input.date,
     note: input.note,
     items: input.items
@@ -171,7 +171,7 @@ async function persistShortageStatusViaApi(
     status === "preparing" || status === "sent" ? "acknowledged" :
     status === "resolved" || status === "cancelled" ? "resolved" :
     "pending";
-  return apiSetShortageRequestStatus(session, requestId, sqlStatus);
+  return apiSetShortageRequestStatus(requestId, sqlStatus);
 }
 
 // Pull this nurse's shortage requests from Supabase and merge into the local

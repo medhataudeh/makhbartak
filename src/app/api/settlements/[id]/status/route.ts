@@ -1,13 +1,12 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabase/server-admin";
 import { isUuid } from "@/lib/supabase/uuid";
-import type { AuthSession } from "@/lib/types";
+import { requireAdmin } from "@/lib/route-auth";
 
 const ALLOWED = ["pending", "partially_paid", "paid"] as const;
 type Status = (typeof ALLOWED)[number];
 
 interface SetStatusBody {
-  session: AuthSession;
   status: Status;
   totalPaid?: number;
 }
@@ -20,15 +19,13 @@ export async function POST(
   if (!isUuid(settlementId)) {
     return NextResponse.json({ error: "settlement id must be a uuid" }, { status: 400 });
   }
+  const auth = await requireAdmin();
+  if (!auth.ok) return NextResponse.json({ error: auth.error }, { status: auth.status });
   let body: SetStatusBody;
   try { body = await req.json(); } catch {
     return NextResponse.json({ error: "invalid json" }, { status: 400 });
   }
-  const { session, status, totalPaid } = body ?? {};
-  if (!session) return NextResponse.json({ error: "session required" }, { status: 401 });
-  if (session.role !== "admin") {
-    return NextResponse.json({ error: "only admin can change settlement status" }, { status: 403 });
-  }
+  const { status, totalPaid } = body ?? {};
   if (!ALLOWED.includes(status)) {
     return NextResponse.json({ error: "invalid status" }, { status: 400 });
   }

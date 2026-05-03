@@ -1,9 +1,8 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabase/server-admin";
-import { requireAdminSession } from "@/lib/admin-auth";
+import { requireAdmin } from "@/lib/route-auth";
 
 interface LogBody {
-  session: import("@/lib/types").AuthSession;
   action: string;
   entity: string;
   entityId?: string;
@@ -11,6 +10,8 @@ interface LogBody {
 }
 
 export async function GET(req: NextRequest) {
+  const auth = await requireAdmin();
+  if (!auth.ok) return NextResponse.json({ error: auth.error }, { status: auth.status });
   const url = new URL(req.url);
   const limit = Math.min(parseInt(url.searchParams.get("limit") ?? "200", 10) || 200, 500);
   const sb = getSupabaseAdmin();
@@ -24,19 +25,19 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
+  const auth = await requireAdmin();
+  if (!auth.ok) return NextResponse.json({ error: auth.error }, { status: auth.status });
   const body = (await req.json().catch(() => null)) as LogBody | null;
   if (!body) return NextResponse.json({ error: "invalid json" }, { status: 400 });
-  const denied = requireAdminSession(body.session);
-  if (denied) return NextResponse.json({ error: denied }, { status: body.session ? 403 : 401 });
   if (!body.action || !body.entity) {
     return NextResponse.json({ error: "action and entity are required" }, { status: 400 });
   }
 
   const sb = getSupabaseAdmin();
   const { data: id, error } = await sb.rpc("log_activity_admin", {
-    p_admin_id: null,
-    p_admin_name: body.session.name ?? null,
-    p_role: body.session.role,
+    p_admin_id: auth.session.userId,
+    p_admin_name: auth.session.fullName ?? null,
+    p_role: auth.session.role,
     p_action: body.action,
     p_entity: body.entity,
     p_entity_id: body.entityId ?? null,

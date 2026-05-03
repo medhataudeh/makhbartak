@@ -1,24 +1,13 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabase/server-admin";
 import { isUuid } from "@/lib/supabase/uuid";
-import type { AuthSession } from "@/lib/types";
+import { requireCustomerSelfOrAdmin } from "@/lib/route-auth";
 
 interface UpsertBody {
-  session: AuthSession;
   name: string;
   nationalId?: string;
   note?: string;
   isDefault?: boolean;
-}
-
-function authorize(session: AuthSession, customerId: string): string | null {
-  if (!session) return "session required";
-  if (session.role === "customer") {
-    if (session.linkedEntityId !== customerId) return "you can only edit your own patients";
-  } else if (session.role !== "admin") {
-    return "role not authorized";
-  }
-  return null;
 }
 
 export async function POST(
@@ -29,13 +18,13 @@ export async function POST(
   if (!isUuid(customerId)) {
     return NextResponse.json({ error: "customer id must be a uuid" }, { status: 400 });
   }
+  const auth = await requireCustomerSelfOrAdmin(customerId);
+  if (!auth.ok) return NextResponse.json({ error: auth.error }, { status: auth.status });
   let body: UpsertBody;
   try { body = await req.json(); } catch {
     return NextResponse.json({ error: "invalid json" }, { status: 400 });
   }
-  const { session, name, nationalId, note, isDefault } = body ?? {};
-  const denied = authorize(session, customerId);
-  if (denied) return NextResponse.json({ error: denied }, { status: session ? 403 : 401 });
+  const { name, nationalId, note, isDefault } = body ?? {};
   if (!name || !name.trim()) {
     return NextResponse.json({ error: "name is required" }, { status: 400 });
   }

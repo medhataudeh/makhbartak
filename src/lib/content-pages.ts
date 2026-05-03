@@ -85,7 +85,6 @@ async function persistContentPageViaApi(
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({
-      session,
       slug: slug,
       titleAr: patch.titleAr ?? current.titleAr,
       bodyAr: patch.bodyAr ?? current.bodyAr,

@@ -1,6 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabase/server-admin";
-import { requireAdminSession } from "@/lib/admin-auth";
+import { requireAdmin } from "@/lib/route-auth";
 import { isUuid } from "@/lib/supabase/uuid";
 
 export async function DELETE(
@@ -9,9 +9,8 @@ export async function DELETE(
 ) {
   const { id } = await ctx.params;
   if (!isUuid(id)) return NextResponse.json({ error: "id must be a uuid" }, { status: 400 });
-  const body = await req.json().catch(() => null);
-  const denied = requireAdminSession(body?.session);
-  if (denied) return NextResponse.json({ error: denied }, { status: body?.session ? 403 : 401 });
+  const auth = await requireAdmin();
+  if (!auth.ok) return NextResponse.json({ error: auth.error }, { status: auth.status });
   const sb = getSupabaseAdmin();
   const { error } = await sb.rpc("delete_instruction_admin", { p_id: id });
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });

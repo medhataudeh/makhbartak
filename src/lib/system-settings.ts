@@ -76,7 +76,7 @@ async function persistSystemSettingsViaApi(
   const res = await fetch("/api/admin/app-settings", {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ session, patch: wire }),
+    body: JSON.stringify({ patch: wire }),
   });
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));

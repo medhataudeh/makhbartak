@@ -1,12 +1,11 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabase/server-admin";
 import { isUuid } from "@/lib/supabase/uuid";
-import type { AuthSession } from "@/lib/types";
+import { requireNurseSelfOrAdmin } from "@/lib/route-auth";
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
 interface SetPrepBody {
-  session: AuthSession;
   day: string;
   started?: boolean;
   checkedIds?: string[];
@@ -20,6 +19,8 @@ export async function GET(
   if (!isUuid(nurseId)) {
     return NextResponse.json({ error: "nurse id must be a uuid" }, { status: 400 });
   }
+  const auth = await requireNurseSelfOrAdmin(nurseId);
+  if (!auth.ok) return NextResponse.json({ error: auth.error }, { status: auth.status });
   const url = new URL(req.url);
   const day = url.searchParams.get("day");
   if (!day || !DATE_RE.test(day)) {
@@ -46,19 +47,13 @@ export async function POST(
   if (!isUuid(nurseId)) {
     return NextResponse.json({ error: "nurse id must be a uuid" }, { status: 400 });
   }
+  const auth = await requireNurseSelfOrAdmin(nurseId);
+  if (!auth.ok) return NextResponse.json({ error: auth.error }, { status: auth.status });
   let body: SetPrepBody;
   try { body = await req.json(); } catch {
     return NextResponse.json({ error: "invalid json" }, { status: 400 });
   }
-  const { session, day, started, checkedIds } = body ?? {};
-  if (!session) return NextResponse.json({ error: "session required" }, { status: 401 });
-  if (session.role === "nurse") {
-    if (session.linkedEntityId !== nurseId) {
-      return NextResponse.json({ error: "you can only edit your own prep state" }, { status: 403 });
-    }
-  } else if (session.role !== "admin") {
-    return NextResponse.json({ error: "role not authorized" }, { status: 403 });
-  }
+  const { day, started, checkedIds } = body ?? {};
   if (!day || !DATE_RE.test(day)) {
     return NextResponse.json({ error: "day must be YYYY-MM-DD" }, { status: 400 });
   }

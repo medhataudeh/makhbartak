@@ -2,7 +2,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabase/server-admin";
 import { enrichOrdersWithSignedUrls, fetchOrderById } from "@/lib/supabase/queries/orders";
 import { isUuid } from "@/lib/supabase/uuid";
-import type { AuthSession } from "@/lib/types";
+import { requireAuthedUser } from "@/lib/route-auth";
 
 const MAX_BYTES = 25 * 1024 * 1024; // 25MB
 
@@ -14,13 +14,17 @@ export async function POST(
   if (!isUuid(orderId)) {
     return NextResponse.json({ error: "order id must be a uuid" }, { status: 400 });
   }
+  const auth = await requireAuthedUser();
+  if (!auth.ok) return NextResponse.json({ error: auth.error }, { status: auth.status });
+  if (auth.session.role !== "lab" && auth.session.role !== "admin") {
+    return NextResponse.json({ error: "role not authorized" }, { status: 403 });
+  }
 
   const form = await req.formData().catch(() => null);
   if (!form) {
     return NextResponse.json({ error: "expected multipart/form-data" }, { status: 400 });
   }
   const file = form.get("file");
-  const sessionRaw = form.get("session");
   const fileName = (form.get("fileName") as string | null) ?? null;
   const replacesFileId = (form.get("replacesFileId") as string | null) ?? null;
   const note = (form.get("note") as string | null) ?? null;
@@ -34,26 +38,12 @@ export async function POST(
   if (file.type && file.type !== "application/pdf") {
     return NextResponse.json({ error: "only application/pdf is accepted" }, { status: 415 });
   }
-  if (typeof sessionRaw !== "string") {
-    return NextResponse.json({ error: "session required" }, { status: 401 });
-  }
-  let session: AuthSession;
-  try {
-    session = JSON.parse(sessionRaw) as AuthSession;
-  } catch {
-    return NextResponse.json({ error: "invalid session json" }, { status: 400 });
-  }
-  if (session.role !== "lab" && session.role !== "admin") {
-    return NextResponse.json({ error: "role not authorized" }, { status: 403 });
-  }
   if (replacesFileId && !isUuid(replacesFileId)) {
     return NextResponse.json({ error: "replacesFileId must be a uuid" }, { status: 400 });
   }
 
   const sb = getSupabaseAdmin();
 
-  // Verify the order exists and has an assigned lab. The RPC will also
-  // raise on the lab_id check, but a clean 404 / 409 here is more useful.
   const { data: order, error: orderErr } = await sb
     .from("orders").select("id, lab_id").eq("id", orderId).maybeSingle();
   if (orderErr) return NextResponse.json({ error: orderErr.message }, { status: 500 });
@@ -61,12 +51,13 @@ export async function POST(
   if (!order.lab_id) {
     return NextResponse.json({ error: "order has no assigned lab; assign one first" }, { status: 409 });
   }
+  // Lab user can only upload to orders of their own lab.
+  if (auth.session.role === "lab") {
+    if (!auth.session.labId || order.lab_id !== auth.session.labId) {
+      return NextResponse.json({ error: "this order is not assigned to your lab" }, { status: 403 });
+    }
+  }
 
-  // Build the storage path: <orderId>/<rand>-<safe filename>. The leading
-  // segment matches the lab-results bucket RLS convention from migration
-  // 005 (split_part(name, '/', 1) = order.id) — service-role bypasses
-  // those policies, but the convention keeps future authenticated paths
-  // working without a re-key.
   const safeName = (fileName ?? file.name).replace(/[^A-Za-z0-9._؀-ۿ-]/g, "_");
   const rand = Math.random().toString(36).slice(2, 10);
   const storagePath = `${orderId}/${rand}-${safeName}`;
@@ -83,17 +74,15 @@ export async function POST(
     p_order_id: orderId,
     p_storage_path: storagePath,
     p_file_name: safeName,
-    p_actor_role: session.role,
-    p_actor_id: null,
-    p_actor_name: session.name ?? null,
+    p_actor_role: auth.session.role,
+    p_actor_id: auth.session.userId,
+    p_actor_name: auth.session.fullName ?? null,
     p_mime_type: "application/pdf",
     p_size_bytes: file.size,
     p_replaces_id: replacesFileId,
     p_note: note,
   });
   if (rpcErr) {
-    // Best-effort cleanup: if the RPC failed but the storage object landed,
-    // remove it so the bucket doesn't accumulate orphans.
     await sb.storage.from("lab-results").remove([storagePath]).catch(() => null);
     return NextResponse.json({ error: rpcErr.message }, { status: 500 });
   }

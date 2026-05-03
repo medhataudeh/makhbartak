@@ -114,7 +114,7 @@ async function persistNurseProfileViaApi(
   }
   const session: AuthSession | null = (await import("./auth")).getStoredSession();
   if (!session || (session.role !== "nurse" && session.role !== "admin")) return { ok: true };
-  const result = await apiUpdateNurseProfile(session, nurseId, {
+  const result = await apiUpdateNurseProfile(nurseId, {
     name: patch.name,
     city: patch.city,
     photoUrl: patch.photoUrl,

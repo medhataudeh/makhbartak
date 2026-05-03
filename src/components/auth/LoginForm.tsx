@@ -35,23 +35,14 @@ export function LoginForm({
     e.preventDefault();
     setError("");
     if (!username.trim() || !password) {
-      setError("الرجاء إدخال اسم المستخدم وكلمة المرور");
+      setError("الرجاء إدخال البريد الإلكتروني وكلمة المرور");
       return;
     }
     setLoading(true);
-    await new Promise((r) => setTimeout(r, 500));
-    const result = loginUser(username, password);
+    const result = await loginUser(username, password, { allowedRoles });
     setLoading(false);
     if (!result.ok || !result.session) {
-      setError(
-        result.error === "inactive"
-          ? "هذا الحساب موقوف. تواصل مع المدير العام."
-          : "اسم المستخدم أو كلمة المرور غير صحيحة",
-      );
-      return;
-    }
-    if (allowedRoles && !allowedRoles.includes(result.session.role)) {
-      setError("لا تملك صلاحية الوصول إلى هذه المنصة بهذا الحساب.");
+      setError(result.error ?? "اسم المستخدم أو كلمة المرور غير صحيحة");
       return;
     }
     onSuccess(result.session);
@@ -78,7 +69,7 @@ export function LoginForm({
         <form onSubmit={submit} className="space-y-4">
           <div>
             <label htmlFor="login-username" className="text-xs font-medium text-gray-500 mb-1.5 block">
-              اسم المستخدم
+              البريد الإلكتروني
             </label>
             <div className="relative">
               <User
@@ -88,8 +79,8 @@ export function LoginForm({
               />
               <input
                 id="login-username"
-                type="text"
-                autoComplete="username"
+                type="email"
+                autoComplete="email"
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
                 className="w-full h-11 ps-10 pe-3 rounded-xl border border-gray-200 text-sm text-[#164E63] placeholder:text-gray-400 focus:border-[#0891B2] focus:ring-2 focus:ring-[#0891B2]/15 outline-none transition-all"

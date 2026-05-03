@@ -66,7 +66,6 @@ async function persistToolViaApi(
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({
-      session,
       id: isUuid(item.id) ? item.id : undefined,
       nameAr: item.nameAr,
       unit: item.unit,
@@ -96,8 +95,6 @@ async function persistDeleteToolViaApi(id: string): Promise<{ ok: boolean; error
   if (!session || session.role !== "admin") return { ok: true };
   const res = await fetch(`/api/admin/nurse-tools/${encodeURIComponent(id)}`, {
     method: "DELETE",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ session }),
   });
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));

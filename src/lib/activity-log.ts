@@ -41,7 +41,6 @@ async function persistActivityLogViaApi(input: LogInput): Promise<void> {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
-        session,
         action: input.action,
         entity: input.entity,
         entityId: input.entityId,
