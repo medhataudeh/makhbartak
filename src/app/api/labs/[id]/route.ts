@@ -50,3 +50,38 @@ export async function PATCH(
     .from("labs").select("*").eq("id", labId).maybeSingle();
   return NextResponse.json({ lab });
 }
+
+// GET /api/labs/[id] — return a lab row.
+// Admin: any lab. Lab user: only their own lab. Used by the lab portal to
+// hydrate the active lab from the database (no MOCK_LABS dependency).
+export async function GET(
+  _req: NextRequest,
+  ctx: { params: Promise<{ id: string }> },
+) {
+  const { id: labId } = await ctx.params;
+  if (!isUuid(labId)) {
+    return NextResponse.json({ error: "lab id must be a uuid" }, { status: 400 });
+  }
+  const auth = await requireAuthedUser();
+  if (!auth.ok) return NextResponse.json({ error: auth.error }, { status: auth.status });
+  if (auth.session.role !== "admin" && auth.session.role !== "lab") {
+    return NextResponse.json({ error: "role not authorized" }, { status: 403 });
+  }
+  if (auth.session.role === "lab") {
+    if (!auth.session.labId || auth.session.labId !== labId) {
+      return NextResponse.json({ error: "cannot read another lab" }, { status: 403 });
+    }
+  }
+  const sb = getSupabaseAdmin();
+  const { data: lab, error } = await sb
+    .from("labs").select("*").eq("id", labId).is("deleted_at", null).maybeSingle();
+  if (error) {
+    console.error("[api/labs/[id]] read failed", { labId, code: error.code, message: error.message });
+    return NextResponse.json({ error: error.message }, { status: 500 });
+  }
+  if (!lab) {
+    console.error("[api/labs/[id]] no lab row for authorized session", { labId, role: auth.session.role });
+    return NextResponse.json({ error: "lab not found" }, { status: 404 });
+  }
+  return NextResponse.json({ lab });
+}

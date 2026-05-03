@@ -53,10 +53,88 @@ export function LabPortal() {
       isActive: true,
     };
   }, [auth]);
-  const lab = useMemo(
-    () => (labUser ? MOCK_LABS.find((l) => l.id === labUser.labId) ?? null : null),
-    [labUser],
-  );
+
+  // Hydrate the active Lab from Supabase using /api/labs/[id]. Admin-created
+  // labs (real DB UUIDs) are not present in MOCK_LABS — relying on the mock
+  // here was bouncing every real lab user back to the login screen even
+  // though the session was valid. Fallback to MOCK_LABS for the legacy
+  // slug-id seed flow when running flag-off.
+  const [lab, setLab] = useState<Lab | null>(null);
+  const [labStatus, setLabStatus] = useState<"idle" | "loading" | "ready" | "missing" | "error">("idle");
+  const [labError, setLabError] = useState<string | null>(null);
+  /* eslint-disable react-hooks/set-state-in-effect -- mirrors a network
+     resource (the lab row) into local state; setState is the right tool. */
+  useEffect(() => {
+    if (!labUser?.labId) { setLab(null); setLabStatus("idle"); return; }
+    let cancelled = false;
+    (async () => {
+      setLabStatus("loading");
+      const seed = MOCK_LABS.find((l) => l.id === labUser.labId);
+      if (seed) {
+        // Mock-mode seed (slug ids) — no API needed.
+        if (!cancelled) { setLab(seed); setLabStatus("ready"); }
+        return;
+      }
+      try {
+        const res = await fetch(`/api/labs/${encodeURIComponent(labUser.labId)}`, { cache: "no-store" });
+        if (cancelled) return;
+        if (res.status === 404) { setLabStatus("missing"); setLab(null); return; }
+        if (!res.ok) {
+          const j = await res.json().catch(() => ({}));
+          setLabStatus("error");
+          setLabError(j.error ?? `HTTP ${res.status}`);
+          setLab(null);
+          return;
+        }
+        const body = await res.json();
+        if (!body.lab) { setLabStatus("missing"); setLab(null); return; }
+        // Map the snake_case row into the camelCase Lab shape the portal expects.
+        const r = body.lab as Record<string, unknown>;
+        const mapped: Lab = {
+          id: r.id as string,
+          name: (r.name_ar as string) ?? "",
+          nameAr: (r.name_ar as string) ?? "",
+          nameEn: (r.name_en as string) ?? "",
+          phone: (r.phone_main as string) ?? "",
+          phoneMain: (r.phone_main as string) ?? "",
+          phoneSecondary: (r.phone_secondary as string | null) ?? undefined,
+          email: (r.email as string | null) ?? undefined,
+          whatsapp: (r.whatsapp as string | null) ?? undefined,
+          city: (r.city as string | null) ?? undefined,
+          area: (r.area as string | null) ?? undefined,
+          addressFull: (r.address_full as string | null) ?? undefined,
+          lat: r.lat == null ? undefined : Number(r.lat),
+          lng: r.lng == null ? undefined : Number(r.lng),
+          supportedCities: (r.supported_cities as string[] | null) ?? undefined,
+          workingHours: (r.working_hours as string | null) ?? undefined,
+          acceptedSampleTypes: (r.accepted_sample_types as string[] | null) ?? undefined,
+          avgProcessingHours: (r.avg_processing_hours as number | null) ?? undefined,
+          officialName: (r.official_name as string | null) ?? undefined,
+          registrationNumber: (r.registration_number as string | null) ?? undefined,
+          licenseNumber: (r.license_number as string | null) ?? undefined,
+          taxNumber: (r.tax_number as string | null) ?? undefined,
+          logo: (r.logo_url as string | null) ?? undefined,
+          branding: {
+            primaryColor: (r.primary_color as string | null) ?? "#0891B2",
+            secondaryColor: (r.secondary_color as string | null) ?? "#0E7490",
+            accentColor: (r.accent_color as string | null) ?? "#06B6D4",
+            portalDisplayName: (r.portal_display_name as string | null) ?? undefined,
+            headerImage: (r.header_image_url as string | null) ?? undefined,
+            logo: (r.logo_url as string | null) ?? undefined,
+          },
+          revealSellPriceToLab: !!r.reveal_sell_price_to_lab,
+          isActive: !!r.is_active,
+        };
+        setLab(mapped);
+        setLabStatus("ready");
+      } catch (err) {
+        console.error("[LabPortal] /api/labs fetch failed", err);
+        if (!cancelled) { setLabStatus("error"); setLabError("تعذر الاتصال بالخادم"); setLab(null); }
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [labUser?.labId]);
+  /* eslint-enable react-hooks/set-state-in-effect */
 
   // Apply per-lab branding via CSS variables. Cleared on logout.
   useEffect(() => {
@@ -73,7 +151,8 @@ export function LabPortal() {
     }
   }, [lab]);
 
-  if (!auth || auth.role !== "lab" || !labUser || !lab) {
+  // 1) No session at all → login.
+  if (!auth || auth.role !== "lab") {
     if (forgotOpen) {
       return <ForgotPasswordForm onBack={() => setForgotOpen(false)} />;
     }
@@ -91,12 +170,62 @@ export function LabPortal() {
     );
   }
 
+  // 2) Session is "lab" but the role-extension wiring is broken — surface
+  //    a precise Arabic message instead of silently re-prompting for login.
+  if (!labUser) {
+    return <LabSetupError
+      message="حساب المخبر غير مكتمل في النظام. يرجى التواصل مع الإدارة لربط حسابك بمخبر."
+      onLogout={() => logout()}
+    />;
+  }
+  if (labStatus === "loading" || labStatus === "idle") {
+    return <LabPortalLoading />;
+  }
+  if (labStatus === "missing") {
+    return <LabSetupError
+      message="لم يتم العثور على المخبر المرتبط بهذا الحساب. يرجى التواصل مع الإدارة."
+      onLogout={() => logout()}
+    />;
+  }
+  if (labStatus === "error" || !lab) {
+    return <LabSetupError
+      message={`تعذر تحميل بيانات المخبر${labError ? `: ${labError}` : ""}.`}
+      onLogout={() => logout()}
+    />;
+  }
+
   return (
     <LabPortalShell
       lab={lab}
       labUser={labUser}
       onLogout={logout}
     />
+  );
+}
+
+function LabPortalLoading() {
+  return (
+    <div className="min-h-screen flex items-center justify-center bg-gray-50">
+      <p className="text-sm text-gray-500">جاري تحميل بيانات المخبر…</p>
+    </div>
+  );
+}
+
+function LabSetupError({ message, onLogout }: { message: string; onLogout: () => void }) {
+  return (
+    <div className="min-h-screen flex items-center justify-center bg-gray-50 p-4">
+      <div className="max-w-sm w-full bg-white rounded-2xl border border-gray-100 p-6 text-center space-y-3">
+        <p className="text-sm font-bold text-[#164E63]">تعذر فتح بوابة المخبر</p>
+        <p className="text-xs text-gray-500 leading-relaxed">{message}</p>
+        <button
+          type="button"
+          onClick={onLogout}
+          className="w-full h-11 rounded-xl bg-[#0891B2] text-white text-sm font-semibold cursor-pointer active:bg-[#0E7490]"
+        >
+          تسجيل الخروج
+        </button>
+      </div>
+    </div>
   );
 }
 
@@ -567,7 +696,7 @@ function OrdersSection({ lab, labUser, labOrders, brand, resultsFocus }: {
                 order={selected}
                 role={{ role: "lab_user", actor: "lab", actorName: labUser.fullName }}
                 nurses={[]}
-                labs={MOCK_LABS}
+                labs={[lab]}
                 onClose={() => setOpenControlCenter(false)}
               />
             )}
