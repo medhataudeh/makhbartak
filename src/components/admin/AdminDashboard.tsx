@@ -36,9 +36,16 @@ import { AdminUserContext } from "@/components/admin/AdminContext";
 import { useCurrentAdmin } from "@/components/admin/AdminContext";
 import { useOrders, createOrder, hydrateOrdersForAdmin } from "@/lib/store";
 import { generateOrderNumber, dedupeInstructions } from "@/lib/order-utils";
-import { validateCoupon, COMMON_INSTRUCTIONS } from "@/lib/mock-data";
+import { COMMON_INSTRUCTIONS } from "@/lib/mock-data";
 import { MOCK_LABS } from "@/lib/mock-data";
 import { useActivityLogs, hydrateActivityLogs } from "@/lib/activity-log";
+import {
+  hydrateAdminTests, hydrateAdminPackages, hydrateAdminCoupons, hydrateAdminSliders,
+  apiUpsertTest, apiDeleteTest,
+  apiUpsertPackage, apiDeletePackage,
+  apiUpsertCoupon, apiDeleteCoupon, apiValidateCoupon,
+  apiUpsertSlider, apiDeleteSlider,
+} from "@/lib/admin-catalog-api";
 import { logActivity } from "@/lib/activity-log";
 import { useToast } from "@/components/ui/Toast";
 import { useSystemSettings, updateSystemSettings } from "@/lib/system-settings";
@@ -46,6 +53,7 @@ import {
   useAdmins, upsertAdmin, deleteAdmin, setAdminActive,
   useCustomerUsers, upsertCustomerUser, deleteCustomerUser, setCustomerUserActive, resetCustomerUserPassword,
   useNurseUsers, upsertNurseUser, deleteNurseUser, setNurseUserActive, resetNurseUserPassword,
+  useSession,
 } from "@/lib/auth";
 
 interface AdminDashboardProps {
@@ -968,6 +976,7 @@ function UserProfilePanel({ user, orders, onBack }: {
 
 function TestsAdmin({ tests, setTests }: { tests: Test[]; setTests: React.Dispatch<React.SetStateAction<Test[]>> }) {
   const me = useCurrentAdmin();
+  const session = useSession();
   const toast = useToast();
   const [search, setSearch] = useState("");
   const [editing, setEditing] = useState<Test | null>(null);
@@ -976,10 +985,14 @@ function TestsAdmin({ tests, setTests }: { tests: Test[]; setTests: React.Dispat
 
   const filtered = tests.filter((t) => !search || t.nameAr.includes(search) || t.nameEn.toLowerCase().includes(search.toLowerCase()));
 
-  const upsert = (t: Test) => {
+  const upsert = async (t: Test) => {
+    if (!session) { toast.error("الجلسة غير صالحة"); return; }
     const exists = tests.find((x) => x.id === t.id);
-    setTests((prev) => exists ? prev.map((x) => x.id === t.id ? t : x) : [...prev, t]);
-    logActivity({ adminId: me.id, adminName: me.name, role: me.role, action: "test_edit", entity: "test", entityId: t.id, details: exists ? `تعديل ${t.nameAr}` : `إضافة ${t.nameAr}` });
+    const r = await apiUpsertTest(session, t);
+    if (!r.ok || !r.test) { toast.error(r.error ?? "تعذر الحفظ"); return; }
+    const canonical = r.test;
+    setTests((prev) => exists ? prev.map((x) => x.id === t.id ? canonical : x) : [...prev.filter((x) => x.id !== canonical.id), canonical]);
+    logActivity({ adminId: me.id, adminName: me.name, role: me.role, action: "test_edit", entity: "test", entityId: canonical.id, details: exists ? `تعديل ${canonical.nameAr}` : `إضافة ${canonical.nameAr}` });
     toast.success("تم الحفظ بنجاح");
     setEditing(null); setCreating(false);
   };
@@ -1009,8 +1022,12 @@ function TestsAdmin({ tests, setTests }: { tests: Test[]; setTests: React.Dispat
               <ActionMenu row={t} isActive={t.isActive}
                 onEdit={(r) => setEditing(r)}
                 onDelete={(r) => setConfirmDelete(r)}
-                onToggle={(r) => {
-                  setTests((prev) => prev.map((x) => x.id === r.id ? { ...x, isActive: !x.isActive } : x));
+                onToggle={async (r) => {
+                  if (!session) { toast.error("الجلسة غير صالحة"); return; }
+                  const next = { ...r, isActive: !r.isActive };
+                  const res = await apiUpsertTest(session, next);
+                  if (!res.ok) { toast.error(res.error ?? "تعذر التحديث"); return; }
+                  setTests((prev) => prev.map((x) => x.id === r.id ? next : x));
                   logActivity({ adminId: me.id, adminName: me.name, role: me.role, action: "test_edit", entity: "test", entityId: r.id, details: r.isActive ? `إيقاف ${r.nameAr}` : `تفعيل ${r.nameAr}` });
                   toast.success(r.isActive ? "تم الإيقاف" : "تم التفعيل");
                 }}
@@ -1031,7 +1048,10 @@ function TestsAdmin({ tests, setTests }: { tests: Test[]; setTests: React.Dispat
         <ConfirmModal
           title="حذف التحليل" message={`هل تريد حذف "${confirmDelete.nameAr}"؟ لا يمكن التراجع.`} danger
           onCancel={() => setConfirmDelete(null)}
-          onConfirm={() => {
+          onConfirm={async () => {
+            if (!session) { toast.error("الجلسة غير صالحة"); return; }
+            const r = await apiDeleteTest(session, confirmDelete.id);
+            if (!r.ok) { toast.error(r.error ?? "تعذر الحذف"); return; }
             setTests((prev) => prev.filter((x) => x.id !== confirmDelete.id));
             logActivity({ adminId: me.id, adminName: me.name, role: me.role, action: "test_edit", entity: "test", entityId: confirmDelete.id, details: `حذف ${confirmDelete.nameAr}` });
             toast.success("تم الحذف");
@@ -1235,15 +1255,20 @@ function TestForm({ initial, onCancel, onSubmit }: { initial?: Test; onCancel: (
 
 function PackagesAdmin({ packages, setPackages, tests }: { packages: Package[]; setPackages: React.Dispatch<React.SetStateAction<Package[]>>; tests: Test[] }) {
   const me = useCurrentAdmin();
+  const session = useSession();
   const toast = useToast();
   const [editing, setEditing] = useState<Package | null>(null);
   const [creating, setCreating] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState<Package | null>(null);
 
-  const upsert = (p: Package) => {
+  const upsert = async (p: Package) => {
+    if (!session) { toast.error("الجلسة غير صالحة"); return; }
     const exists = packages.find((x) => x.id === p.id);
-    setPackages((prev) => exists ? prev.map((x) => x.id === p.id ? p : x) : [...prev, p]);
-    logActivity({ adminId: me.id, adminName: me.name, role: me.role, action: "package_edit", entity: "package", entityId: p.id, details: exists ? `تعديل ${p.nameAr}` : `إضافة ${p.nameAr}` });
+    const r = await apiUpsertPackage(session, p);
+    if (!r.ok || !r.pkg) { toast.error(r.error ?? "تعذر الحفظ"); return; }
+    const canonical = r.pkg;
+    setPackages((prev) => exists ? prev.map((x) => x.id === p.id ? canonical : x) : [...prev.filter((x) => x.id !== canonical.id), canonical]);
+    logActivity({ adminId: me.id, adminName: me.name, role: me.role, action: "package_edit", entity: "package", entityId: canonical.id, details: exists ? `تعديل ${canonical.nameAr}` : `إضافة ${canonical.nameAr}` });
     toast.success("تم الحفظ بنجاح");
     setEditing(null); setCreating(false);
   };
@@ -1298,7 +1323,10 @@ function PackagesAdmin({ packages, setPackages, tests }: { packages: Package[]; 
       {confirmDelete && (
         <ConfirmModal title="حذف الباقة" message={`هل تريد حذف "${confirmDelete.nameAr}"؟`} danger
           onCancel={() => setConfirmDelete(null)}
-          onConfirm={() => {
+          onConfirm={async () => {
+            if (!session) { toast.error("الجلسة غير صالحة"); return; }
+            const r = await apiDeletePackage(session, confirmDelete.id);
+            if (!r.ok) { toast.error(r.error ?? "تعذر الحذف"); return; }
             setPackages((prev) => prev.filter((x) => x.id !== confirmDelete.id));
             logActivity({ adminId: me.id, adminName: me.name, role: me.role, action: "package_edit", entity: "package", entityId: confirmDelete.id, details: `حذف ${confirmDelete.nameAr}` });
             toast.success("تم الحذف");
@@ -1390,15 +1418,20 @@ function PackageForm({ initial, tests, onCancel, onSubmit }: { initial?: Package
 
 function CouponsAdmin({ coupons, setCoupons }: { coupons: Coupon[]; setCoupons: React.Dispatch<React.SetStateAction<Coupon[]>> }) {
   const me = useCurrentAdmin();
+  const session = useSession();
   const toast = useToast();
   const [editing, setEditing] = useState<Coupon | null>(null);
   const [creating, setCreating] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState<Coupon | null>(null);
 
-  const upsert = (c: Coupon) => {
+  const upsert = async (c: Coupon) => {
+    if (!session) { toast.error("الجلسة غير صالحة"); return; }
     const exists = coupons.find((x) => x.id === c.id);
-    setCoupons((prev) => exists ? prev.map((x) => x.id === c.id ? c : x) : [...prev, c]);
-    logActivity({ adminId: me.id, adminName: me.name, role: me.role, action: "coupon_change", entity: "coupon", entityId: c.id, details: exists ? `تعديل ${c.code}` : `إضافة ${c.code}` });
+    const r = await apiUpsertCoupon(session, c);
+    if (!r.ok || !r.coupon) { toast.error(r.error ?? "تعذر الحفظ"); return; }
+    const canonical = r.coupon;
+    setCoupons((prev) => exists ? prev.map((x) => x.id === c.id ? canonical : x) : [...prev.filter((x) => x.id !== canonical.id), canonical]);
+    logActivity({ adminId: me.id, adminName: me.name, role: me.role, action: "coupon_change", entity: "coupon", entityId: canonical.id, details: exists ? `تعديل ${canonical.code}` : `إضافة ${canonical.code}` });
     toast.success("تم الحفظ بنجاح");
     setEditing(null); setCreating(false);
   };
@@ -1425,7 +1458,13 @@ function CouponsAdmin({ coupons, setCoupons }: { coupons: Coupon[]; setCoupons: 
               <ActionMenu row={c} isActive={c.isActive}
                 onEdit={(r) => setEditing(r)}
                 onDelete={(r) => setConfirmDelete(r)}
-                onToggle={(r) => setCoupons((prev) => prev.map((x) => x.id === r.id ? { ...x, isActive: !x.isActive } : x))}
+                onToggle={async (r) => {
+                  if (!session) { toast.error("الجلسة غير صالحة"); return; }
+                  const next = { ...r, isActive: !r.isActive };
+                  const res = await apiUpsertCoupon(session, next);
+                  if (!res.ok) { toast.error(res.error ?? "تعذر التحديث"); return; }
+                  setCoupons((prev) => prev.map((x) => x.id === r.id ? next : x));
+                }}
               />
             )},
           ]}
@@ -1436,7 +1475,14 @@ function CouponsAdmin({ coupons, setCoupons }: { coupons: Coupon[]; setCoupons: 
       {confirmDelete && (
         <ConfirmModal title="حذف الكوبون" message={`هل تريد حذف "${confirmDelete.code}"؟`} danger
           onCancel={() => setConfirmDelete(null)}
-          onConfirm={() => { setCoupons((prev) => prev.filter((x) => x.id !== confirmDelete.id)); toast.success("تم الحذف"); setConfirmDelete(null); }}
+          onConfirm={async () => {
+            if (!session) { toast.error("الجلسة غير صالحة"); return; }
+            const r = await apiDeleteCoupon(session, confirmDelete.id);
+            if (!r.ok) { toast.error(r.error ?? "تعذر الحذف"); return; }
+            setCoupons((prev) => prev.filter((x) => x.id !== confirmDelete.id));
+            toast.success("تم الحذف");
+            setConfirmDelete(null);
+          }}
         />
       )}
     </div>
@@ -1880,15 +1926,20 @@ function PaymentsAdmin() {
 
 function SlidersAdmin({ sliders, setSliders }: { sliders: SliderItem[]; setSliders: React.Dispatch<React.SetStateAction<SliderItem[]>> }) {
   const me = useCurrentAdmin();
+  const session = useSession();
   const toast = useToast();
   const [editing, setEditing] = useState<SliderItem | null>(null);
   const [creating, setCreating] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState<SliderItem | null>(null);
 
-  const upsert = (s: SliderItem) => {
+  const upsert = async (s: SliderItem) => {
+    if (!session) { toast.error("الجلسة غير صالحة"); return; }
     const exists = sliders.find((x) => x.id === s.id);
-    setSliders((prev) => exists ? prev.map((x) => x.id === s.id ? s : x) : [...prev, s]);
-    logActivity({ adminId: me.id, adminName: me.name, role: me.role, action: "slider_edit", entity: "slider", entityId: s.id, details: exists ? `تعديل ${s.titleAr}` : `إضافة ${s.titleAr}` });
+    const r = await apiUpsertSlider(session, s);
+    if (!r.ok || !r.slider) { toast.error(r.error ?? "تعذر الحفظ"); return; }
+    const canonical = r.slider;
+    setSliders((prev) => exists ? prev.map((x) => x.id === s.id ? canonical : x) : [...prev.filter((x) => x.id !== canonical.id), canonical]);
+    logActivity({ adminId: me.id, adminName: me.name, role: me.role, action: "slider_edit", entity: "slider", entityId: canonical.id, details: exists ? `تعديل ${canonical.titleAr}` : `إضافة ${canonical.titleAr}` });
     toast.success("تم الحفظ بنجاح");
     setEditing(null); setCreating(false);
   };
@@ -1915,7 +1966,13 @@ function SlidersAdmin({ sliders, setSliders }: { sliders: SliderItem[]; setSlide
                 <ActionMenu row={s} isActive={s.isActive}
                   onEdit={(r) => setEditing(r)}
                   onDelete={(r) => setConfirmDelete(r)}
-                  onToggle={(r) => setSliders((prev) => prev.map((x) => x.id === r.id ? { ...x, isActive: !x.isActive } : x))}
+                  onToggle={async (r) => {
+                    if (!session) { toast.error("الجلسة غير صالحة"); return; }
+                    const next = { ...r, isActive: !r.isActive };
+                    const res = await apiUpsertSlider(session, next);
+                    if (!res.ok) { toast.error(res.error ?? "تعذر التحديث"); return; }
+                    setSliders((prev) => prev.map((x) => x.id === r.id ? next : x));
+                  }}
                 />
               </div>
             </div>
@@ -1926,7 +1983,14 @@ function SlidersAdmin({ sliders, setSliders }: { sliders: SliderItem[]; setSlide
       {confirmDelete && (
         <ConfirmModal title="حذف السلايدر" message={`حذف "${confirmDelete.titleAr}"؟`} danger
           onCancel={() => setConfirmDelete(null)}
-          onConfirm={() => { setSliders((prev) => prev.filter((x) => x.id !== confirmDelete.id)); toast.success("تم الحذف"); setConfirmDelete(null); }}
+          onConfirm={async () => {
+            if (!session) { toast.error("الجلسة غير صالحة"); return; }
+            const r = await apiDeleteSlider(session, confirmDelete.id);
+            if (!r.ok) { toast.error(r.error ?? "تعذر الحذف"); return; }
+            setSliders((prev) => prev.filter((x) => x.id !== confirmDelete.id));
+            toast.success("تم الحذف");
+            setConfirmDelete(null);
+          }}
         />
       )}
     </div>
@@ -2714,8 +2778,7 @@ function NewOrderDrawer({ user, nurses, onCancel, onCreated }: {
   const applyCoupon = async () => {
     if (!couponCode.trim()) return;
     setCouponLoading(true);
-    await new Promise((r) => setTimeout(r, 400));
-    const result = validateCoupon(couponCode.trim(), subtotal);
+    const result = await apiValidateCoupon(couponCode.trim(), subtotal);
     setCouponLoading(false);
     if (result.valid && result.discount) {
       setCouponDiscount(result.discount);

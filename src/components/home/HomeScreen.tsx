@@ -2,7 +2,7 @@
 import Image from "next/image";
 import { motion } from "framer-motion";
 import { Camera, FlaskConical, ShoppingCart, ChevronLeft, Bell } from "lucide-react";
-import { MOCK_SLIDERS } from "@/lib/mock-data";
+import { useSliders } from "@/lib/home-sliders";
 import { usePackages } from "@/lib/catalog";
 import type { Package, SliderItem } from "@/lib/types";
 import { HomeSlider } from "@/components/home/HomeSlider";
@@ -27,6 +27,7 @@ export function HomeScreen({
   unreadNotifications = 0,
 }: HomeScreenProps) {
   const packages = usePackages();
+  const sliders = useSliders();
   const handleSliderCta = (item: SliderItem) => {
     if (item.ctaTarget === "prescription") return onPrescription();
     if (item.ctaTarget === "custom-builder") return onCustomBuilder();
@@ -85,7 +86,7 @@ export function HomeScreen({
 
       {/* Image-driven slider — the ONLY place packages surface on home now */}
       <div className="pt-4 md:pt-6">
-        <HomeSlider items={MOCK_SLIDERS} onCta={handleSliderCta} />
+        <HomeSlider items={sliders} onCta={handleSliderCta} />
       </div>
 
       {/* Two visual action cards — Prescription + Custom builder */}
