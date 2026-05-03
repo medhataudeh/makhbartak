@@ -4,6 +4,7 @@ import { hydrateProfileForCustomer } from "@/lib/profile";
 import { AnimatePresence } from "framer-motion";
 
 import { CustomerLogin } from "@/components/auth/CustomerLogin";
+import { AuthLoading } from "@/components/auth/AuthLoading";
 import { BackButton } from "@/components/ui/BackButton";
 import { Button } from "@/components/ui/Button";
 import { LogIn } from "lucide-react";
@@ -26,7 +27,7 @@ import { useCustomerNotifications, createOrder, useOrderByIdempotencyKey, hydrat
 import { COMMON_INSTRUCTIONS } from "@/lib/mock-data";
 import { dedupeInstructions, generateOrderNumber } from "@/lib/order-utils";
 import { useToast } from "@/components/ui/Toast";
-import { useSession, logout } from "@/lib/auth";
+import { useSession, useAuthStatus, logout } from "@/lib/auth";
 
 type AppView =
   | "home"
@@ -62,9 +63,13 @@ export default function App() {
 function CustomerApp() {
   const toast = useToast();
   const session = useSession();
+  const authStatus = useAuthStatus();
   // Customer-portal guard: a non-customer session (admin/lab/nurse) on `/`
   // shows the customer login screen instead of letting them browse the
-  // customer shell with the wrong role.
+  // customer shell with the wrong role. While the cookie is being verified
+  // we treat as "not yet a customer" but render the regular browsing
+  // surface (guest-allowed); only the gated tabs flip to a loader while
+  // status === "loading".
   const isCustomer = !!session && session.role === "customer";
   const userId = isCustomer ? session.linkedEntityId : "";
 
@@ -76,8 +81,46 @@ function CustomerApp() {
     void hydrateProfileForCustomer(userId);
     void hydrateNotificationsForCustomer(userId);
   }, [userId]);
-  const [activeTab, setActiveTab] = useState<NavTab>("home");
-  const [view, setView] = useState<AppView>("home");
+  // Persist nav state to sessionStorage so a hard refresh keeps the user
+  // on the tab/screen they were on. This is *not* the auth session — just
+  // a tiny UX hint scoped to the tab. localStorage is not used.
+  const NAV_KEY = "makhbartak.customer.nav.v1";
+  const [activeTab, setActiveTabState] = useState<NavTab>(() => {
+    if (typeof window === "undefined") return "home";
+    try {
+      const raw = window.sessionStorage.getItem(NAV_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw) as { tab?: NavTab };
+        if (parsed.tab) return parsed.tab;
+      }
+    } catch {}
+    return "home";
+  });
+  const [view, setViewState] = useState<AppView>(() => {
+    if (typeof window === "undefined") return "home";
+    try {
+      const raw = window.sessionStorage.getItem(NAV_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw) as { view?: AppView };
+        // Don't restore transient views — they require booking state we
+        // never persist. Only the tabs the user can land on directly.
+        if (parsed.view === "notifications") return "notifications";
+      }
+    } catch {}
+    return "home";
+  });
+  const setActiveTab = (t: NavTab) => {
+    setActiveTabState(t);
+    if (typeof window !== "undefined") {
+      try { window.sessionStorage.setItem(NAV_KEY, JSON.stringify({ tab: t, view })); } catch {}
+    }
+  };
+  const setView = (v: AppView) => {
+    setViewState(v);
+    if (typeof window !== "undefined") {
+      try { window.sessionStorage.setItem(NAV_KEY, JSON.stringify({ tab: activeTab, view: v })); } catch {}
+    }
+  };
   const [booking, setBooking] = useState<BookingState>({});
   const [pendingPackage, setPendingPackage] = useState<Package | null>(null);
   const [lastIdempotencyKey, setLastIdempotencyKey] = useState<string | null>(null);
@@ -107,6 +150,10 @@ function CustomerApp() {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setView("home");
     if (next) next();
+    // setView is captured via closure intentionally — including it would
+    // re-trigger this effect on every render because the wrapper is
+    // re-created each time.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isCustomer, view]);
   // Live-tracked Order for the success screen. After the server swaps the
   // placeholder for the canonical UUID + server-generated public_number, this
@@ -214,6 +261,7 @@ function CustomerApp() {
 
     if (view === "home" || activeTab !== "home") {
       if (activeTab === "orders") {
+        if (authStatus === "loading") return <AuthLoading />;
         if (!isCustomer) {
           return <GuestGate
             titleAr="سجّل دخولك لعرض طلباتك"
@@ -224,6 +272,7 @@ function CustomerApp() {
         return <OrdersList onOpenNotifications={openNotifications} unreadNotifications={unread} />;
       }
       if (activeTab === "account") {
+        if (authStatus === "loading") return <AuthLoading />;
         if (!isCustomer) {
           return <GuestGate
             titleAr="سجّل دخولك لإدارة حسابك"

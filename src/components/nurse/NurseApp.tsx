@@ -13,7 +13,7 @@ import {
   buildPrepChecklist, FAILED_COLLECTION_REASONS, NURSE_BADGES, NURSE_LEVELS,
 } from "@/lib/mock-data";
 import type { Nurse, NurseRouteStop, NurseGamification, Notification, Order } from "@/lib/types";
-import { setOrderStatus, verifyPatient, useOrders, hydrateOrdersForNurse, hydrateNotificationsForNurse } from "@/lib/store";
+import { setOrderStatus, verifyPatient, setPaymentStatus, useOrders, hydrateOrdersForNurse, hydrateNotificationsForNurse } from "@/lib/store";
 import { useEditableNurse, updateNurseProfile } from "@/lib/nurse-profile";
 import { useSystemSettings } from "@/lib/system-settings";
 import { instructionsForOrder, isStructuredInstructions } from "@/lib/order-utils";
@@ -22,18 +22,50 @@ import { useLibraryTools, useChecklistDefaults } from "@/lib/tool-library";
 import { aggregateNurseTools } from "@/lib/tool-aggregation";
 import { submitShortageRequest } from "@/lib/shortage-requests";
 import type { TestInstruction, Instruction } from "@/lib/types";
-import { formatDate, getShiftLabel, relativeTime } from "@/lib/utils";
+import { formatDate, formatPrice, getShiftLabel, relativeTime } from "@/lib/utils";
 import { Button } from "@/components/ui/Button";
 import { BottomSheet } from "@/components/ui/BottomSheet";
 import { BackButton } from "@/components/ui/BackButton";
-import { useSession, logout, nurseFromSession } from "@/lib/auth";
+import { useSession, useAuthStatus, logout, nurseFromSession } from "@/lib/auth";
+import { AuthLoading } from "@/components/auth/AuthLoading";
 import { NurseLogin } from "@/components/nurse/NurseLogin";
 import { USE_SUPABASE } from "@/lib/supabase/flags";
 import { isUuid } from "@/lib/supabase/uuid";
-import { clearPrepForDay, hydratePrep, setPrep, usePrep } from "@/lib/nurse-prep";
+import { hydratePrep, setPrep, usePrep } from "@/lib/nurse-prep";
+import { hydrateNurseOnline, setNurseOnline, useNurseOnline } from "@/lib/nurse-online";
 import { hydrateShortageRequestsForNurse } from "@/lib/shortage-requests";
 
 type NurseTab = "home" | "schedule" | "settings";
+
+// Compose the nurse-visible address string. Spec: don't show the "label"
+// (e.g. "المنزل") — show area/city + description so the nurse sees where
+// they're going, not how the customer named the spot.
+function nurseAddressDisplay(addr: import("@/lib/types").Address): string {
+  const head = addr.city?.trim();
+  const tail = addr.description?.trim();
+  if (head && tail) return `${head} — ${tail}`;
+  return tail || head || "";
+}
+
+// Manual visit reorder per nurse-day. Stored in sessionStorage so it
+// survives in-tab navigation but not cross-device — the daily route is a
+// short-lived UX preference; a future migration can promote it to DB.
+function manualOrderKey(nurseId: string, date: string): string {
+  return `makhbartak.nurse.manualOrder.${nurseId}.${date}`;
+}
+function readNurseManualOrder(nurseId: string, date: string): string[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const raw = window.sessionStorage.getItem(manualOrderKey(nurseId, date));
+    if (!raw) return [];
+    const arr = JSON.parse(raw) as unknown;
+    return Array.isArray(arr) ? (arr as string[]).filter((x) => typeof x === "string") : [];
+  } catch { return []; }
+}
+function writeNurseManualOrder(nurseId: string, date: string, ids: string[]) {
+  if (typeof window === "undefined") return;
+  try { window.sessionStorage.setItem(manualOrderKey(nurseId, date), JSON.stringify(ids)); } catch {}
+}
 
 // Brand-new starter stats for nurses who don't have a gamification row yet
 // (every admin-created nurse). Level is the first tier from NURSE_LEVELS so
@@ -57,13 +89,15 @@ function createStarterGame(nurseId: string): NurseGamification {
 
 export function NurseApp() {
   const session = useSession();
+  const authStatus = useAuthStatus();
+  if (authStatus === "loading") return <AuthLoading />;
   if (!session || session.role !== "nurse") return <NurseLogin />;
   const nurseRecord = nurseFromSession(session);
   if (!nurseRecord) return <NurseLogin />;
   const handleLogout = () => {
-    // Clear today's prep state so a re-login starts fresh.
-    const today = new Date().toISOString().split("T")[0];
-    clearPrepForDay(today);
+    // Don't clear the prep state on logout — that used to re-show the
+    // checklist on every fresh login. Online/offline lives on the nurse
+    // row and persists across sessions; the nurse can flip it from the UI.
     logout();
   };
   return <NurseAppInner nurseId={nurseRecord.id} onLogout={handleLogout} />;
@@ -101,6 +135,7 @@ function NurseAppInner({ nurseId, onLogout }: { nurseId: string; onLogout: () =>
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
   })();
   const settings = useSystemSettings();
+  const toast = useToast();
 
   const [tab, setTab] = useState<NurseTab>("home");
 
@@ -111,12 +146,18 @@ function NurseAppInner({ nurseId, onLogout }: { nurseId: string; onLogout: () =>
   const dateKey = todayStr;
   const prep = usePrep(nurseId, dateKey);
   const checkedIds = useMemo(() => new Set(prep.checkedIds), [prep.checkedIds]);
-  const started = prep.started;
 
-  // Stage C: pull canonical prep state from Supabase on day change.
+  // The prep checklist used to gate "started" via prep.started — which was
+  // re-asked on every login (logout cleared it). Now: the nurse has a
+  // persistent `is_online` flag in the DB. Checklist appears only when
+  // offline; on tapping "بدء العمل" we flip to online server-side.
+  const isOnline = useNurseOnline();
+  const started = isOnline;
+
   useEffect(() => {
     if (USE_SUPABASE && isUuid(nurseId)) {
       void hydratePrep(nurseId, todayStr);
+      void hydrateNurseOnline(nurseId);
     }
   }, [nurseId, todayStr]);
 
@@ -124,8 +165,11 @@ function NurseAppInner({ nurseId, onLogout }: { nurseId: string; onLogout: () =>
     void setPrep(nurseId, dateKey, { checkedIds: Array.from(next) });
   };
 
-  const startDay = () => {
-    void setPrep(nurseId, dateKey, { started: true });
+  const startDay = async () => {
+    // Flip the persistent online flag instead of writing the per-day
+    // "started" record. The nurse stays online across sessions.
+    const r = await setNurseOnline(nurseId, true);
+    if (!r.ok) toast.error(r.error ?? "تعذر تفعيل وضع العمل");
   };
 
   // Notifications
@@ -153,6 +197,12 @@ function NurseAppInner({ nurseId, onLogout }: { nurseId: string; onLogout: () =>
   const liveOrders = useOrders();
   const [activeStopId, setActiveStopId] = useState<string | null>(null);
 
+  // Bump on manual reorder so groupedByDate re-runs against the freshly
+  // persisted override list.
+  const [manualVersion, setManualVersion] = useState(0);
+  const bumpManual = () => setManualVersion((v) => v + 1);
+  void manualVersion; // referenced by groupedByDate via closure capture below.
+
   const myOrders = liveOrders.filter((o) => isUuid(o.id) && o.nurseId === nurse.id);
 
   // Stop bucket derived from the order status (TS shape after mapRowToOrder).
@@ -177,10 +227,37 @@ function NurseAppInner({ nurseId, onLogout }: { nurseId: string; onLogout: () =>
     return orderedDates
       .filter((d) => map.has(d) || d === todayStr)
       .map((date) => {
-        const orders = (map.get(date) ?? []).slice().sort((a, b) => a.shift.localeCompare(b.shift));
+        // Sort: morning first, evening second. Within a shift, by
+        // shiftStartTime then by created_at as a stable tiebreaker.
+        const shiftRank = (s: Order["shift"]) => (s === "morning" ? 0 : 1);
+        const orders = (map.get(date) ?? []).slice().sort((a, b) => {
+          const r = shiftRank(a.shift) - shiftRank(b.shift);
+          if (r !== 0) return r;
+          const aT = a.shiftStartTime ?? "";
+          const bT = b.shiftStartTime ?? "";
+          if (aT !== bT) return aT.localeCompare(bT);
+          return a.createdAt.localeCompare(b.createdAt);
+        });
+        // Apply any manual reorder the nurse has set for this day. The
+        // overrides are an array of order ids in the desired display
+        // order; unknown ids fall through to the natural sort above.
+        const manual = readNurseManualOrder(nurse.id, date);
+        const finalOrders = manual.length === 0
+          ? orders
+          : (() => {
+              const idx = new Map(manual.map((id, i) => [id, i] as const));
+              return orders.slice().sort((a, b) => {
+                const ai = idx.get(a.id);
+                const bi = idx.get(b.id);
+                if (ai !== undefined && bi !== undefined) return ai - bi;
+                if (ai !== undefined) return -1;
+                if (bi !== undefined) return 1;
+                return 0;
+              });
+            })();
         return {
           date,
-          stops: orders.map<NurseRouteStop>((o, idx) => ({
+          stops: finalOrders.map<NurseRouteStop>((o, idx) => ({
             orderId: o.id, order: o, sequence: idx + 1, status: bucketFor(o.status),
           })),
         };
@@ -296,10 +373,24 @@ function NurseAppInner({ nurseId, onLogout }: { nurseId: string; onLogout: () =>
             routes={scheduleRoutes}
             stopsToday={stopsHydrated}
             onOpenStop={(s) => setActiveStop(s)}
+            onMove={(date, orderId, delta) => {
+              const grp = groupedByDate.find((g) => g.date === date);
+              if (!grp) return;
+              const ids = grp.stops.map((s) => s.orderId);
+              const i = ids.indexOf(orderId);
+              const j = i + delta;
+              if (i === -1 || j < 0 || j >= ids.length) return;
+              [ids[i], ids[j]] = [ids[j], ids[i]];
+              writeNurseManualOrder(nurse.id, date, ids);
+              bumpManual();
+            }}
           />
         )}
 
-        {tab === "settings" && <NurseSettings nurse={nurse} game={game} onLogout={onLogout} />}
+        {tab === "settings" && <NurseSettings nurse={nurse} game={game} onLogout={onLogout} isOnline={isOnline} onToggleOnline={async () => {
+          const r = await setNurseOnline(nurse.id, !isOnline);
+          if (!r.ok) toast.error(r.error ?? "تعذر تحديث وضع العمل");
+        }} />}
       </div>
 
       {/* Bottom nav */}
@@ -359,6 +450,7 @@ function NurseAppInner({ nurseId, onLogout }: { nurseId: string; onLogout: () =>
             onFail={(reason) => failStop(activeStop.orderId, reason)}
             onDeliveredToLab={() => setOrderStatus(activeStop.orderId, "sent_to_lab", ref)}
             onVerifyPatient={(officialName, nationalId, note) => verifyPatient(activeStop.orderId, { officialName, nationalId, note }, ref)}
+            onConfirmCash={() => setPaymentStatus(activeStop.orderId, "paid", ref)}
           />
         )}
       </AnimatePresence>
@@ -655,7 +747,7 @@ function NextVisitCard({ stop, onOpen }: { stop: NurseRouteStop; onOpen: () => v
         </li>
         <li className="flex items-start gap-2">
           <MapPin size={14} className="text-cyan-200 flex-shrink-0 mt-0.5" aria-hidden="true" />
-          <span className="leading-snug">{o.address.label} — {o.address.description}</span>
+          <span className="leading-snug">{nurseAddressDisplay(o.address)}</span>
         </li>
       </ul>
       <div className="flex gap-2">
@@ -760,17 +852,21 @@ function MiniStat({ Icon, label, value }: { Icon: React.FC<{ size?: number; clas
 
 // ────────────────────────────── Schedule ────────────────────────────────────
 
-function NurseSchedule({ routes, stopsToday, onOpenStop }: {
+function NurseSchedule({ routes, stopsToday, onOpenStop, onMove }: {
   routes: { nurseId: string; date: string; stops: NurseRouteStop[] }[];
   stopsToday: NurseRouteStop[];
   onOpenStop: (s: NurseRouteStop) => void;
+  // delta = -1 (up the list) or +1 (down). Date identifies which day's
+  // override is being mutated. Caller persists in sessionStorage and bumps
+  // a re-render version so the new order paints immediately.
+  onMove: (date: string, orderId: string, delta: -1 | 1) => void;
 }) {
   const totalAcrossDays = routes.reduce((acc, r) => acc + r.stops.length, 0) + (stopsToday.length > 0 && !routes.length ? stopsToday.length : 0);
   return (
     <div className="p-4 space-y-5">
       <header>
         <h1 className="text-lg font-bold text-[#164E63]">جدول الزيارات</h1>
-        <p className="text-xs text-gray-500 mt-0.5">المسار محدّد من الإدارة — التزم بالترتيب</p>
+        <p className="text-xs text-gray-500 mt-0.5">يمكنك إعادة ترتيب زياراتك يدوياً — الصباح أولاً ثم المساء.</p>
       </header>
 
       {totalAcrossDays === 0 && (
@@ -799,29 +895,49 @@ function NurseSchedule({ routes, stopsToday, onOpenStop }: {
               </div>
             ) : (
               <ul className="space-y-2" role="list">
-                {visibleStops.map((s) => (
-                  <li key={s.orderId}>
+                {visibleStops.map((s, idx) => (
+                  <li key={s.orderId} className="bg-white rounded-xl border border-gray-100 p-3 flex items-center gap-3">
+                    <div className="w-9 h-9 rounded-xl bg-[#ECFEFF] flex items-center justify-center flex-shrink-0 text-[#0891B2] text-xs font-bold">
+                      {s.sequence}
+                    </div>
                     <button
+                      type="button"
                       onClick={() => onOpenStop(s)}
-                      className="w-full bg-white rounded-xl border border-gray-100 p-3 flex items-center gap-3 cursor-pointer text-start active:bg-gray-50 transition-colors"
+                      className="flex-1 min-w-0 text-start cursor-pointer"
                     >
-                      <div className="w-9 h-9 rounded-xl bg-[#ECFEFF] flex items-center justify-center flex-shrink-0 text-[#0891B2] text-xs font-bold">
-                        {s.sequence}
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <p className="text-sm font-semibold text-[#164E63] truncate">{s.order.patient.name}</p>
-                        <p className="text-[11px] text-gray-500 mt-0.5 flex items-center gap-1.5">
-                          <Clock size={11} aria-hidden="true" />
-                          {getShiftLabel(s.order.shift).split("(")[0].trim()}
-                          <span className="mx-1">·</span>
-                          <MapPin size={11} aria-hidden="true" />
-                          <span className="truncate">{s.order.address.label}</span>
-                        </p>
-                      </div>
-                      <SampleBadge order={s.order} />
-                      <StopStatus status={s.status} />
-                      <ChevronRight size={14} className="text-gray-300 flex-shrink-0" aria-hidden="true" />
+                      <p className="text-sm font-semibold text-[#164E63] truncate">{s.order.patient.name}</p>
+                      <p className="text-[11px] text-gray-500 mt-0.5 flex items-center gap-1.5">
+                        <Clock size={11} aria-hidden="true" />
+                        {getShiftLabel(s.order.shift).split("(")[0].trim()}
+                        <span className="mx-1">·</span>
+                        <MapPin size={11} aria-hidden="true" />
+                        <span className="truncate">{nurseAddressDisplay(s.order.address)}</span>
+                      </p>
                     </button>
+                    <SampleBadge order={s.order} />
+                    <StopStatus status={s.status} />
+                    {/* Manual reorder controls — disabled at the edges. */}
+                    <div className="flex flex-col gap-0.5 flex-shrink-0">
+                      <button
+                        type="button"
+                        aria-label="نقل لأعلى"
+                        disabled={idx === 0}
+                        onClick={() => onMove(route.date, s.orderId, -1)}
+                        className="w-7 h-6 rounded-md text-gray-500 hover:bg-gray-100 disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer flex items-center justify-center"
+                      >
+                        ▲
+                      </button>
+                      <button
+                        type="button"
+                        aria-label="نقل لأسفل"
+                        disabled={idx === visibleStops.length - 1}
+                        onClick={() => onMove(route.date, s.orderId, 1)}
+                        className="w-7 h-6 rounded-md text-gray-500 hover:bg-gray-100 disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer flex items-center justify-center"
+                      >
+                        ▼
+                      </button>
+                    </div>
+                    <ChevronRight size={14} className="text-gray-300 flex-shrink-0" aria-hidden="true" />
                   </li>
                 ))}
               </ul>
@@ -858,7 +974,13 @@ function StopStatus({ status }: { status: NurseRouteStop["status"] }) {
 
 // ────────────────────────────── Settings ────────────────────────────────────
 
-function NurseSettings({ nurse, game, onLogout }: { nurse: Nurse; game: NurseGamification; onLogout: () => void }) {
+function NurseSettings({ nurse, game, onLogout, isOnline, onToggleOnline }: {
+  nurse: Nurse;
+  game: NurseGamification;
+  onLogout: () => void;
+  isOnline: boolean;
+  onToggleOnline: () => void | Promise<void>;
+}) {
   const toast = useToast();
   const [editing, setEditing] = useState(false);
   const [name, setName] = useState(nurse.name);
@@ -881,6 +1003,26 @@ function NurseSettings({ nurse, game, onLogout }: { nurse: Nurse; game: NurseGam
 
   return (
     <div className="p-4 space-y-4">
+      {/* Online / offline status — drives whether the prep checklist
+         appears on the home tab. Persisted on `nurses.is_online`. */}
+      <section className="bg-white rounded-2xl border border-gray-100 p-4 flex items-center justify-between">
+        <div>
+          <p className="text-sm font-bold text-[#164E63]">وضع العمل</p>
+          <p className="text-[12px] text-gray-500 mt-0.5">
+            {isOnline ? "أنت في وضع العمل الآن" : "أنت غير نشط حالياً"}
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={() => { void onToggleOnline(); }}
+          className={`text-[12px] font-semibold px-3 py-2 rounded-xl cursor-pointer ${
+            isOnline ? "bg-amber-50 text-amber-700" : "bg-emerald-50 text-emerald-700"
+          }`}
+        >
+          {isOnline ? "إنهاء العمل" : "بدء العمل"}
+        </button>
+      </section>
+
       {/* Profile */}
       <header className="bg-white rounded-2xl border border-gray-100 p-5 flex items-center gap-4">
         <div className="relative w-16 h-16 rounded-full overflow-hidden bg-gray-200 flex-shrink-0">
@@ -1061,7 +1203,7 @@ function NurseNotifList({ notifs, onRead }: { notifs: Notification[]; onRead: (i
 }
 
 function NurseVisitDetail({
-  stop, nurseName, onBack, onSetOnTheWay, onSetArrived, onComplete, onFail, onVerifyPatient, onDeliveredToLab,
+  stop, nurseName, onBack, onSetOnTheWay, onSetArrived, onComplete, onFail, onVerifyPatient, onDeliveredToLab, onConfirmCash,
 }: {
   stop: NurseRouteStop;
   nurseName: string;
@@ -1072,6 +1214,7 @@ function NurseVisitDetail({
   onFail: (reason: string) => void;
   onDeliveredToLab: () => void;
   onVerifyPatient: (officialName: string, nationalId: string, note?: string) => void;
+  onConfirmCash: () => Promise<{ ok: boolean; error?: string }>;
 }) {
   const o = stop.order;
   const toast = useToast();
@@ -1206,6 +1349,29 @@ function NurseVisitDetail({
             ))}
           </ul>
         </section>
+
+        {/* Cash collection — only relevant for cash orders that haven't
+           been collected yet. Online-paid orders show the paid badge
+           instead. Amount comes straight from order.total (real DB value). */}
+        <PaymentCollectionCard
+          order={o}
+          status={status}
+          onConfirmCash={async () => {
+            if (pendingAction) return;
+            setPendingAction("collect_cash");
+            try {
+              const r = await onConfirmCash();
+              if (!r.ok) {
+                toast.error(r.error ?? "تعذر تأكيد التحصيل");
+                return;
+              }
+              toast.success("تم تسجيل تحصيل المبلغ");
+            } finally {
+              setPendingAction(null);
+            }
+          }}
+          collecting={pendingAction === "collect_cash"}
+        />
 
         {/* Patient verification — disabled until the nurse marks "وصلت".
            Pre-arrival, the section renders an explanatory placeholder so
@@ -1449,6 +1615,87 @@ function SupportLink() {
       <Phone size={13} aria-hidden="true" />
       التواصل مع الدعم
     </a>
+  );
+}
+
+// Cash-collection card. Shows the amount due and exposes a single
+// "تم استلام المبلغ" CTA only when the order is cash + still pending. The
+// nurse can collect any time after arriving on-site (before sample-
+// collected gets harder), but we don't gate the workflow on this — the
+// admin policy decides whether unpaid orders can advance further.
+function PaymentCollectionCard({
+  order, status, onConfirmCash, collecting,
+}: {
+  order: Order;
+  status: Order["status"];
+  onConfirmCash: () => void | Promise<void>;
+  collecting: boolean;
+}) {
+  const isCash = order.paymentMethod === "cash";
+  const isPaid = order.paymentStatus === "paid";
+
+  if (!isCash) {
+    return (
+      <section className="bg-white rounded-2xl border border-gray-100 p-4">
+        <p className="text-[11px] text-gray-400 mb-1 uppercase tracking-wide">الدفع</p>
+        <div className="flex items-center justify-between">
+          <p className="text-sm font-semibold text-[#164E63]">مدفوع إلكترونياً</p>
+          <span className="text-[11px] font-semibold text-emerald-600 inline-flex items-center gap-1">
+            <CheckCircle2 size={12} aria-hidden="true" />
+            مدفوع
+          </span>
+        </div>
+        <p className="text-[11px] text-gray-400 mt-1">{formatPrice(order.total)}</p>
+      </section>
+    );
+  }
+
+  if (isPaid) {
+    return (
+      <section className="bg-white rounded-2xl border border-gray-100 p-4">
+        <p className="text-[11px] text-gray-400 mb-1 uppercase tracking-wide">الدفع</p>
+        <div className="flex items-center justify-between">
+          <p className="text-sm font-semibold text-[#164E63]">تم تحصيل المبلغ نقداً</p>
+          <span className="text-[11px] font-semibold text-emerald-600 inline-flex items-center gap-1">
+            <CheckCircle2 size={12} aria-hidden="true" />
+            تم التحصيل
+          </span>
+        </div>
+        <p className="text-[11px] text-gray-400 mt-1">{formatPrice(order.total)}</p>
+      </section>
+    );
+  }
+
+  // Cash + pending: nurse needs to collect.
+  const enabled = status === "arrived" || status === "sample_collected";
+  return (
+    <section className="bg-emerald-50/60 rounded-2xl border border-emerald-100 p-4">
+      <p className="text-[11px] text-emerald-700 font-semibold uppercase tracking-wide mb-1">
+        تحصيل نقدي
+      </p>
+      <p className="text-[12px] text-[#164E63] leading-relaxed mb-3">
+        المبلغ المطلوب تحصيله من العميل
+      </p>
+      <p className="text-2xl font-extrabold text-[#059669] mb-3 lat" dir="ltr">
+        {formatPrice(order.total)}
+      </p>
+      <Button
+        variant="primary"
+        size="md"
+        className="w-full"
+        loading={collecting}
+        disabled={!enabled || collecting}
+        onClick={() => { void onConfirmCash(); }}
+      >
+        <CheckCircle2 size={14} aria-hidden="true" />
+        تم استلام المبلغ
+      </Button>
+      {!enabled && (
+        <p className="text-[11px] text-amber-700 mt-2">
+          يصبح التحصيل متاحاً بعد تأكيد &quot;وصلت&quot;.
+        </p>
+      )}
+    </section>
   );
 }
 

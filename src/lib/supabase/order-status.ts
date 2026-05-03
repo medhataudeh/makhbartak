@@ -1,12 +1,14 @@
 import type { OrderStatus } from "@/lib/types";
 
-// SQL public.order_status enum (001_init_enums.sql:19-31).
-// Kept as a string union so we don't need to import a generated types file.
+// SQL public.order_status enum. Kept as a string union so we don't need to
+// import a generated types file. After 023_order_status_arrived.sql this
+// includes `arrived` between `nurse_on_way` and `sample_collected`.
 export type SqlOrderStatus =
   | "pending_payment"
   | "paid"
   | "assigned"
   | "nurse_on_way"
+  | "arrived"
   | "sample_collected"
   | "received_by_lab"
   | "processing"
@@ -15,9 +17,10 @@ export type SqlOrderStatus =
   | "cancelled"
   | "refunded";
 
-// Phase 1 maps the 15-value TS union onto the 11-value SQL enum.
-// `failed_to_collect` / `lab_issue` / `arrived` have no clean SQL equivalent
-// and are not written by Phase 1 (those flows still live in mock land).
+// Maps the 15-value TS union onto the SQL enum. Each TS value MUST have a
+// distinct SQL value when the workflow actually transitions through it,
+// otherwise a "status update" RPC becomes a no-op and the UI never advances.
+// `on_the_way` ↔ `nurse_on_way` and `arrived` ↔ `arrived` are now distinct.
 export function tsStatusToSql(s: OrderStatus): SqlOrderStatus {
   switch (s) {
     case "created":
@@ -25,8 +28,8 @@ export function tsStatusToSql(s: OrderStatus): SqlOrderStatus {
     case "scheduled":      return "pending_payment";
     case "confirmed":      return "paid";
     case "nurse_assigned": return "assigned";
-    case "on_the_way":
-    case "arrived":        return "nurse_on_way";
+    case "on_the_way":     return "nurse_on_way";
+    case "arrived":        return "arrived";
     case "sample_collected": return "sample_collected";
     case "sent_to_lab":    return "received_by_lab";
     case "lab_processing":
@@ -44,6 +47,7 @@ export function sqlStatusToTs(s: SqlOrderStatus | string): OrderStatus {
     case "paid":            return "confirmed";
     case "assigned":        return "nurse_assigned";
     case "nurse_on_way":    return "on_the_way";
+    case "arrived":         return "arrived";
     case "sample_collected": return "sample_collected";
     case "received_by_lab": return "sent_to_lab";
     case "processing":      return "lab_processing";

@@ -14,7 +14,14 @@ import type { AuthSession, Role } from "./types";
 // cached session lives in module-local memory; localStorage is no longer
 // involved in operational auth.
 
+// Auth status sentinel: every portal needs to distinguish "haven't checked
+// the cookie yet" from "definitely logged out". Without it, the very first
+// render of /admin /lab /nurse / shows the login form for ~200ms while
+// /api/me is still in flight, even when the cookie is valid.
+export type AuthStatus = "loading" | "authenticated" | "unauthenticated";
+
 let _cachedSession: AuthSession | null = null;
+let _authStatus: AuthStatus = "loading";
 let _hydrating: Promise<AuthSession | null> | null = null;
 const sessionListeners = new Set<() => void>();
 function emitSession() { sessionListeners.forEach((l) => l()); }
@@ -57,6 +64,7 @@ async function refreshSession(): Promise<void> {
   try {
     const next = await _hydrating;
     _cachedSession = next;
+    _authStatus = next ? "authenticated" : "unauthenticated";
   } finally {
     _hydrating = null;
     emitSession();
@@ -70,6 +78,7 @@ function ensureAuthListenerWired() {
   const sb = getSupabaseBrowser();
   if (!sb) {
     // Env vars missing — flag-off mock mode (no real auth available).
+    _authStatus = "unauthenticated";
     emitSession();
     return;
   }
@@ -79,6 +88,7 @@ function ensureAuthListenerWired() {
   sb.auth.onAuthStateChange((event) => {
     if (event === "SIGNED_OUT") {
       _cachedSession = null;
+      _authStatus = "unauthenticated";
       emitSession();
       return;
     }
@@ -97,8 +107,20 @@ export function getStoredSession(): AuthSession | null {
   return _cachedSession;
 }
 
+export function getAuthStatus(): AuthStatus {
+  ensureAuthListenerWired();
+  return _authStatus;
+}
+
 export function useSession(): AuthSession | null {
   return useSyncExternalStore(subscribeSession, getStoredSession, () => null);
+}
+
+// useAuthStatus() lets every portal render a "loading" splash while the
+// cookie-based session is being verified, instead of flashing the login
+// screen for ~200ms on every refresh.
+export function useAuthStatus(): AuthStatus {
+  return useSyncExternalStore(subscribeSession, getAuthStatus, () => "loading");
 }
 
 export interface LoginResult {
@@ -133,6 +155,7 @@ export async function loginUser(
   if (opts?.allowedRoles && !opts.allowedRoles.includes(next.role)) {
     await sb.auth.signOut().catch(() => {});
     _cachedSession = null;
+    _authStatus = "unauthenticated";
     emitSession();
     return {
       ok: false,
@@ -140,6 +163,7 @@ export async function loginUser(
     };
   }
   _cachedSession = next;
+  _authStatus = "authenticated";
   emitSession();
   return { ok: true, session: next };
 }
@@ -148,6 +172,7 @@ export async function logout(): Promise<void> {
   const sb = getSupabaseBrowser();
   if (sb) await sb.auth.signOut().catch(() => {});
   _cachedSession = null;
+  _authStatus = "unauthenticated";
   emitSession();
 }
 

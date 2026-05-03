@@ -14,7 +14,8 @@ import {
   useOrders, uploadResultFile, archiveResultFile, openLabIssue, setOrderStatus,
   confirmResultsReady,
 } from "@/lib/store";
-import { useSession, logout, labUserFromSession } from "@/lib/auth";
+import { useSession, useAuthStatus, logout, labUserFromSession } from "@/lib/auth";
+import { AuthLoading } from "@/components/auth/AuthLoading";
 import { LoginForm } from "@/components/auth/LoginForm";
 import { ForgotPasswordForm } from "@/components/auth/ForgotPasswordForm";
 import { DEMO_LAB_CREDENTIALS } from "@/lib/demo-credentials";
@@ -36,6 +37,7 @@ const LAB_STATUSES = [
 
 export function LabPortal() {
   const auth = useSession();
+  const authStatus = useAuthStatus();
   const [forgotOpen, setForgotOpen] = useState(false);
   // Phase 8: build the LabUser shape from the enriched session. Older
   // builds resolved this through MOCK_LAB_USERS; the session now carries
@@ -151,6 +153,8 @@ export function LabPortal() {
     }
   }, [lab]);
 
+  // 0) Cookie still being verified → loading splash.
+  if (authStatus === "loading") return <AuthLoading />;
   // 1) No session at all → login.
   if (!auth || auth.role !== "lab") {
     if (forgotOpen) {
