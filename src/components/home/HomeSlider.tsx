@@ -8,6 +8,9 @@ import type { SliderItem } from "@/lib/types";
 interface HomeSliderProps {
   items: SliderItem[];
   onCta: (item: SliderItem) => void;
+  /** Returns the action a slide is wired to, or null when it has none.
+   *  Used to render unwired slides as visually static (no cursor/no click). */
+  resolveAction?: (item: SliderItem) => (() => void) | null;
 }
 
 /**
@@ -20,7 +23,9 @@ interface HomeSliderProps {
  * `dir="rtl"` and write transforms in logical "previous→next" terms, so the
  * arrow and order match what an Arabic reader expects.
  */
-export function HomeSlider({ items, onCta }: HomeSliderProps) {
+export function HomeSlider({ items, onCta, resolveAction }: HomeSliderProps) {
+  const isClickable = (item: SliderItem) =>
+    resolveAction ? resolveAction(item) != null : true;
   const active = items.filter((s) => s.isActive).sort((a, b) => a.displayOrder - b.displayOrder);
   const [page, setPage] = useState(0);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -40,7 +45,13 @@ export function HomeSlider({ items, onCta }: HomeSliderProps) {
       {/* Desktop / tablet — 3-up grid */}
       <div className="hidden md:grid md:grid-cols-3 gap-4 lg:gap-5">
         {active.slice(0, 3).map((item) => (
-          <SlideCard key={item.id} item={item} onCta={onCta} variant="desktop" />
+          <SlideCard
+            key={item.id}
+            item={item}
+            onCta={onCta}
+            variant="desktop"
+            clickable={isClickable(item)}
+          />
         ))}
       </div>
 
@@ -67,7 +78,12 @@ export function HomeSlider({ items, onCta }: HomeSliderProps) {
                   setPage((p) => (p - 1 + active.length) % active.length);
               }}
             >
-              <SlideCard item={active[page]} onCta={onCta} variant="mobile" />
+              <SlideCard
+                item={active[page]}
+                onCta={onCta}
+                variant="mobile"
+                clickable={isClickable(active[page])}
+              />
             </motion.div>
           </AnimatePresence>
         </div>
@@ -102,16 +118,26 @@ function SlideCard({
   item,
   onCta,
   variant,
+  clickable,
 }: {
   item: SliderItem;
   onCta: (item: SliderItem) => void;
   variant: "mobile" | "desktop";
+  clickable: boolean;
 }) {
   const src = variant === "mobile" ? item.mobileImage : item.desktopImage;
   return (
     <article
-      className="relative rounded-2xl overflow-hidden bg-[#164E63] aspect-[4/5] md:aspect-[3/4] lg:aspect-[4/5] cursor-pointer group"
-      onClick={() => onCta(item)}
+      className={`relative rounded-2xl overflow-hidden bg-[#164E63] aspect-[4/5] md:aspect-[3/4] lg:aspect-[4/5] group ${
+        clickable ? "cursor-pointer" : "cursor-default"
+      }`}
+      onClick={() => { if (clickable) onCta(item); }}
+      role={clickable ? "button" : undefined}
+      tabIndex={clickable ? 0 : undefined}
+      onKeyDown={(e) => {
+        if (!clickable) return;
+        if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onCta(item); }
+      }}
     >
       <Image
         src={src}
@@ -154,15 +180,17 @@ function SlideCard({
 
         <div className="flex items-center justify-between gap-3">
           <span className="text-base md:text-lg font-bold drop-shadow">{item.priceLabel}</span>
-          <button
-            type="button"
-            onClick={(e) => { e.stopPropagation(); onCta(item); }}
-            className="inline-flex items-center gap-1.5 bg-white text-[#0E7490] font-semibold text-[13px] px-3.5 py-2 rounded-xl active:scale-95 transition-transform"
-            aria-label={item.ctaLabel}
-          >
-            {item.ctaLabel}
-            <ArrowLeft size={15} aria-hidden="true" />
-          </button>
+          {clickable && item.ctaLabel && (
+            <button
+              type="button"
+              onClick={(e) => { e.stopPropagation(); onCta(item); }}
+              className="inline-flex items-center gap-1.5 bg-white text-[#0E7490] font-semibold text-[13px] px-3.5 py-2 rounded-xl active:scale-95 transition-transform"
+              aria-label={item.ctaLabel}
+            >
+              {item.ctaLabel}
+              <ArrowLeft size={15} aria-hidden="true" />
+            </button>
+          )}
         </div>
       </div>
     </article>

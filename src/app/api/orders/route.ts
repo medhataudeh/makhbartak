@@ -112,14 +112,10 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: rpcErr?.message ?? "place_order_admin returned no id" }, { status: 500 });
   }
 
-  // Stage A: auto-assign nurse + lab. Failures here do not block the order
-  // — the row is already in `orders` and admin can assign manually later.
-  const { error: autoErr } = await sb.rpc("auto_assign_order", { p_order_id: orderId });
-  if (autoErr) {
-    console.warn("[api/orders] auto_assign_order failed; order created without assignment", {
-      code: autoErr.code, message: autoErr.message, details: autoErr.details, orderId,
-    });
-  }
+  // Auto-assignment intentionally disabled: orders enter the queue as
+  // pending and an admin (or a future ops automation) is responsible for
+  // assigning a nurse + lab once the order has been reviewed/confirmed.
+  // Re-enable by calling `auto_assign_order` here when policy changes.
 
   // Fetch the just-created order by its UUID via service role. fetchOrderById
   // already retries with a bare select if the embedded select errors, so a

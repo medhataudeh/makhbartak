@@ -17,6 +17,10 @@ interface MapPinPickerProps {
   lat: number;
   lng: number;
   onChange: (lat: number, lng: number) => void;
+  /** True once the user has placed/moved the pin — used to highlight the
+   *  surface as "confirmed selection" instead of just showing the default
+   *  centre point as if it were chosen. */
+  placed?: boolean;
 }
 
 function clamp(n: number, lo: number, hi: number): number {
@@ -36,7 +40,7 @@ function percentToCoords(xPct: number, yPct: number): { lat: number; lng: number
   return { lat, lng };
 }
 
-export function MapPinPicker({ lat, lng, onChange }: MapPinPickerProps) {
+export function MapPinPicker({ lat, lng, onChange, placed = false }: MapPinPickerProps) {
   const surfaceRef = useRef<HTMLDivElement>(null);
   const [dragging, setDragging] = useState(false);
   const safeLat = Number.isFinite(lat) && lat !== 0 ? lat : DAMASCUS_CENTER.lat;
@@ -79,8 +83,15 @@ export function MapPinPicker({ lat, lng, onChange }: MapPinPickerProps) {
       <div
         ref={surfaceRef}
         role="application"
-        aria-label="اختر موقع العنوان على الخريطة"
-        className="relative w-full aspect-[4/3] rounded-xl overflow-hidden bg-[#ECFEFF] border border-gray-200 select-none touch-none cursor-crosshair"
+        aria-label="اضغط لتحديد الموقع على الخريطة"
+        // Fixed height + aspect hint guarantees the surface is visible even
+        // inside narrow flex containers / bottom sheets where aspect alone
+        // would collapse. The placeholder grid + roads remain visible until
+        // a real provider drops in.
+        style={{ minHeight: 260 }}
+        className={`relative w-full h-[260px] md:h-[320px] rounded-xl overflow-hidden select-none touch-none cursor-crosshair transition-colors ${
+          placed ? "bg-[#D1FAE5] border-2 border-[#059669]" : "bg-[#ECFEFF] border-2 border-dashed border-[#0891B2]/40"
+        }`}
         onPointerDown={(e) => {
           (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
           setDragging(true);
@@ -104,19 +115,47 @@ export function MapPinPicker({ lat, lng, onChange }: MapPinPickerProps) {
         <div aria-hidden="true" className="absolute inset-x-0 top-1/3 h-[3px] bg-white/70" />
         <div aria-hidden="true" className="absolute inset-y-0 start-1/2 w-[3px] bg-white/70" />
 
-        {/* The pin — anchored at its bottom-center so the tip is the actual point. */}
+        {/* Persistent instruction banner along the top edge. After the pin
+           is placed it flips to a confirmation chip in emerald. */}
         <div
-          className="absolute pointer-events-none"
-          style={{ left: `${xPct}%`, top: `${yPct}%`, transform: "translate(-50%, -100%)" }}
+          aria-hidden="true"
+          className="absolute inset-x-2 top-2 flex items-center justify-center pointer-events-none"
         >
-          <MapPin
-            size={36}
-            className="text-[#059669] drop-shadow"
-            strokeWidth={2.5}
-            fill="#10b981"
-            aria-hidden="true"
-          />
+          <div className={`px-3 py-1.5 rounded-full text-[11px] font-semibold shadow-sm ${
+            placed ? "bg-[#059669] text-white" : "bg-white text-[#0E7490]"
+          }`}>
+            {placed ? "تم تحديد الموقع — يمكنك تعديله بالضغط مجدداً" : "اضغط لتحديد الموقع"}
+          </div>
         </div>
+
+        {/* Center crosshair — always visible so the user understands the
+           surface is interactive even before placing the pin. */}
+        {!placed && (
+          <div
+            aria-hidden="true"
+            className="absolute inset-0 flex items-center justify-center pointer-events-none"
+          >
+            <Crosshair size={28} className="text-[#0891B2]/50" />
+          </div>
+        )}
+
+        {/* The pin — anchored at its bottom-center so the tip is the actual
+           point. Only rendered after the user explicitly placed it; before
+           that the centre crosshair stands in. */}
+        {placed && (
+          <div
+            className="absolute pointer-events-none"
+            style={{ left: `${xPct}%`, top: `${yPct}%`, transform: "translate(-50%, -100%)" }}
+          >
+            <MapPin
+              size={42}
+              className="text-[#059669] drop-shadow-lg"
+              strokeWidth={2.5}
+              fill="#10b981"
+              aria-hidden="true"
+            />
+          </div>
+        )}
 
         {/* Crosshair guide for active drag. */}
         {dragging && (
@@ -128,8 +167,8 @@ export function MapPinPicker({ lat, lng, onChange }: MapPinPickerProps) {
       </div>
 
       <div className="flex items-center justify-between gap-2">
-        <p className="text-[11px] text-gray-500">
-          اضغط على الخريطة أو اسحب الدبوس لتحديد الموقع
+        <p className={`text-[11px] font-medium ${placed ? "text-[#059669]" : "text-amber-600"}`}>
+          {placed ? "موقع محدد" : "لم يتم تحديد الموقع بعد"}
         </p>
         <div className="flex gap-2">
           <button

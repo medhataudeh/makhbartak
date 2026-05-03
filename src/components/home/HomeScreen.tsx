@@ -28,13 +28,36 @@ export function HomeScreen({
 }: HomeScreenProps) {
   const packages = usePackages();
   const sliders = useSliders();
-  const handleSliderCta = (item: SliderItem) => {
-    if (item.ctaTarget === "prescription") return onPrescription();
-    if (item.ctaTarget === "custom-builder") return onCustomBuilder();
+  // Resolve a slider item to an action (or null if there's nothing to do).
+  // A null result tells HomeSlider to render the card as visually disabled
+  // — no silent navigation to an unrelated screen, so admins notice broken
+  // sliders instead of users landing somewhere unexpected.
+  const resolveSliderAction = (item: SliderItem): (() => void) | null => {
+    if (item.ctaTarget === "prescription") return onPrescription;
+    if (item.ctaTarget === "custom-builder") return onCustomBuilder;
     if (item.ctaTarget === "package" && item.ctaTargetId) {
       const pkg = packages.find((p) => p.id === item.ctaTargetId);
-      if (pkg) onSelectPackage(pkg);
+      if (pkg) return () => onSelectPackage(pkg);
+      console.warn(
+        "[home-slider] disabled: package not found for ctaTargetId",
+        { sliderId: item.id, titleAr: item.titleAr, ctaTargetId: item.ctaTargetId },
+      );
+      return null;
     }
+    if (item.ctaTarget === "external" && item.ctaTargetId) {
+      const url = item.ctaTargetId;
+      return () => {
+        if (typeof window !== "undefined") window.open(url, "_blank", "noopener,noreferrer");
+      };
+    }
+    console.warn("[home-slider] disabled: missing target", {
+      sliderId: item.id, titleAr: item.titleAr, ctaTarget: item.ctaTarget,
+    });
+    return null;
+  };
+  const handleSliderCta = (item: SliderItem) => {
+    const fn = resolveSliderAction(item);
+    if (fn) fn();
   };
 
   return (
@@ -86,7 +109,7 @@ export function HomeScreen({
 
       {/* Image-driven slider — the ONLY place packages surface on home now */}
       <div className="pt-4 md:pt-6">
-        <HomeSlider items={sliders} onCta={handleSliderCta} />
+        <HomeSlider items={sliders} onCta={handleSliderCta} resolveAction={resolveSliderAction} />
       </div>
 
       {/* Two visual action cards — Prescription + Custom builder */}

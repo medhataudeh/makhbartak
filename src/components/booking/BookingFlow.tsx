@@ -53,14 +53,14 @@ export function BookingFlow({ tests, pkg, onContinue, onBack }: BookingFlowProps
   const [addingPatient, setAddingPatient] = useState(false);
   const toast = useToast();
 
-  // Compute up to the next 3 candidate days starting today, then keep only
-  // those with at least one available shift. This is the source of truth
-  // for both the picker UI and the submit guard.
-  const candidateDays: { date: string; shifts: ReturnType<typeof getShiftConfigs> }[] = (() => {
+  // Always render exactly 3 day cards (today + next 2). Days that have zero
+  // available shifts stay visible but the cell is disabled so the customer
+  // can see what's full and pick something else. Logic-side guards still
+  // refuse a disabled date in submit().
+  const candidateDays: { date: string; shifts: ReturnType<typeof getShiftConfigs>; available: boolean }[] = (() => {
     const today = new Date(); today.setHours(0, 0, 0, 0);
-    const window = Math.min(2, Math.max(0, settings.bookingWindowDays));
-    const out: { date: string; shifts: ReturnType<typeof getShiftConfigs> }[] = [];
-    for (let i = 0; i <= window; i++) {
+    const out: typeof candidateDays = [];
+    for (let i = 0; i < 3; i++) {
       const d = new Date(today);
       d.setDate(today.getDate() + i);
       const date = ymd(d);
@@ -78,7 +78,7 @@ export function BookingFlow({ tests, pkg, onContinue, onBack }: BookingFlowProps
         maxOrdersPerShift: settings.maxOrdersPerShift,
         bookingWindowDays: settings.bookingWindowDays,
       });
-      if (shifts.some((s) => s.available)) out.push({ date, shifts });
+      out.push({ date, shifts, available: shifts.some((s) => s.available) });
     }
     return out;
   })();
@@ -143,9 +143,9 @@ export function BookingFlow({ tests, pkg, onContinue, onBack }: BookingFlowProps
               ? `${WEEKDAYS_AR[new Date(visitDate + "T00:00:00").getDay()]} · ${formatDate(visitDate)} — ${getShiftLabel(shift)}`
               : null
           }
-          placeholder={candidateDays.length === 0 ? "لا توجد مواعيد متاحة حالياً" : "اختر اليوم والفترة"}
+          placeholder="اختر اليوم والفترة"
           required
-          onClick={() => { if (candidateDays.length > 0) setWhenSheet(true); }}
+          onClick={() => setWhenSheet(true)}
         />
 
         {/* Address */}
@@ -312,6 +312,7 @@ function AddressInlineForm({ onCancel, onSubmit }: { onCancel: () => void; onSub
         <MapPinPicker
           lat={lat}
           lng={lng}
+          placed={pinPlaced}
           onChange={(nLat, nLng) => {
             setLat(nLat);
             setLng(nLng);
@@ -433,17 +434,18 @@ function SectionRow({ icon, title, value, placeholder, required, onClick }: {
 }
 
 // ─── Combined day + slot picker (single step) ───────────────────────────────
-// Lists only days that have at least one available shift (`candidateDays`
-// upstream filters them). Within each day, only the shifts whose
-// `available` flag is true render. Picking either commits both selections
-// and closes the sheet.
+// Always renders all 3 candidate day cards. Days with zero available shifts
+// render greyed-out so the customer sees them and understands they're full.
+// Inside an available day, every shift renders — disabled shifts show their
+// reason; tapping them is a no-op. The submit() guard also re-checks
+// `available` so a bypassed UI cannot push an invalid date through.
 function WhenPicker({
   days,
   selectedDate,
   selectedShift,
   onPick,
 }: {
-  days: { date: string; shifts: { shift: Shift; labelAr: string; startHour: number; endHour: number; available: boolean; unavailableReason?: string }[] }[];
+  days: { date: string; shifts: { shift: Shift; labelAr: string; startHour: number; endHour: number; available: boolean; unavailableReason?: string }[]; available: boolean }[];
   selectedDate: string;
   selectedShift: Shift | null;
   onPick: (date: string, shift: Shift) => void;
@@ -457,57 +459,71 @@ function WhenPicker({
     if (diff === 2) return "بعد غد";
     return null;
   };
-  if (days.length === 0) {
-    return (
-      <div className="bg-amber-50 border border-amber-100 rounded-xl px-4 py-4">
-        <p className="text-sm font-semibold text-amber-700">لا توجد مواعيد متاحة حالياً.</p>
-        <p className="text-[11px] text-amber-700/80 mt-1 leading-relaxed">سيتم إعادة فتح الحجز فور توفّر مواعيد ضمن نطاق الحجز.</p>
-      </div>
-    );
-  }
   return (
     <div className="space-y-4">
       <p className="text-[12px] text-[#164E63] font-medium">اختر يوماً وفترة من الأيام المتاحة.</p>
       {days.map((day) => {
         const tag = offsetTag(day.date);
         const dObj = new Date(day.date + "T00:00:00");
+        const dayDisabled = !day.available;
         return (
-          <div key={day.date} className="rounded-2xl border border-gray-100 bg-white p-3">
+          <div
+            key={day.date}
+            aria-disabled={dayDisabled}
+            className={`rounded-2xl border p-3 ${
+              dayDisabled ? "border-gray-100 bg-gray-50/60 opacity-70" : "border-gray-100 bg-white"
+            }`}
+          >
             <div className="flex items-center justify-between mb-2 px-1">
               <div className="flex items-center gap-2">
-                <div className="w-9 h-9 rounded-xl bg-[#ECFEFF] flex items-center justify-center">
-                  <span className="text-sm font-bold text-[#0891B2] lat" dir="ltr">{dObj.getDate()}</span>
+                <div className={`w-9 h-9 rounded-xl flex items-center justify-center ${dayDisabled ? "bg-gray-100" : "bg-[#ECFEFF]"}`}>
+                  <span className={`text-sm font-bold lat ${dayDisabled ? "text-gray-400" : "text-[#0891B2]"}`} dir="ltr">{dObj.getDate()}</span>
                 </div>
                 <div>
-                  <p className="text-sm font-bold text-[#164E63]">{WEEKDAYS_AR[dObj.getDay()]}</p>
+                  <p className={`text-sm font-bold ${dayDisabled ? "text-gray-400" : "text-[#164E63]"}`}>{WEEKDAYS_AR[dObj.getDay()]}</p>
                   <p className="text-[11px] text-gray-400">{formatDate(day.date)}</p>
                 </div>
               </div>
               {tag && (
-                <span className="text-[10px] font-semibold text-[#0891B2] bg-[#ECFEFF] rounded-full px-2 py-1">
+                <span className={`text-[10px] font-semibold rounded-full px-2 py-1 ${
+                  dayDisabled ? "text-gray-400 bg-gray-100" : "text-[#0891B2] bg-[#ECFEFF]"
+                }`}>
                   {tag}
                 </span>
               )}
             </div>
+            {dayDisabled && (
+              <p className="text-[11px] text-amber-600 px-1 mb-2">لا توجد مواعيد متاحة في هذا اليوم.</p>
+            )}
             <div className="grid grid-cols-2 gap-2">
-              {day.shifts.filter((s) => s.available).map((s) => {
+              {day.shifts.map((s) => {
                 const isSelected = selectedDate === day.date && selectedShift === s.shift;
+                const slotDisabled = !s.available;
                 return (
                   <motion.button
                     key={s.shift}
-                    whileTap={{ scale: 0.97 }}
-                    onClick={() => onPick(day.date, s.shift)}
+                    whileTap={{ scale: slotDisabled ? 1 : 0.97 }}
+                    onClick={() => { if (!slotDisabled) onPick(day.date, s.shift); }}
+                    disabled={slotDisabled}
                     aria-pressed={isSelected}
-                    className={`flex flex-col items-start gap-1 p-3 rounded-xl border-2 cursor-pointer transition-all ${
+                    aria-disabled={slotDisabled}
+                    className={`flex flex-col items-start gap-1 p-3 rounded-xl border-2 transition-all text-start ${
                       isSelected
-                        ? "border-[#0891B2] bg-[#ECFEFF]"
-                        : "border-gray-200 bg-white active:bg-gray-50"
+                        ? "border-[#0891B2] bg-[#ECFEFF] cursor-pointer"
+                        : slotDisabled
+                          ? "border-gray-100 bg-gray-50/80 opacity-60 cursor-not-allowed"
+                          : "border-gray-200 bg-white active:bg-gray-50 cursor-pointer"
                     }`}
                   >
-                    <span className={`text-sm font-bold ${isSelected ? "text-[#0891B2]" : "text-[#164E63]"}`}>{s.labelAr}</span>
+                    <span className={`text-sm font-bold ${isSelected ? "text-[#0891B2]" : slotDisabled ? "text-gray-400" : "text-[#164E63]"}`}>
+                      {s.labelAr}
+                    </span>
                     <span className="text-[11px] text-gray-500 lat" dir="ltr">
                       {String(s.startHour).padStart(2, "0")}:00 – {String(s.endHour).padStart(2, "0")}:00
                     </span>
+                    {slotDisabled && s.unavailableReason && (
+                      <span className="text-[10px] text-amber-600 leading-tight">{s.unavailableReason}</span>
+                    )}
                   </motion.button>
                 );
               })}

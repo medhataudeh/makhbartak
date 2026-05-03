@@ -26,8 +26,13 @@ const ORDER_SELECT = `
   items:order_items ( id, lab_test_id, name_ar_snapshot, name_en_snapshot, price_snapshot, display_order ),
   events:order_status_history ( id, status, actor_role, actor_name, note, created_at ),
   result_files:lab_result_files ( id, storage_path, file_name, mime_type, size_bytes, status, uploaded_at, archived_at ),
-  issues:lab_issues ( id, lab_id, type, description, customer_message_ar, status, created_by_role, created_by_name, created_at, resolved_at, resolved_by_name, resolution_note )
+  issues:lab_issues ( id, lab_id, type, description, customer_message_ar, status, created_by_role, created_at, resolved_at, resolution_note )
 `;
+// `created_by_name` / `resolved_by_name` were added in migration 017 with
+// `create table if not exists`, so on databases that were already created by
+// migration 002 those columns don't exist and PostgREST 400s the whole embed.
+// We never reach for them in mapRowToOrder (it falls back to "—"), so the
+// safest fix is to drop them from the projection.
 
 // Minimal fallback select — used when the full embedded select errors (e.g.
 // missing optional table on staging). Returns enough data to render the
@@ -43,6 +48,47 @@ const ORDER_SELECT_BARE = `
   patient_id, address_id
 `;
 
+// Try the full embedded select; on failure (typically a missing optional
+// column on staging), log the actual Postgres error and fall back to the bare
+// row list, hydrating each row through fetchOrderById which has its own
+// per-row fallback. This guarantees admin/customer/nurse list endpoints don't
+// silently return empty just because one embed column is wrong.
+async function listOrdersHydrated(
+  sb: SupabaseClient,
+  filter: { customerId?: string; nurseId?: string },
+  scope: string,
+): Promise<Order[] | null> {
+  const fullQ = sb.from("orders").select(ORDER_SELECT).is("deleted_at", null);
+  const full = await (
+    filter.customerId ? fullQ.eq("customer_id", filter.customerId)
+    : filter.nurseId  ? fullQ.eq("nurse_id", filter.nurseId)
+    : fullQ
+  ).order("created_at", { ascending: false });
+  if (!full.error && full.data) {
+    return (full.data as unknown as RawOrderRow[]).map(mapRowToOrder);
+  }
+  console.error(`[supabase] ${scope} embed failed; falling back to bare list`, {
+    code: full.error?.code, message: full.error?.message,
+    details: full.error?.details, hint: full.error?.hint,
+  });
+  const bareQ = sb.from("orders").select(ORDER_SELECT_BARE).is("deleted_at", null);
+  const bare = await (
+    filter.customerId ? bareQ.eq("customer_id", filter.customerId)
+    : filter.nurseId  ? bareQ.eq("nurse_id", filter.nurseId)
+    : bareQ
+  ).order("created_at", { ascending: false });
+  if (bare.error || !bare.data) {
+    console.error(`[supabase] ${scope} bare list also failed`, {
+      code: bare.error?.code, message: bare.error?.message, details: bare.error?.details,
+    });
+    return null;
+  }
+  const enriched = await Promise.all(
+    (bare.data as unknown as { id: string }[]).map((row) => fetchOrderById(sb, row.id)),
+  );
+  return enriched.filter((o): o is Order => o != null);
+}
+
 export async function fetchOrdersForCustomer(
   sb: SupabaseClient,
   customerId: string
@@ -51,33 +97,12 @@ export async function fetchOrdersForCustomer(
     console.warn("[supabase] fetchOrdersForCustomer skipped: invalid uuid", customerId);
     return null;
   }
-  const { data, error } = await sb
-    .from("orders")
-    .select(ORDER_SELECT)
-    .eq("customer_id", customerId)
-    .is("deleted_at", null)
-    .order("created_at", { ascending: false });
-  if (error) {
-    console.error("[supabase] fetchOrdersForCustomer failed", { customerId, error });
-    return null;
-  }
-  if (!data) return null;
-  return (data as unknown as RawOrderRow[]).map(mapRowToOrder);
+  return listOrdersHydrated(sb, { customerId }, `fetchOrdersForCustomer customer=${customerId}`);
 }
 
 // Admin variant — no customer filter. Caller is responsible for authorization.
 export async function fetchOrdersForAdmin(sb: SupabaseClient): Promise<Order[] | null> {
-  const { data, error } = await sb
-    .from("orders")
-    .select(ORDER_SELECT)
-    .is("deleted_at", null)
-    .order("created_at", { ascending: false });
-  if (error) {
-    console.error("[supabase] fetchOrdersForAdmin failed", error);
-    return null;
-  }
-  if (!data) return null;
-  return (data as unknown as RawOrderRow[]).map(mapRowToOrder);
+  return listOrdersHydrated(sb, {}, "fetchOrdersForAdmin");
 }
 
 // Nurse variant — only orders assigned to the given nurse_id.
@@ -89,18 +114,7 @@ export async function fetchOrdersForNurse(
     console.warn("[supabase] fetchOrdersForNurse skipped: invalid uuid", nurseId);
     return null;
   }
-  const { data, error } = await sb
-    .from("orders")
-    .select(ORDER_SELECT)
-    .eq("nurse_id", nurseId)
-    .is("deleted_at", null)
-    .order("created_at", { ascending: false });
-  if (error) {
-    console.error("[supabase] fetchOrdersForNurse failed", { nurseId, error });
-    return null;
-  }
-  if (!data) return null;
-  return (data as unknown as RawOrderRow[]).map(mapRowToOrder);
+  return listOrdersHydrated(sb, { nurseId }, `fetchOrdersForNurse nurse=${nurseId}`);
 }
 
 // Mints a 1-hour signed URL for every active OrderResultFile whose fileUrl
@@ -322,7 +336,7 @@ function mapRowToOrder(r: RawOrderRow): Order {
         description: i.description,
         customerMessageAr: i.customer_message_ar ?? undefined,
         status: i.status as import("@/lib/types").LabIssue["status"],
-        createdBy: i.created_by_name ?? "—",
+        createdBy: "—",
         createdByRole: (i.created_by_role === "admin" ? "admin" : "lab"),
         createdAt: i.created_at,
         resolvedAt: i.resolved_at ?? undefined,
@@ -371,9 +385,9 @@ interface RawResultFile {
 interface RawLabIssue {
   id: string; lab_id: string; type: string; description: string;
   customer_message_ar: string | null; status: string;
-  created_by_role: string | null; created_by_name: string | null;
+  created_by_role: string | null;
   created_at: string;
-  resolved_at: string | null; resolved_by_name: string | null;
+  resolved_at: string | null;
   resolution_note: string | null;
 }
 interface RawOrderRow {
