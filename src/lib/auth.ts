@@ -38,6 +38,8 @@ async function fetchEnrichedSession(): Promise<AuthSession | null> {
         r.userId,
       customerId: r.customerId ?? undefined,
       nurseId: r.nurseId ?? undefined,
+      nurseCity: r.nurseCity ?? undefined,
+      nursePhotoUrl: r.nursePhotoUrl ?? undefined,
       labUserId: r.labUserId ?? undefined,
       labId: r.labId ?? undefined,
       labRole: r.labRole ?? undefined,
@@ -216,13 +218,25 @@ import {
   apiCreateUser, apiPatchUser, apiDeleteUser, apiResetUserPassword,
 } from "./admin-users-api";
 
-// Phase 8 — nurse seed metadata (photo, city) is still in MOCK_NURSES until
-// nurse rows in Supabase carry photo_url. Real auth still gates routing; this
-// helper just enriches the session view.
+// Build a Nurse from the live session. The session is enriched server-side
+// by /api/me from the real `nurses` row + `profiles` row, so admin-created
+// nurses are first-class citizens here. Falls back to MOCK_NURSES only when
+// the session predates the route enrichment (legacy callers without
+// nurseId on the JWT). Never returns null when the session role is nurse —
+// the gate is route-auth's job, not this helper's.
 export function nurseFromSession(session: AuthSession | null): Nurse | null {
   if (!session || session.role !== "nurse") return null;
   const id = session.nurseId ?? session.linkedEntityId;
-  return MOCK_NURSES.find((n) => n.id === id) ?? null;
+  if (!id) return null;
+  const seed = MOCK_NURSES.find((n) => n.id === id);
+  return {
+    id,
+    name: session.name || seed?.name || "—",
+    phone: seed?.phone ?? "",
+    city: session.nurseCity ?? seed?.city ?? "",
+    photoUrl: session.nursePhotoUrl ?? seed?.photoUrl,
+    isActive: true,
+  };
 }
 
 export function labUserFromSession(session: AuthSession | null): LabUser | null {

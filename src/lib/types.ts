@@ -721,6 +721,8 @@ export interface AuthSession {
                            // lab_users.id / profiles.id (admin)
   customerId?: string;
   nurseId?: string;
+  nurseCity?: string;
+  nursePhotoUrl?: string;
   labUserId?: string;
   labId?: string;
   labRole?: "lab_admin" | "lab_accounting" | "lab_uploader";

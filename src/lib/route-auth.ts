@@ -45,48 +45,83 @@ export async function requireAuthedUser(): Promise<RouteAuthResult> {
     return { ok: false, status: 401, error: "session required" };
   }
   const userId = userRes.user.id;
+  const email = userRes.user.email ?? null;
 
   // Resolve role + admin sub-role via service-role to bypass RLS during
   // identity resolution. RLS still gates anything the route does after this.
   const admin = getSupabaseAdmin();
   const { data: profile, error: profErr } = await admin
     .from("profiles")
-    .select("id, role, admin_role, full_name")
+    .select("id, role, admin_role, full_name, is_active, photo_url")
     .eq("id", userId)
     .maybeSingle();
-  if (profErr || !profile) {
-    return { ok: false, status: 403, error: "no profile for current user" };
+  if (profErr) {
+    console.error("[route-auth] profile lookup failed", { userId, email, code: profErr.code, message: profErr.message });
+    return { ok: false, status: 500, error: "تعذر تحميل بيانات الحساب، حاول مرة أخرى" };
+  }
+  if (!profile) {
+    console.error("[route-auth] no profile row for authenticated user", { userId, email });
+    return {
+      ok: false,
+      status: 403,
+      error: "الحساب موجود في نظام المصادقة لكن لا يوجد له ملف. تواصل مع الإدارة لاستكمال إعداد حسابك.",
+    };
+  }
+  if (profile.is_active === false) {
+    console.warn("[route-auth] account is inactive", { userId, email, role: profile.role });
+    return { ok: false, status: 403, error: "الحساب موقوف. تواصل مع الإدارة." };
   }
 
   const session: RouteSession = {
     userId,
-    email: userRes.user.email ?? null,
+    email,
     fullName: (profile.full_name as string | null) ?? null,
     role: profile.role as Role,
+    isActive: true,
   };
 
   switch (session.role) {
     case "customer": {
       const { data } = await admin
-        .from("customers").select("id").eq("profile_id", userId).maybeSingle();
-      session.customerId = data?.id ?? undefined;
+        .from("customers").select("id, deleted_at").eq("profile_id", userId).maybeSingle();
+      if (!data || data.deleted_at) {
+        console.error("[route-auth] no customers row for customer profile", { userId, email });
+        return { ok: false, status: 403, error: "لم يتم استكمال إعداد حساب العميل. تواصل مع الإدارة." };
+      }
+      session.customerId = data.id;
       break;
     }
     case "nurse": {
       const { data } = await admin
-        .from("nurses").select("id").eq("profile_id", userId).maybeSingle();
-      session.nurseId = data?.id ?? undefined;
+        .from("nurses").select("id, is_active, city, deleted_at").eq("profile_id", userId).maybeSingle();
+      if (!data || data.deleted_at) {
+        console.error("[route-auth] no nurses row for nurse profile", { userId, email });
+        return { ok: false, status: 403, error: "لم يتم استكمال إعداد حساب الممرض. تواصل مع الإدارة." };
+      }
+      if (data.is_active === false) {
+        console.warn("[route-auth] nurse row inactive", { userId, email, nurseId: data.id });
+        return { ok: false, status: 403, error: "حساب الممرض موقوف. تواصل مع الإدارة." };
+      }
+      session.nurseId = data.id;
+      session.nurseCity = (data.city as string | null) ?? undefined;
+      session.nursePhotoUrl = (profile.photo_url as string | null) ?? undefined;
       break;
     }
     case "lab": {
       const { data } = await admin
-        .from("lab_users").select("id, lab_id, role")
+        .from("lab_users").select("id, lab_id, role, is_active, deleted_at")
         .eq("profile_id", userId).maybeSingle();
-      if (data) {
-        session.labUserId = data.id;
-        session.labId = data.lab_id;
-        session.labRole = data.role as LabSubRole;
+      if (!data || data.deleted_at) {
+        console.error("[route-auth] no lab_users row for lab profile", { userId, email });
+        return { ok: false, status: 403, error: "لم يتم استكمال إعداد حساب المخبر. تواصل مع الإدارة." };
       }
+      if (data.is_active === false) {
+        console.warn("[route-auth] lab_users row inactive", { userId, email });
+        return { ok: false, status: 403, error: "حساب المخبر موقوف. تواصل مع الإدارة." };
+      }
+      session.labUserId = data.id;
+      session.labId = data.lab_id;
+      session.labRole = data.role as LabSubRole;
       break;
     }
     case "admin": {

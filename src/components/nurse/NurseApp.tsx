@@ -50,9 +50,22 @@ export function NurseApp() {
 }
 
 function NurseAppInner({ nurseId, onLogout }: { nurseId: string; onLogout: () => void }) {
+  const session = useSession();
   const editableNurse = useEditableNurse(nurseId);
-  const seedNurse = MOCK_NURSES.find((n) => n.id === nurseId) ?? MOCK_NURSES[0];
-  const nurse = editableNurse ?? seedNurse;
+  // Seed metadata is only relevant when the active nurse id matches a
+  // seeded mock row. For admin-created nurses (DB UUIDs that don't appear
+  // in MOCK_NURSES), we synthesize a minimal Nurse from the session so the
+  // app never silently falls back to MOCK_NURSES[0]'s identity.
+  const seedNurse = MOCK_NURSES.find((n) => n.id === nurseId);
+  const sessionNurse: Nurse = {
+    id: nurseId,
+    name: session?.name || seedNurse?.name || "—",
+    phone: seedNurse?.phone ?? "",
+    city: session?.nurseCity ?? seedNurse?.city ?? "",
+    photoUrl: session?.nursePhotoUrl ?? seedNurse?.photoUrl,
+    isActive: true,
+  };
+  const nurse = editableNurse ?? sessionNurse;
   const game = MOCK_GAMIFICATION[nurse.id];
   const routes = MOCK_NURSE_ROUTES.filter((r) => r.nurseId === nurse.id);
   const today = routes[0];
