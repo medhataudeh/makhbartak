@@ -9,14 +9,14 @@ import {
   XCircle, Wrench, Droplets,
 } from "lucide-react";
 import {
-  MOCK_NURSES, MOCK_NURSE_ROUTES, MOCK_NURSE_NOTIFICATIONS, MOCK_GAMIFICATION,
+  MOCK_NURSES, MOCK_NURSE_NOTIFICATIONS, MOCK_GAMIFICATION,
   buildPrepChecklist, FAILED_COLLECTION_REASONS, NURSE_BADGES, NURSE_LEVELS,
 } from "@/lib/mock-data";
 import type { Nurse, NurseRouteStop, NurseGamification, Notification, Order } from "@/lib/types";
 import { setOrderStatus, verifyPatient, useOrders, hydrateOrdersForNurse, hydrateNotificationsForNurse } from "@/lib/store";
 import { useEditableNurse, updateNurseProfile } from "@/lib/nurse-profile";
 import { useSystemSettings } from "@/lib/system-settings";
-import { isOrderActionable, instructionsForOrder, isStructuredInstructions } from "@/lib/order-utils";
+import { instructionsForOrder, isStructuredInstructions } from "@/lib/order-utils";
 import { useToast } from "@/components/ui/Toast";
 import { useLibraryTools, useChecklistDefaults } from "@/lib/tool-library";
 import { aggregateNurseTools } from "@/lib/tool-aggregation";
@@ -93,8 +93,13 @@ function NurseAppInner({ nurseId, onLogout }: { nurseId: string; onLogout: () =>
   // the page. Default to a brand-new starter gamification record so the UI
   // renders normally for first-time nurses.
   const game = MOCK_GAMIFICATION[nurse.id] ?? createStarterGame(nurse.id);
-  const routes = MOCK_NURSE_ROUTES.filter((r) => r.nurseId === nurse.id);
-  const today = routes[0];
+  // Today (local date) — used for the prep-checklist key and the schedule
+  // header. Computed from local components so it matches the date strings
+  // we send to /api/orders and the visit_date column.
+  const todayStr = (() => {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  })();
   const settings = useSystemSettings();
 
   const [tab, setTab] = useState<NurseTab>("home");
@@ -103,17 +108,17 @@ function NurseAppInner({ nurseId, onLogout }: { nurseId: string; onLogout: () =>
   // checklist rows are derived from aggregateNurseTools(), so adding/removing
   // orders, tweaking buffer pct, or editing a test's nurseTools updates the
   // list automatically.
-  const dateKey = today?.date ?? "_";
+  const dateKey = todayStr;
   const prep = usePrep(nurseId, dateKey);
   const checkedIds = useMemo(() => new Set(prep.checkedIds), [prep.checkedIds]);
   const started = prep.started;
 
   // Stage C: pull canonical prep state from Supabase on day change.
   useEffect(() => {
-    if (USE_SUPABASE && isUuid(nurseId) && today?.date) {
-      void hydratePrep(nurseId, today.date);
+    if (USE_SUPABASE && isUuid(nurseId)) {
+      void hydratePrep(nurseId, todayStr);
     }
-  }, [nurseId, today?.date]);
+  }, [nurseId, todayStr]);
 
   const persistChecklist = (next: Set<string>) => {
     void setPrep(nurseId, dateKey, { checkedIds: Array.from(next) });
@@ -137,44 +142,54 @@ function NurseAppInner({ nurseId, onLogout }: { nurseId: string; onLogout: () =>
     void hydrateNotificationsForNurse(nurse.id);
   }, [nurse.id]);
 
-  // Visit detail flow — hydrate `stops` against the live order store so that
-  // `patientVerification` and the latest order status update reflect here.
+  // Visit detail flow — every stop comes from the live order store now.
+  // Old code derived stops from MOCK_NURSE_ROUTES (keyed by SEED_NURSE_*
+  // slugs) which silently produced an empty schedule for any admin-created
+  // nurse. The DB is the source of truth: we filter `liveOrders` by
+  // nurse.id and bucket by status. No payment-method gate — admin assigned
+  // these orders intentionally; the nurse needs to see them regardless of
+  // cash/online status. Cancelled / lab_issue stay visible as "failed" so
+  // the nurse can see context, not so they can act on them.
   const liveOrders = useOrders();
   const [activeStopId, setActiveStopId] = useState<string | null>(null);
-  const [stops, setStops] = useState<NurseRouteStop[]>(today?.stops ?? []);
 
-  // Phase 2: when Supabase persistence is on, derive stops from real
-  // Supabase orders so every stop.orderId is a real UUID (not a mock slug
-  // like "ord-3"). Mock-only mode (flag off) keeps using the seed route.
-  // Status mapping for the *stop* (independent of the SQL order status):
-  //   sample_collected / sent_to_lab / lab_processing / result_ready /
-  //   completed   → "completed"
-  //   failed_to_collect / cancelled / lab_issue   → "failed"
-  //   anything else                               → "pending"
-  const supabaseStops: NurseRouteStop[] = USE_SUPABASE
-    ? liveOrders
-        .filter((o) => isUuid(o.id))
-        .filter((o) => isOrderActionable(o, settings) || ["sample_collected", "sent_to_lab", "lab_processing", "result_ready", "completed", "failed_to_collect", "cancelled", "lab_issue"].includes(o.status))
-        .map<NurseRouteStop>((o, idx) => ({
-          orderId: o.id,
-          order: o,
-          sequence: idx + 1,
-          status: ["sample_collected", "sent_to_lab", "lab_processing", "result_ready", "completed"].includes(o.status)
-            ? "completed"
-            : ["failed_to_collect", "cancelled", "lab_issue"].includes(o.status)
-              ? "failed"
-              : "pending",
-        }))
-    : [];
+  const myOrders = liveOrders.filter((o) => isUuid(o.id) && o.nurseId === nurse.id);
 
-  const stopsBase = USE_SUPABASE && supabaseStops.length > 0 ? supabaseStops : stops;
+  // Stop bucket derived from the order status (TS shape after mapRowToOrder).
+  const bucketFor = (status: Order["status"]): NurseRouteStop["status"] => {
+    if (["sample_collected", "sent_to_lab", "lab_processing", "result_ready", "completed"].includes(status)) return "completed";
+    if (["failed_to_collect", "cancelled", "lab_issue"].includes(status)) return "failed";
+    return "pending";
+  };
 
-  const stopsHydrated = stopsBase
-    .map((s) => {
-      const live = liveOrders.find((o) => o.id === s.orderId);
-      return live ? { ...s, order: live } : s;
-    })
-    .filter((s) => isOrderActionable(s.order, settings) || s.status !== "pending");
+  // Group by visit_date. Today first, then chronological.
+  const groupedByDate = (() => {
+    const map = new Map<string, Order[]>();
+    for (const o of myOrders) {
+      const arr = map.get(o.visitDate) ?? [];
+      arr.push(o);
+      map.set(o.visitDate, arr);
+    }
+    const dates = Array.from(map.keys()).sort();
+    // Move today to the front if present so the schedule banner reads
+    // "اليوم" first.
+    const orderedDates = [todayStr, ...dates.filter((d) => d !== todayStr && d >= todayStr)];
+    return orderedDates
+      .filter((d) => map.has(d) || d === todayStr)
+      .map((date) => {
+        const orders = (map.get(date) ?? []).slice().sort((a, b) => a.shift.localeCompare(b.shift));
+        return {
+          date,
+          stops: orders.map<NurseRouteStop>((o, idx) => ({
+            orderId: o.id, order: o, sequence: idx + 1, status: bucketFor(o.status),
+          })),
+        };
+      });
+  })();
+
+  // Today's stops drive the home tab.
+  const todayGroup = groupedByDate.find((g) => g.date === todayStr);
+  const stopsHydrated: NurseRouteStop[] = todayGroup?.stops ?? [];
   const activeStop = activeStopId ? stopsHydrated.find((s) => s.orderId === activeStopId) ?? null : null;
   const setActiveStop = (s: NurseRouteStop | null) => setActiveStopId(s ? s.orderId : null);
 
@@ -185,15 +200,33 @@ function NurseAppInner({ nurseId, onLogout }: { nurseId: string; onLogout: () =>
 
   const ref = { actor: "nurse" as const, actorName: nurse.name };
 
-  const updateStopStatus = (id: string, status: NurseRouteStop["status"]) => {
-    setStops((prev) => prev.map((s) => s.orderId === id ? { ...s, status } : s));
+  // The schedule tab consumes a 3-day window starting today.
+  const scheduleRoutes = (() => {
+    const out: { nurseId: string; date: string; stops: NurseRouteStop[] }[] = [];
+    for (let i = 0; i < 3; i++) {
+      const d = new Date();
+      d.setDate(d.getDate() + i);
+      const date = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+      const grp = groupedByDate.find((g) => g.date === date);
+      out.push({ nurseId: nurse.id, date, stops: grp?.stops ?? [] });
+    }
+    return out;
+  })();
+
+  void settings; // settings still drives gamification + future capacity gates.
+
+  const updateStopStatus = () => {
+    // No-op on stop bucket: it's derived from order.status now. The store
+    // reflects the API result via `liveOrders`, and `groupedByDate`
+    // re-buckets automatically. Closing the visit detail is the only
+    // remaining UX concern here.
     setActiveStop(null);
   };
 
   const completeStop = async (orderId: string) => {
     const r = await setOrderStatus(orderId, "sample_collected", ref);
     if (!r.ok) return r;
-    updateStopStatus(orderId, "completed");
+    updateStopStatus();
     return r;
   };
 
@@ -201,7 +234,7 @@ function NurseAppInner({ nurseId, onLogout }: { nurseId: string; onLogout: () =>
     const reason = FAILED_COLLECTION_REASONS.find((rr) => rr.value === reasonValue)?.labelAr ?? reasonValue;
     const r = await setOrderStatus(orderId, "failed_to_collect", ref, reason);
     if (!r.ok) return r;
-    updateStopStatus(orderId, "failed");
+    updateStopStatus();
     return r;
   };
 
@@ -243,7 +276,7 @@ function NurseAppInner({ nurseId, onLogout }: { nurseId: string; onLogout: () =>
             nurse={nurse}
             game={game}
             unread={unread}
-            today={today?.date ?? new Date().toISOString().split("T")[0]}
+            today={todayStr}
             checklist={checklist}
             started={started}
             onToggleCheck={onToggleCheck}
@@ -260,7 +293,7 @@ function NurseAppInner({ nurseId, onLogout }: { nurseId: string; onLogout: () =>
 
         {tab === "schedule" && (
           <NurseSchedule
-            routes={routes}
+            routes={scheduleRoutes}
             stopsToday={stopsHydrated}
             onOpenStop={(s) => setActiveStop(s)}
           />
@@ -728,16 +761,25 @@ function MiniStat({ Icon, label, value }: { Icon: React.FC<{ size?: number; clas
 // ────────────────────────────── Schedule ────────────────────────────────────
 
 function NurseSchedule({ routes, stopsToday, onOpenStop }: {
-  routes: ReturnType<typeof MOCK_NURSE_ROUTES.filter>;
+  routes: { nurseId: string; date: string; stops: NurseRouteStop[] }[];
   stopsToday: NurseRouteStop[];
   onOpenStop: (s: NurseRouteStop) => void;
 }) {
+  const totalAcrossDays = routes.reduce((acc, r) => acc + r.stops.length, 0) + (stopsToday.length > 0 && !routes.length ? stopsToday.length : 0);
   return (
     <div className="p-4 space-y-5">
       <header>
         <h1 className="text-lg font-bold text-[#164E63]">جدول الزيارات</h1>
         <p className="text-xs text-gray-500 mt-0.5">المسار محدّد من الإدارة — التزم بالترتيب</p>
       </header>
+
+      {totalAcrossDays === 0 && (
+        <div className="bg-white rounded-2xl border border-gray-100 p-6 text-center">
+          <ListChecks size={28} className="text-gray-300 mx-auto mb-2" aria-hidden="true" />
+          <p className="text-sm font-semibold text-[#164E63]">لا توجد زيارات مخصصة لك حالياً</p>
+          <p className="text-[12px] text-gray-500 mt-1 leading-relaxed">سيظهر هنا أي طلب يتم إسناده إليك من الإدارة.</p>
+        </div>
+      )}
 
       {routes.map((route, i) => {
         const isToday = i === 0;
@@ -1165,8 +1207,10 @@ function NurseVisitDetail({
           </ul>
         </section>
 
-        {/* Patient verification */}
-        <section className="bg-white rounded-2xl border border-gray-100 p-4">
+        {/* Patient verification — disabled until the nurse marks "وصلت".
+           Pre-arrival, the section renders an explanatory placeholder so
+           the nurse can't open the verification sheet by accident. */}
+        <section className={`bg-white rounded-2xl border border-gray-100 p-4 ${status !== "arrived" && !verified ? "opacity-70" : ""}`}>
           <div className="flex items-center justify-between mb-2">
             <p className="text-[11px] text-gray-400 uppercase tracking-wide">التحقق من المريض</p>
             {verified ? (
@@ -1187,11 +1231,15 @@ function NurseVisitDetail({
                 تعديل
               </button>
             </div>
-          ) : (
+          ) : status === "arrived" ? (
             <Button variant="outline" size="sm" onClick={() => setVerifyOpen(true)}>
               <BadgeCheck size={14} aria-hidden="true" />
               تحقق من الهوية
             </Button>
+          ) : (
+            <p className="text-[11px] text-gray-500 leading-relaxed">
+              يصبح التحقق من بيانات المريض متاحاً بعد تأكيد &quot;وصلت&quot;.
+            </p>
           )}
         </section>
 

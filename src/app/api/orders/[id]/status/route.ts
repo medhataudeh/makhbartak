@@ -41,13 +41,26 @@ export async function POST(
 
   const { data: row, error: rowErr } = await sb
     .from("orders").select("id, nurse_id").eq("id", id).maybeSingle();
-  if (rowErr) return NextResponse.json({ error: rowErr.message }, { status: 500 });
-  if (!row) return NextResponse.json({ error: "order not found" }, { status: 404 });
+  if (rowErr) {
+    console.error("[api/orders/status] order lookup failed", { id, code: rowErr.code, message: rowErr.message });
+    return NextResponse.json({ error: "تعذر قراءة الطلب من قاعدة البيانات" }, { status: 500 });
+  }
+  if (!row) return NextResponse.json({ error: "الطلب غير موجود" }, { status: 404 });
 
-  // Nurse can only update orders they're assigned to.
+  // Nurse can only update orders they're assigned to. The session.nurseId
+  // is the real nurses.id (route-auth fetches it via service-role from
+  // nurses.profile_id = auth.uid()). We never compare against profile_id /
+  // auth user id here.
   if (auth.session.role === "nurse") {
-    if (!auth.session.nurseId || row.nurse_id !== auth.session.nurseId) {
-      return NextResponse.json({ error: "this order is not assigned to you" }, { status: 403 });
+    if (!auth.session.nurseId) {
+      console.error("[api/orders/status] nurse session missing nurseId", { userId: auth.session.userId });
+      return NextResponse.json({ error: "حساب الممرض غير مكتمل. تواصل مع الإدارة." }, { status: 403 });
+    }
+    if (row.nurse_id !== auth.session.nurseId) {
+      console.warn("[api/orders/status] nurse tried to update unassigned order", {
+        orderId: id, expected: row.nurse_id, sessionNurseId: auth.session.nurseId,
+      });
+      return NextResponse.json({ error: "هذا الطلب غير مخصص لك" }, { status: 403 });
     }
   }
 
@@ -68,7 +81,10 @@ export async function POST(
     p_note: combinedNote,
   });
   if (rpcErr) {
-    return NextResponse.json({ error: rpcErr.message }, { status: 500 });
+    console.error("[api/orders/status] set_order_status_admin failed", {
+      orderId: id, status, sqlStatus, code: rpcErr.code, message: rpcErr.message, details: rpcErr.details,
+    });
+    return NextResponse.json({ error: `تعذر تحديث حالة الطلب: ${rpcErr.message}` }, { status: 500 });
   }
 
   const order = await fetchOrderById(sb, id);
