@@ -20,8 +20,11 @@ export interface RouteSession {
   email: string | null;
   fullName: string | null;
   role: Role;                 // customer | nurse | lab | admin
+  isActive: boolean;
   customerId?: string;        // when role === "customer"
   nurseId?: string;           // when role === "nurse"
+  nurseCity?: string;         // when role === "nurse"
+  nursePhotoUrl?: string;     // when role === "nurse"
   labUserId?: string;         // when role === "lab"
   labId?: string;             // when role === "lab"
   labRole?: LabSubRole;       // when role === "lab"

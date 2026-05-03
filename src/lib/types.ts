@@ -766,7 +766,7 @@ export const ROLE_PERMISSIONS: Record<AdminRole, string[]> = {
   lab_admin: ["overview", "orders", "labs"],
   customer_support: ["overview", "orders", "users", "notifications"],
   finance_admin: ["overview", "invoices", "payments", "coupons"],
-  content_admin: ["overview", "tests", "packages", "sliders", "icons", "branding", "content", "libraries", "settings"],
+  content_admin: ["overview", "tests", "packages", "sliders", "icons", "branding", "content", "libraries", "media", "settings"],
 };
 
 export type PaymentStatus = "pending" | "paid" | "refunded" | "cancelled";

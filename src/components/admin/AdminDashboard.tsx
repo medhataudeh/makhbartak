@@ -26,6 +26,8 @@ import { Button } from "@/components/ui/Button";
 import { InvoiceView } from "@/components/admin/InvoiceView";
 import { OrderControlCenter } from "@/components/admin/OrderControlCenter";
 import { CredentialsShareSheet, generateTempPassword, type ShareableCredentials } from "@/components/admin/CredentialsShareSheet";
+import { MediaPicker } from "@/components/admin/MediaPicker";
+import { MediaLibraryAdmin } from "@/components/admin/MediaLibraryAdmin";
 import { LabsAdmin } from "@/components/admin/LabsAdmin";
 import { BrandingAdmin } from "@/components/admin/BrandingAdmin";
 import { ContentAdmin } from "@/components/admin/ContentAdmin";
@@ -67,7 +69,7 @@ type AdminSection =
   | "overview" | "orders" | "users" | "tests" | "packages" | "coupons"
   | "nurses" | "scheduling" | "gamification" | "labs" | "shortages"
   | "payments" | "invoices" | "sliders" | "icons" | "branding" | "content"
-  | "libraries"
+  | "libraries" | "media"
   | "notifications" | "admins" | "activity" | "settings";
 
 interface SectionDef {
@@ -99,6 +101,7 @@ const SECTIONS: SectionDef[] = [
   { id: "invoices",      label: "الفواتير",         Icon: FileText,      group: "finance"    },
   { id: "payments",      label: "المدفوعات",        Icon: CreditCard,    group: "finance"    },
 
+  { id: "media",         label: "مكتبة الوسائط",     Icon: ImageIcon,     group: "content"    },
   { id: "sliders",       label: "السلايدر الرئيسي", Icon: ImageIcon,     group: "content"    },
   { id: "icons",         label: "الأيقونات",        Icon: Shapes,        group: "content"    },
   { id: "branding",      label: "الشعارات والهوية", Icon: ImageIcon,     group: "content"    },
@@ -296,6 +299,7 @@ export function AdminDashboard({ user, onLogout }: AdminDashboardProps) {
           {section === "shortages"     && <ShortageRequestsAdmin adminId={user.id} adminName={user.name} adminRole={user.role} />}
           {section === "payments"      && <PaymentsAdmin />}
           {section === "invoices"      && <InvoicesAdmin />}
+          {section === "media"         && <MediaLibraryAdmin />}
           {section === "sliders"       && <SlidersAdmin sliders={sliders} setSliders={setSliders} packages={packages} />}
           {section === "icons"         && <IconsAdmin icons={icons} setIcons={setIcons} />}
           {section === "branding"      && <BrandingAdmin adminId={user.id} adminName={user.name} adminRole={user.role} />}
@@ -1392,9 +1396,9 @@ function PackageForm({ initial, tests, onCancel, onSubmit }: { initial?: Package
         </div>
 
         <div className="space-y-3">
-          <Field label="الصورة الأساسية"><TextInput value={draft.mainImage} onChange={(e) => set("mainImage", e.target.value)} placeholder="https://..." style={{ direction: "ltr", textAlign: "right" }} /></Field>
-          <Field label="صورة الموبايل"><TextInput value={draft.mobileImage} onChange={(e) => set("mobileImage", e.target.value)} placeholder="https://..." style={{ direction: "ltr", textAlign: "right" }} /></Field>
-          <Field label="صورة الديسكتوب"><TextInput value={draft.desktopImage} onChange={(e) => set("desktopImage", e.target.value)} placeholder="https://..." style={{ direction: "ltr", textAlign: "right" }} /></Field>
+          <MediaPicker label="الصورة الأساسية" value={draft.mainImage} onChange={(url) => set("mainImage", url)} />
+          <MediaPicker label="صورة الموبايل" value={draft.mobileImage} onChange={(url) => set("mobileImage", url)} />
+          <MediaPicker label="صورة الديسكتوب" value={draft.desktopImage} onChange={(url) => set("desktopImage", url)} />
           <Field label="ترتيب العرض"><TextInput type="number" value={draft.displayOrder} onChange={(e) => set("displayOrder", Number(e.target.value))} /></Field>
           <div className="flex items-center justify-between bg-gray-50 rounded-xl p-3">
             <span className="text-sm text-[#164E63]">إظهار في السلايدر الرئيسي</span>
@@ -1622,7 +1626,7 @@ function NurseForm({ initial, onCancel, onSubmit }: { initial?: Nurse; onCancel:
         <Field label="الاسم *"><TextInput value={draft.name} onChange={(e) => set("name", e.target.value)} /></Field>
         <Field label="الهاتف *"><TextInput type="tel" value={draft.phone} onChange={(e) => set("phone", e.target.value)} /></Field>
         <Field label="المدينة"><TextInput value={draft.city} onChange={(e) => set("city", e.target.value)} /></Field>
-        <Field label="رابط الصورة"><TextInput value={draft.photoUrl ?? ""} onChange={(e) => set("photoUrl", e.target.value || undefined)} style={{ direction: "ltr", textAlign: "right" }} /></Field>
+        <MediaPicker label="صورة الممرض" value={draft.photoUrl ?? ""} onChange={(url) => set("photoUrl", url || undefined)} compact />
         <div className="flex items-center justify-between">
           <span className="text-sm text-[#164E63]">نشط</span>
           <Toggle checked={draft.isActive} onChange={(v) => set("isActive", v)} label="نشط" />
@@ -2085,8 +2089,10 @@ function SliderForm({ initial, packages, onCancel, onSubmit }: { initial?: Slide
         <Field label="الوصف القصير">
           <textarea value={draft.subtitleAr} onChange={(e) => set("subtitleAr", e.target.value)} rows={2} className="w-full p-3 rounded-xl border border-gray-200 text-sm focus:border-[#0891B2] outline-none resize-none md:col-span-2" />
         </Field>
-        <Field label="رابط صورة الموبايل"><TextInput value={draft.mobileImage} onChange={(e) => set("mobileImage", e.target.value)} style={{ direction: "ltr", textAlign: "right" }} /></Field>
-        <Field label="رابط صورة الديسكتوب"><TextInput value={draft.desktopImage} onChange={(e) => set("desktopImage", e.target.value)} style={{ direction: "ltr", textAlign: "right" }} /></Field>
+        <div className="md:col-span-2 grid grid-cols-1 md:grid-cols-2 gap-3">
+          <MediaPicker label="صورة الموبايل" value={draft.mobileImage} onChange={(url) => set("mobileImage", url)} />
+          <MediaPicker label="صورة الديسكتوب" value={draft.desktopImage} onChange={(url) => set("desktopImage", url)} />
+        </div>
         <Field label="نص زر CTA"><TextInput value={draft.ctaLabel} onChange={(e) => set("ctaLabel", e.target.value)} /></Field>
         <Field label="هدف الـ CTA">
           <select value={draft.ctaTarget} onChange={(e) => {

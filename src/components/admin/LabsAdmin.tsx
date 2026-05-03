@@ -21,6 +21,7 @@ import { formatDate, formatPrice, relativeTime } from "@/lib/utils";
 import { Button } from "@/components/ui/Button";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { CredentialsShareSheet, generateTempPassword, type ShareableCredentials } from "@/components/admin/CredentialsShareSheet";
+import { MediaPicker } from "@/components/admin/MediaPicker";
 
 interface Props {
   adminId: string;
@@ -541,12 +542,8 @@ function LabBrandingEditor({ lab, onChange }: { lab: Lab; onChange: (b: LabBrand
         <Field label="اسم البوابة">
           <input value={draft.portalDisplayName ?? ""} onChange={(e) => set("portalDisplayName", e.target.value || undefined)} className="w-full h-10 px-3 rounded-xl border border-gray-200 text-sm" />
         </Field>
-        <Field label="رابط الشعار">
-          <input value={draft.logo ?? ""} onChange={(e) => set("logo", e.target.value || undefined)} placeholder="https://…" className="w-full h-10 px-3 rounded-xl border border-gray-200 text-sm lat" dir="ltr" />
-        </Field>
-        <Field label="رابط صورة الهيدر (اختياري)">
-          <input value={draft.headerImage ?? ""} onChange={(e) => set("headerImage", e.target.value || undefined)} placeholder="https://…" className="w-full h-10 px-3 rounded-xl border border-gray-200 text-sm lat" dir="ltr" />
-        </Field>
+        <MediaPicker label="الشعار" value={draft.logo ?? ""} onChange={(url) => set("logo", url || undefined)} compact />
+        <MediaPicker label="صورة الهيدر (اختياري)" value={draft.headerImage ?? ""} onChange={(url) => set("headerImage", url || undefined)} compact />
       </Card>
 
       <Card title="الألوان">
@@ -1046,7 +1043,7 @@ function LabFormModal({ initial, onCancel, onSubmit }: {
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
               <Field label="الاسم بالعربية *"><input value={d.nameAr} onChange={(e) => set("nameAr", e.target.value)} className="w-full h-10 px-3 rounded-xl border border-gray-200 text-sm" /></Field>
               <Field label="الاسم بالإنجليزية"><input value={d.nameEn} onChange={(e) => set("nameEn", e.target.value)} className="w-full h-10 px-3 rounded-xl border border-gray-200 text-sm lat" dir="ltr" /></Field>
-              <Field label="رابط الشعار"><input value={d.logo ?? ""} onChange={(e) => set("logo", e.target.value || undefined)} placeholder="https://…" className="w-full h-10 px-3 rounded-xl border border-gray-200 text-sm lat" dir="ltr" /></Field>
+              <MediaPicker label="الشعار" value={d.logo ?? ""} onChange={(url) => set("logo", url || undefined)} compact />
               <Field label="الحالة">
                 <label className="inline-flex items-center gap-2 text-sm">
                   <input type="checkbox" checked={d.isActive} onChange={(e) => set("isActive", e.target.checked)} className="w-4 h-4" /> نشط
