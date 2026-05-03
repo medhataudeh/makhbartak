@@ -30,7 +30,20 @@ interface BookingFlowProps {
   onBack: () => void;
 }
 
-const ymd = (d: Date) => d.toISOString().split("T")[0];
+// Format a Date as YYYY-MM-DD using LOCAL year/month/day components.
+// `toISOString().split("T")[0]` would convert to UTC, which in any
+// positive-UTC timezone shifts the date backwards near midnight (e.g.
+// Damascus = UTC+3, 22:00 local Sunday → 19:00 UTC Sunday: still Sunday;
+// 02:00 local Monday → 23:00 UTC Sunday: ISO returns "Sunday"). That bug
+// caused the 3-day picker to render yesterday/today/tomorrow and exposed
+// stale weekdays like "Saturday" when the user expected today/tomorrow/
+// day-after.
+const ymd = (d: Date): string => {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+};
 const WEEKDAYS_AR = ["الأحد", "الاثنين", "الثلاثاء", "الأربعاء", "الخميس", "الجمعة", "السبت"];
 
 export function BookingFlow({ tests, pkg, onContinue, onBack }: BookingFlowProps) {
@@ -75,21 +88,33 @@ export function BookingFlow({ tests, pkg, onContinue, onBack }: BookingFlowProps
   const [addingPatient, setAddingPatient] = useState(false);
   const toast = useToast();
 
-  // Exactly 3 day cards: today, tomorrow, day after. Days with no
-  // availability (notice window elapsed, capacity full, out of booking
-  // window) are still rendered, just disabled with their reason — no
-  // spillover replacement, so the calendar shape is predictable.
-  const candidateDays: { date: string; shifts: ReturnType<typeof getShiftConfigs>; available: boolean }[] = (() => {
-    const today = new Date(); today.setHours(0, 0, 0, 0);
+  // Exactly 3 day cards: today, tomorrow, day after. Each day is a real
+  // local Date constructed from year/month/day components — never derived
+  // by re-parsing a YYYY-MM-DD string, never via toISOString() or any UTC
+  // hop. The weekday and day-of-month displayed in the pills come straight
+  // off this Date so they cannot drift relative to the underlying date
+  // string handed to getShiftConfigs.
+  const candidateDays: {
+    date: string;
+    weekdayIndex: number;
+    dayOfMonth: number;
+    shifts: ReturnType<typeof getShiftConfigs>;
+    available: boolean;
+  }[] = (() => {
+    const now = new Date();
+    const baseY = now.getFullYear();
+    const baseM = now.getMonth();
+    const baseD = now.getDate();
     const out: typeof candidateDays = [];
     for (let i = 0; i < 3; i++) {
-      const d = new Date(today);
-      d.setDate(today.getDate() + i);
+      // `new Date(y, m, d)` is purely local; passing baseD + i lets the
+      // constructor handle month/year rollover correctly.
+      const d = new Date(baseY, baseM, baseD + i);
       const date = ymd(d);
       const ordersForDate = liveOrders
         .filter((o) => o.visitDate === date)
         .map((o) => ({ shift: o.shift, status: o.status }));
-      const shifts = getShiftConfigs({
+      const rawShifts = getShiftConfigs({
         date,
         minNoticeMinutes: settings.minBookingNoticeMinutes,
         morningStart: settings.morningShiftStart,
@@ -100,7 +125,19 @@ export function BookingFlow({ tests, pkg, onContinue, onBack }: BookingFlowProps
         maxOrdersPerShift: settings.maxOrdersPerShift,
         bookingWindowDays: settings.bookingWindowDays,
       });
-      out.push({ date, shifts, available: shifts.some((s) => s.available) });
+      // Force display order: morning first, evening second. Defensive
+      // against any future change to getShiftConfigs return order so the
+      // labels and times in the UI never get swapped.
+      const morning = rawShifts.find((s) => s.shift === "morning");
+      const evening = rawShifts.find((s) => s.shift === "evening");
+      const shifts = [morning, evening].filter((s): s is NonNullable<typeof s> => Boolean(s));
+      out.push({
+        date,
+        weekdayIndex: d.getDay(),
+        dayOfMonth: d.getDate(),
+        shifts,
+        available: shifts.some((s) => s.available),
+      });
     }
     return out;
   })();
@@ -160,11 +197,15 @@ export function BookingFlow({ tests, pkg, onContinue, onBack }: BookingFlowProps
         <SectionRow
           icon={<CalendarIcon size={18} className="text-[#0891B2]" />}
           title="موعد الزيارة"
-          value={
-            visitDate && shift
-              ? `${WEEKDAYS_AR[new Date(visitDate + "T00:00:00").getDay()]} · ${formatDate(visitDate)} — ${getShiftLabel(shift)}`
-              : null
-          }
+          value={(() => {
+            if (!visitDate || !shift) return null;
+            // Use the weekday we already computed for this date in
+            // candidateDays — re-parsing the YYYY-MM-DD string here would
+            // re-introduce the very TZ ambiguity we just removed.
+            const day = candidateDays.find((d) => d.date === visitDate);
+            const weekday = day ? WEEKDAYS_AR[day.weekdayIndex] : "";
+            return `${weekday} · ${formatDate(visitDate)} — ${getShiftLabel(shift)}`;
+          })()}
           placeholder="اختر اليوم والفترة"
           required
           onClick={() => setWhenSheet(true)}
@@ -460,19 +501,24 @@ function WhenPicker({
   selectedShift,
   onPick,
 }: {
-  days: { date: string; shifts: { shift: Shift; labelAr: string; startHour: number; endHour: number; available: boolean; unavailableReason?: string }[]; available: boolean }[];
+  // weekdayIndex / dayOfMonth come from the same Date that produced the
+  // YYYY-MM-DD string — no re-parsing here, so TZ can never drift.
+  days: {
+    date: string;
+    weekdayIndex: number;
+    dayOfMonth: number;
+    shifts: { shift: Shift; labelAr: string; startHour: number; endHour: number; available: boolean; unavailableReason?: string }[];
+    available: boolean;
+  }[];
   selectedDate: string;
   selectedShift: Shift | null;
   onPick: (date: string, shift: Shift) => void;
 }) {
-  const today = new Date(); today.setHours(0, 0, 0, 0);
-  const offsetTag = (date: string): string => {
-    const d = new Date(date + "T00:00:00");
-    const diff = Math.round((d.getTime() - today.getTime()) / 86_400_000);
-    if (diff === 0) return "اليوم";
-    if (diff === 1) return "غداً";
-    if (diff === 2) return "بعد غد";
-    return WEEKDAYS_AR[d.getDay()];
+  const offsetTagFor = (i: number, weekdayIndex: number): string => {
+    if (i === 0) return "اليوم";
+    if (i === 1) return "غداً";
+    if (i === 2) return "بعد غد";
+    return WEEKDAYS_AR[weekdayIndex];
   };
 
   // Local "active" day: whichever day's slot grid is shown beneath the pills.
@@ -488,8 +534,7 @@ function WhenPicker({
 
       {/* Three day pills — always exactly today / tomorrow / day-after. */}
       <div className="grid grid-cols-3 gap-2" role="tablist" aria-label="اختيار اليوم">
-        {days.map((day) => {
-          const dObj = new Date(day.date + "T00:00:00");
+        {days.map((day, i) => {
           const isActive = day.date === activeDate;
           const isDisabled = !day.available;
           return (
@@ -512,15 +557,15 @@ function WhenPicker({
               <span className={`text-[10px] font-semibold tracking-wide ${
                 isActive ? "text-[#0891B2]" : isDisabled ? "text-gray-400" : "text-gray-500"
               }`}>
-                {offsetTag(day.date)}
+                {offsetTagFor(i, day.weekdayIndex)}
               </span>
               <span className={`text-lg font-bold lat mt-0.5 ${
                 isActive ? "text-[#0891B2]" : isDisabled ? "text-gray-400" : "text-[#164E63]"
-              }`} dir="ltr">{dObj.getDate()}</span>
+              }`} dir="ltr">{day.dayOfMonth}</span>
               <span className={`text-[10px] mt-0.5 ${
                 isDisabled ? "text-amber-600" : "text-gray-400"
               }`}>
-                {isDisabled ? "غير متاح" : WEEKDAYS_AR[dObj.getDay()]}
+                {isDisabled ? "غير متاح" : WEEKDAYS_AR[day.weekdayIndex]}
               </span>
             </button>
           );

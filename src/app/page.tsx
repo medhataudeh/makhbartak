@@ -152,7 +152,12 @@ function CustomerApp() {
       couponDiscount: snapshot.couponDiscount,
       total: snapshot.total,
       shift: booking.shift!,
-      visitDate: booking.visitDate ?? new Date().toISOString().split("T")[0],
+      visitDate: booking.visitDate ?? (() => {
+        // Local YYYY-MM-DD — toISOString() would convert to UTC and could
+        // post-shift the date in any +UTC timezone near midnight.
+        const d = new Date();
+        return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+      })(),
       shiftStartTime: booking.shiftStartTime,
       shiftEndTime: booking.shiftEndTime,
       address: booking.address!,

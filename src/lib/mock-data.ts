@@ -467,15 +467,25 @@ interface ShiftConfigsInput {
 const NOT_AVAILABLE_AR = "هذا الموعد غير متاح، يرجى اختيار وقت آخر";
 
 export function getShiftConfigs(input?: ShiftConfigsInput | number): ShiftConfig[] {
+  // Local YYYY-MM-DD — must match the format the booking picker uses to key
+  // dates. toISOString() shifts to UTC and flips the day in any +UTC
+  // timezone (e.g. Damascus UTC+3 between 21:00 and midnight), which would
+  // mark today as "past" and disable the whole 3-day picker.
+  const localYmd = (d: Date): string => {
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, "0");
+    const day = String(d.getDate()).padStart(2, "0");
+    return `${y}-${m}-${day}`;
+  };
   // Backwards compat: old call sites passed `minNoticeMinutes` as a single
   // positional number. New call sites pass an object.
   const cfg: ShiftConfigsInput = typeof input === "number"
-    ? { date: new Date().toISOString().split("T")[0], minNoticeMinutes: input }
-    : (input ?? { date: new Date().toISOString().split("T")[0] });
+    ? { date: localYmd(new Date()), minNoticeMinutes: input }
+    : (input ?? { date: localYmd(new Date()) });
 
   const minNotice = cfg.minNoticeMinutes ?? 120;
   const now = new Date();
-  const todayStr = new Date().toISOString().split("T")[0];
+  const todayStr = localYmd(new Date());
   const todayMidnight = new Date(todayStr + "T00:00:00");
   const target = new Date(cfg.date + "T00:00:00");
   const isPast = target < todayMidnight;
