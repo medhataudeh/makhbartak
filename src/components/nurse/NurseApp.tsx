@@ -10,7 +10,7 @@ import {
 } from "lucide-react";
 import {
   MOCK_NURSES, MOCK_NURSE_ROUTES, MOCK_NURSE_NOTIFICATIONS, MOCK_GAMIFICATION,
-  buildPrepChecklist, FAILED_COLLECTION_REASONS, NURSE_BADGES,
+  buildPrepChecklist, FAILED_COLLECTION_REASONS, NURSE_BADGES, NURSE_LEVELS,
 } from "@/lib/mock-data";
 import type { Nurse, NurseRouteStop, NurseGamification, Notification, Order } from "@/lib/types";
 import { setOrderStatus, verifyPatient, useOrders, hydrateOrdersForNurse, hydrateNotificationsForNurse } from "@/lib/store";
@@ -34,6 +34,26 @@ import { clearPrepForDay, hydratePrep, setPrep, usePrep } from "@/lib/nurse-prep
 import { hydrateShortageRequestsForNurse } from "@/lib/shortage-requests";
 
 type NurseTab = "home" | "schedule" | "settings";
+
+// Brand-new starter stats for nurses who don't have a gamification row yet
+// (every admin-created nurse). Level is the first tier from NURSE_LEVELS so
+// the UI never reads `.level.color` / `.level.name` from undefined.
+function createStarterGame(nurseId: string): NurseGamification {
+  const startingLevel = NURSE_LEVELS[0] ?? { id: "lv-1", name: "مبتدئ", minPoints: 0, color: "#94A3B8" };
+  return {
+    nurseId,
+    totalCompleted: 0,
+    totalPoints: 0,
+    pointsToday: 0,
+    level: startingLevel,
+    badges: [],
+    monthlyCompleted: 0,
+    monthlyPoints: 0,
+    successRate: 0,
+    failedCount: 0,
+    streak: 0,
+  };
+}
 
 export function NurseApp() {
   const session = useSession();
@@ -66,7 +86,13 @@ function NurseAppInner({ nurseId, onLogout }: { nurseId: string; onLogout: () =>
     isActive: true,
   };
   const nurse = editableNurse ?? sessionNurse;
-  const game = MOCK_GAMIFICATION[nurse.id];
+  // Gamification stats are mock-only today; only seeded nurse ids
+  // (SEED_NURSE_1/2/3) have a row. Admin-created nurses (fresh DB UUIDs)
+  // would resolve to undefined, and every downstream read of
+  // `game.level.color`, `game.totalPoints`, `game.badges`, etc. would crash
+  // the page. Default to a brand-new starter gamification record so the UI
+  // renders normally for first-time nurses.
+  const game = MOCK_GAMIFICATION[nurse.id] ?? createStarterGame(nurse.id);
   const routes = MOCK_NURSE_ROUTES.filter((r) => r.nurseId === nurse.id);
   const today = routes[0];
   const settings = useSystemSettings();
@@ -405,7 +431,13 @@ function NurseHome({
           {/* Day started — checklist becomes read-only via this entry. */}
           <TodayToolsCard onOpen={() => setReviewOpen(true)} totalCount={checklist.length} checkedCount={checkedCount} />
 
-          {nextStop ? (
+          {stops.length === 0 ? (
+            <div className="bg-white rounded-2xl border border-gray-100 p-6 text-center">
+              <ListChecks size={28} className="text-gray-300 mx-auto mb-2" aria-hidden="true" />
+              <p className="text-sm font-semibold text-[#164E63]">لا توجد زيارات مخصصة لك حالياً</p>
+              <p className="text-[12px] text-gray-500 mt-1 leading-relaxed">سيظهر هنا أي طلب يتم إسناده إليك من الإدارة.</p>
+            </div>
+          ) : nextStop ? (
             <NextVisitCard stop={nextStop} onOpen={() => onOpenStop(nextStop)} />
           ) : (
             <DayDoneCard count={completed} />
@@ -644,31 +676,35 @@ function SummaryStat({ label, value, color, Icon }: { label: string; value: numb
 }
 
 function GameWidget({ game }: { game: NurseGamification }) {
+  // Defensive: even though createStarterGame() always supplies a level +
+  // empty badges array, guard against a partial mock row coming through.
+  const level = game.level ?? { id: "lv-1", name: "مبتدئ", minPoints: 0, color: "#94A3B8" };
+  const badges = game.badges ?? [];
   return (
     <section className="bg-white rounded-2xl border border-gray-100 p-4 space-y-3" aria-labelledby="game-title">
       <div className="flex items-center gap-3">
-        <div className="w-9 h-9 rounded-xl flex items-center justify-center" style={{ backgroundColor: game.level.color + "22" }}>
-          <Trophy size={17} style={{ color: game.level.color }} aria-hidden="true" />
+        <div className="w-9 h-9 rounded-xl flex items-center justify-center" style={{ backgroundColor: level.color + "22" }}>
+          <Trophy size={17} style={{ color: level.color }} aria-hidden="true" />
         </div>
         <div className="flex-1">
           <h2 id="game-title" className="text-sm font-bold text-[#164E63]">إنجازات اليوم</h2>
-          <p className="text-[11px] text-gray-500">المستوى: {game.level.name}</p>
+          <p className="text-[11px] text-gray-500">المستوى: {level.name}</p>
         </div>
         <div className="text-end">
-          <p className="text-base font-bold text-[#164E63]">+{game.pointsToday}</p>
+          <p className="text-base font-bold text-[#164E63]">+{game.pointsToday ?? 0}</p>
           <p className="text-[10px] text-gray-400">نقطة اليوم</p>
         </div>
       </div>
 
       <div className="grid grid-cols-3 gap-2">
-        <MiniStat Icon={Star} label="إجمالي النقاط" value={game.totalPoints.toLocaleString("ar")} />
-        <MiniStat Icon={Flame} label="الإستمرارية" value={`${game.streak} يوم`} />
-        <MiniStat Icon={BadgeCheck} label="الشارات" value={game.badges.length} />
+        <MiniStat Icon={Star} label="إجمالي النقاط" value={(game.totalPoints ?? 0).toLocaleString("ar")} />
+        <MiniStat Icon={Flame} label="الإستمرارية" value={`${game.streak ?? 0} يوم`} />
+        <MiniStat Icon={BadgeCheck} label="الشارات" value={badges.length} />
       </div>
 
-      {game.badges.length > 0 && (
+      {badges.length > 0 && (
         <div className="flex flex-wrap gap-1.5">
-          {game.badges.slice(0, 4).map((b) => (
+          {badges.slice(0, 4).map((b) => (
             <span key={b.id} className="text-[11px] bg-[#ECFEFF] text-[#0E7490] px-2 py-0.5 rounded-full font-medium">
               {b.name}
             </span>
@@ -884,25 +920,30 @@ function NurseSettings({ nurse, game, onLogout }: { nurse: Nurse; game: NurseGam
       )}
 
       {/* Level + Points hero */}
-      <section
-        className="rounded-2xl p-5 text-white relative overflow-hidden"
-        style={{ background: `linear-gradient(135deg, ${game.level.color}, ${game.level.color}cc)` }}
-      >
-        <div aria-hidden="true" className="absolute -top-6 -end-6 w-24 h-24 rounded-full bg-white/15" />
-        <p className="text-[11px] uppercase tracking-wide opacity-90 mb-1">المستوى</p>
-        <h2 className="text-xl font-bold mb-3">{game.level.name}</h2>
-        <p className="text-3xl font-bold leading-none mb-1">{game.totalPoints.toLocaleString("ar")}</p>
-        <p className="text-xs opacity-90">إجمالي النقاط</p>
-      </section>
+      {(() => {
+        const lvl = game.level ?? { id: "lv-1", name: "مبتدئ", minPoints: 0, color: "#94A3B8" };
+        return (
+          <section
+            className="rounded-2xl p-5 text-white relative overflow-hidden"
+            style={{ background: `linear-gradient(135deg, ${lvl.color}, ${lvl.color}cc)` }}
+          >
+            <div aria-hidden="true" className="absolute -top-6 -end-6 w-24 h-24 rounded-full bg-white/15" />
+            <p className="text-[11px] uppercase tracking-wide opacity-90 mb-1">المستوى</p>
+            <h2 className="text-xl font-bold mb-3">{lvl.name}</h2>
+            <p className="text-3xl font-bold leading-none mb-1">{(game.totalPoints ?? 0).toLocaleString("ar")}</p>
+            <p className="text-xs opacity-90">إجمالي النقاط</p>
+          </section>
+        );
+      })()}
 
       {/* Stats grid */}
       <section className="grid grid-cols-2 gap-3">
-        <StatTile Icon={CheckCircle2} label="زيارات مكتملة"   value={game.totalCompleted} color="text-emerald-600" />
-        <StatTile Icon={Target}       label="معدل النجاح"     value={`${game.successRate}%`} color="text-[#0891B2]" />
-        <StatTile Icon={XCircle}      label="فشل التحصيل"    value={game.failedCount} color="text-red-500" />
-        <StatTile Icon={Flame}        label="استمرارية"      value={`${game.streak} يوم`} color="text-amber-600" />
-        <StatTile Icon={TrendingUp}   label="نقاط الشهر"     value={game.monthlyPoints} color="text-purple-600" />
-        <StatTile Icon={ListChecks}   label="زيارات الشهر"   value={game.monthlyCompleted} color="text-[#0E7490]" />
+        <StatTile Icon={CheckCircle2} label="زيارات مكتملة"   value={game.totalCompleted ?? 0} color="text-emerald-600" />
+        <StatTile Icon={Target}       label="معدل النجاح"     value={`${game.successRate ?? 0}%`} color="text-[#0891B2]" />
+        <StatTile Icon={XCircle}      label="فشل التحصيل"    value={game.failedCount ?? 0} color="text-red-500" />
+        <StatTile Icon={Flame}        label="استمرارية"      value={`${game.streak ?? 0} يوم`} color="text-amber-600" />
+        <StatTile Icon={TrendingUp}   label="نقاط الشهر"     value={game.monthlyPoints ?? 0} color="text-purple-600" />
+        <StatTile Icon={ListChecks}   label="زيارات الشهر"   value={game.monthlyCompleted ?? 0} color="text-[#0E7490]" />
       </section>
 
       {/* Badges */}
@@ -910,11 +951,11 @@ function NurseSettings({ nurse, game, onLogout }: { nurse: Nurse; game: NurseGam
         <div className="flex items-center gap-2 mb-3">
           <Award size={16} className="text-amber-500" aria-hidden="true" />
           <h3 className="text-sm font-bold text-[#164E63]">الشارات</h3>
-          <span className="text-xs text-gray-400 ms-auto">{game.badges.length} / {NURSE_BADGES.length}</span>
+          <span className="text-xs text-gray-400 ms-auto">{(game.badges ?? []).length} / {NURSE_BADGES.length}</span>
         </div>
         <div className="grid grid-cols-3 gap-2">
           {NURSE_BADGES.map((b) => {
-            const earned = game.badges.some((g) => g.id === b.id);
+            const earned = (game.badges ?? []).some((g) => g.id === b.id);
             return (
               <div key={b.id} className={`text-center p-3 rounded-xl border ${
                 earned ? "bg-amber-50 border-amber-100" : "bg-gray-50 border-gray-100 opacity-50"

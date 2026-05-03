@@ -1,6 +1,11 @@
 "use client";
 import { NurseApp } from "@/components/nurse/NurseApp";
+import { NurseErrorBoundary } from "@/components/nurse/NurseErrorBoundary";
 
 export default function NursePage() {
-  return <NurseApp />;
+  return (
+    <NurseErrorBoundary>
+      <NurseApp />
+    </NurseErrorBoundary>
+  );
 }
