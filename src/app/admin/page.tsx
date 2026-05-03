@@ -1,6 +1,8 @@
 "use client";
+import { useState } from "react";
 import { AdminDashboard } from "@/components/admin/AdminDashboard";
 import { LoginForm } from "@/components/auth/LoginForm";
+import { ForgotPasswordForm } from "@/components/auth/ForgotPasswordForm";
 import { useSession, logout } from "@/lib/auth";
 import { DEMO_ADMIN_CREDENTIALS } from "@/lib/demo-credentials";
 import type { AdminUser } from "@/lib/types";
@@ -9,14 +11,17 @@ const SHOW_DEMO = process.env.NEXT_PUBLIC_SHOW_DEMO_CREDS === "true";
 
 export default function AdminPage() {
   const session = useSession();
+  const [forgotOpen, setForgotOpen] = useState(false);
 
   if (!session || session.role !== "admin") {
+    if (forgotOpen) return <ForgotPasswordForm onBack={() => setForgotOpen(false)} />;
     return (
       <LoginForm
         brandTitle="لوحة الإدارة — مختبرك"
         brandSubtitle="تسجيل دخول الموظفين"
         allowedRoles={["admin"]}
         onSuccess={() => { /* useSession() in this page re-renders */ }}
+        onForgotPassword={() => setForgotOpen(true)}
         demoCredentials={SHOW_DEMO ? DEMO_ADMIN_CREDENTIALS.map((c) => ({
           label: c.label, username: c.email, password: c.password,
         })) : undefined}

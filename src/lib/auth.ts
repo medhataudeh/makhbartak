@@ -149,6 +149,60 @@ export async function logout(): Promise<void> {
   emitSession();
 }
 
+// ─── Self-signup (customers only) ─────────────────────────────────────────
+export interface SignupResult {
+  ok: boolean;
+  session?: AuthSession;
+  error?: string;
+}
+
+export async function signupCustomer(input: {
+  email: string;
+  password: string;
+  fullName: string;
+  phone?: string;
+}): Promise<SignupResult> {
+  // Step 1: server creates the auth.user + profile + customer row via the
+  // service role (email_confirm:true so the new account can sign in
+  // immediately without an email verification round-trip).
+  const res = await fetch("/api/auth/signup", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) return { ok: false, error: body.error ?? `HTTP ${res.status}` };
+
+  // Step 2: sign in immediately so the rest of the app sees a valid session.
+  const login = await loginUser(input.email, input.password, { allowedRoles: ["customer"] });
+  if (!login.ok) return { ok: false, error: login.error ?? "تم إنشاء الحساب لكن تعذر تسجيل الدخول" };
+  return { ok: true, session: login.session };
+}
+
+// ─── Forgot password / reset password ─────────────────────────────────────
+export async function requestPasswordReset(email: string): Promise<{ ok: boolean; error?: string }> {
+  if (typeof window === "undefined") return { ok: false, error: "window unavailable" };
+  const res = await fetch("/api/auth/forgot-password", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ email, origin: window.location.origin }),
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) return { ok: false, error: body.error ?? `HTTP ${res.status}` };
+  return { ok: true };
+}
+
+// Called from the /auth/reset-password landing page after Supabase has
+// established a recovery session via the URL hash. We update the password
+// using the live browser session, then sign out and redirect to login.
+export async function applyNewPassword(newPassword: string): Promise<{ ok: boolean; error?: string }> {
+  const sb = getSupabaseBrowser();
+  if (!sb) return { ok: false, error: "Supabase client not configured" };
+  const { error } = await sb.auth.updateUser({ password: newPassword });
+  if (error) return { ok: false, error: error.message };
+  return { ok: true };
+}
+
 // ─── Role helpers (kept for callers) ───────────────────────────────────────
 export function hasRole(session: AuthSession | null, role: Role): boolean {
   return !!session && session.role === role;

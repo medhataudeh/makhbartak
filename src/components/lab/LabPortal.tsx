@@ -16,6 +16,7 @@ import {
 } from "@/lib/store";
 import { useSession, logout, labUserFromSession } from "@/lib/auth";
 import { LoginForm } from "@/components/auth/LoginForm";
+import { ForgotPasswordForm } from "@/components/auth/ForgotPasswordForm";
 import { DEMO_LAB_CREDENTIALS } from "@/lib/demo-credentials";
 
 const SHOW_DEMO = process.env.NEXT_PUBLIC_SHOW_DEMO_CREDS === "true";
@@ -35,6 +36,7 @@ const LAB_STATUSES = [
 
 export function LabPortal() {
   const auth = useSession();
+  const [forgotOpen, setForgotOpen] = useState(false);
   // Phase 8: build the LabUser shape from the enriched session. Older
   // builds resolved this through MOCK_LAB_USERS; the session now carries
   // labUserId / labId / labRole directly from the server.
@@ -72,12 +74,16 @@ export function LabPortal() {
   }, [lab]);
 
   if (!auth || auth.role !== "lab" || !labUser || !lab) {
+    if (forgotOpen) {
+      return <ForgotPasswordForm onBack={() => setForgotOpen(false)} />;
+    }
     return (
       <LoginForm
         brandTitle="بوابة المخبر"
         brandSubtitle="سجّل دخولك ببيانات الحساب الذي زوّدتك به الإدارة."
         allowedRoles={["lab"]}
         onSuccess={() => { /* useSession() re-renders LabPortal */ }}
+        onForgotPassword={() => setForgotOpen(true)}
         demoCredentials={SHOW_DEMO ? DEMO_LAB_CREDENTIALS.map((c) => ({
           label: c.label, username: c.email, password: c.password,
         })) : undefined}

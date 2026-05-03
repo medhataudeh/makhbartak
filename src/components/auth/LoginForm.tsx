@@ -20,10 +20,15 @@ interface Props {
   onSuccess: (session: AuthSession) => void;
   /** Demo creds shown under a collapsible (prototype only). */
   demoCredentials?: DemoCredential[];
+  /** Render a "forgot password" link that calls this handler. */
+  onForgotPassword?: () => void;
+  /** Render a "create account" link (customer portal only). */
+  onSignup?: () => void;
 }
 
 export function LoginForm({
   brandTitle, brandSubtitle, allowedRoles, onSuccess, demoCredentials,
+  onForgotPassword, onSignup,
 }: Props) {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
@@ -91,9 +96,18 @@ export function LoginForm({
           </div>
 
           <div>
-            <label htmlFor="login-password" className="text-xs font-medium text-gray-500 mb-1.5 block">
-              كلمة المرور
-            </label>
+            <div className="flex items-center justify-between mb-1.5">
+              <label htmlFor="login-password" className="text-xs font-medium text-gray-500">
+                كلمة المرور
+              </label>
+              {onForgotPassword && (
+                <button type="button" onClick={onForgotPassword}
+                  className="text-[11px] text-[#0E7490] font-semibold cursor-pointer hover:underline"
+                >
+                  نسيت كلمة المرور؟
+                </button>
+              )}
+            </div>
             <div className="relative">
               <Lock
                 size={16}
@@ -138,6 +152,17 @@ export function LoginForm({
             تسجيل الدخول
           </Button>
         </form>
+
+        {onSignup && (
+          <div className="mt-5 text-center text-xs text-gray-500">
+            ليس لديك حساب؟{" "}
+            <button type="button" onClick={onSignup}
+              className="text-[#0E7490] font-semibold cursor-pointer hover:underline"
+            >
+              إنشاء حساب جديد
+            </button>
+          </div>
+        )}
 
         {demoCredentials && demoCredentials.length > 0 && (
           <details className="mt-6 text-xs text-gray-500">
