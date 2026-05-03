@@ -281,11 +281,23 @@ export async function hydrateAdminSliders(): Promise<SliderItem[] | null> {
   return Array.isArray(body?.sliders) ? (body.sliders as RawSlider[]).map(mapSlider) : null;
 }
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 export async function apiUpsertSlider(
   s: SliderItem,
 ): Promise<{ ok: boolean; slider?: SliderItem; error?: string }> {
+  // Strip any non-UUID id (e.g. local "sl-..." placeholder) before hitting
+  // the server — the SQL column is uuid and would reject anything else.
+  const safeId = s.id && UUID_RE.test(s.id) ? s.id : undefined;
+  const safeTargetId =
+    s.ctaTarget === "package" && s.ctaTargetId && UUID_RE.test(s.ctaTargetId)
+      ? s.ctaTargetId
+      : undefined;
+  if (s.ctaTarget === "package" && !safeTargetId) {
+    return { ok: false, error: "اختر باقة صحيحة من القائمة" };
+  }
   const wire = {
-    id: s.id || undefined,
+    id: safeId,
     titleAr: s.titleAr,
     subtitleAr: s.subtitleAr || undefined,
     mobileImage: s.mobileImage || undefined,
@@ -293,7 +305,7 @@ export async function apiUpsertSlider(
     priceLabel: s.priceLabel || undefined,
     ctaLabel: s.ctaLabel || undefined,
     ctaTarget: s.ctaTarget,
-    ctaTargetId: s.ctaTargetId,
+    ctaTargetId: safeTargetId,
     testsCount: s.testsCount,
     badgeAr: s.badgeAr,
     displayOrder: s.displayOrder,
@@ -301,7 +313,7 @@ export async function apiUpsertSlider(
   };
   const result = await postJson<{ id: string }>("/api/admin/sliders", wire);
   if ("error" in result) return { ok: false, error: result.error };
-  return { ok: true, slider: { ...s, id: result.id } };
+  return { ok: true, slider: { ...s, id: result.id, ctaTargetId: safeTargetId } };
 }
 
 export async function apiDeleteSlider(id: string): Promise<{ ok: boolean; error?: string }> {

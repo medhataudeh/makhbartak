@@ -281,7 +281,7 @@ export function AdminDashboard({ user, onLogout }: AdminDashboardProps) {
           {section === "shortages"     && <ShortageRequestsAdmin adminId={user.id} adminName={user.name} adminRole={user.role} />}
           {section === "payments"      && <PaymentsAdmin />}
           {section === "invoices"      && <InvoicesAdmin />}
-          {section === "sliders"       && <SlidersAdmin sliders={sliders} setSliders={setSliders} />}
+          {section === "sliders"       && <SlidersAdmin sliders={sliders} setSliders={setSliders} packages={packages} />}
           {section === "icons"         && <IconsAdmin icons={icons} setIcons={setIcons} />}
           {section === "branding"      && <BrandingAdmin adminId={user.id} adminName={user.name} adminRole={user.role} />}
           {section === "content"       && <ContentAdmin  adminId={user.id} adminName={user.name} adminRole={user.role} />}
@@ -1924,7 +1924,7 @@ function PaymentsAdmin() {
 
 // ════════════════════════════ Sliders / Icons / Notifications ═══════════════
 
-function SlidersAdmin({ sliders, setSliders }: { sliders: SliderItem[]; setSliders: React.Dispatch<React.SetStateAction<SliderItem[]>> }) {
+function SlidersAdmin({ sliders, setSliders, packages }: { sliders: SliderItem[]; setSliders: React.Dispatch<React.SetStateAction<SliderItem[]>>; packages: Package[] }) {
   const me = useCurrentAdmin();
   const session = useSession();
   const toast = useToast();
@@ -1979,7 +1979,7 @@ function SlidersAdmin({ sliders, setSliders }: { sliders: SliderItem[]; setSlide
           </article>
         ))}
       </div>
-      {(editing || creating) && <SliderForm initial={editing ?? undefined} onCancel={() => { setEditing(null); setCreating(false); }} onSubmit={upsert} />}
+      {(editing || creating) && <SliderForm initial={editing ?? undefined} packages={packages} onCancel={() => { setEditing(null); setCreating(false); }} onSubmit={upsert} />}
       {confirmDelete && (
         <ConfirmModal title="حذف السلايدر" message={`حذف "${confirmDelete.titleAr}"؟`} danger
           onCancel={() => setConfirmDelete(null)}
@@ -1997,13 +1997,35 @@ function SlidersAdmin({ sliders, setSliders }: { sliders: SliderItem[]; setSlide
   );
 }
 
-function SliderForm({ initial, onCancel, onSubmit }: { initial?: SliderItem; onCancel: () => void; onSubmit: (s: SliderItem) => void }) {
+function SliderForm({ initial, packages, onCancel, onSubmit }: { initial?: SliderItem; packages: Package[]; onCancel: () => void; onSubmit: (s: SliderItem) => void }) {
+  // New rows start with an empty id; the server returns the canonical UUID
+  // on save. We only forward `id` to the API when it's already a UUID.
   const [draft, setDraft] = useState<SliderItem>(() => initial ?? {
-    id: `sl-${Date.now()}`, titleAr: "", subtitleAr: "",
+    id: "", titleAr: "", subtitleAr: "",
     mobileImage: "", desktopImage: "", priceLabel: "", ctaLabel: "احجز الآن",
     ctaTarget: "package", displayOrder: 99, isActive: true,
   });
+  const [error, setError] = useState<string | null>(null);
+  const toast = useToast();
   const set = <K extends keyof SliderItem>(k: K, v: SliderItem[K]) => setDraft((d) => ({ ...d, [k]: v }));
+
+  const handleSubmit = () => {
+    setError(null);
+    if (!draft.titleAr.trim()) { setError("العنوان مطلوب"); return; }
+    if (draft.ctaTarget === "package") {
+      if (!draft.ctaTargetId || !UUID_RE.test(draft.ctaTargetId)) {
+        const msg = "اختر باقة صحيحة من القائمة";
+        setError(msg);
+        toast.error(msg);
+        return;
+      }
+    } else if (draft.ctaTargetId && !UUID_RE.test(draft.ctaTargetId)) {
+      // Non-package targets must not carry a stale package UUID.
+      set("ctaTargetId", undefined);
+    }
+    onSubmit(draft);
+  };
+
   return (
     <Modal title={initial ? "تعديل سلايدر" : "إضافة سلايدر"} onClose={onCancel} size="lg">
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
@@ -2016,26 +2038,45 @@ function SliderForm({ initial, onCancel, onSubmit }: { initial?: SliderItem; onC
         <Field label="رابط صورة الديسكتوب"><TextInput value={draft.desktopImage} onChange={(e) => set("desktopImage", e.target.value)} style={{ direction: "ltr", textAlign: "right" }} /></Field>
         <Field label="نص زر CTA"><TextInput value={draft.ctaLabel} onChange={(e) => set("ctaLabel", e.target.value)} /></Field>
         <Field label="هدف الـ CTA">
-          <select value={draft.ctaTarget} onChange={(e) => set("ctaTarget", e.target.value as SliderItem["ctaTarget"])} className="w-full h-10 px-3 rounded-xl border border-gray-200 text-sm cursor-pointer">
+          <select value={draft.ctaTarget} onChange={(e) => {
+            const next = e.target.value as SliderItem["ctaTarget"];
+            setDraft((d) => ({ ...d, ctaTarget: next, ctaTargetId: next === "package" ? d.ctaTargetId : undefined }));
+          }} className="w-full h-10 px-3 rounded-xl border border-gray-200 text-sm cursor-pointer">
             <option value="package">باقة محددة</option>
             <option value="custom-builder">صفحة اختيار التحاليل</option>
             <option value="prescription">صفحة الوصفة</option>
             <option value="external">رابط خارجي</option>
           </select>
         </Field>
-        <Field label="معرّف الباقة (إن وجد)"><TextInput value={draft.ctaTargetId ?? ""} onChange={(e) => set("ctaTargetId", e.target.value || undefined)} placeholder="pkg-1" style={{ direction: "ltr", textAlign: "right" }} /></Field>
+        {draft.ctaTarget === "package" && (
+          <Field label="الباقة المرتبطة *">
+            <select
+              value={draft.ctaTargetId && UUID_RE.test(draft.ctaTargetId) ? draft.ctaTargetId : ""}
+              onChange={(e) => set("ctaTargetId", e.target.value || undefined)}
+              className="w-full h-10 px-3 rounded-xl border border-gray-200 text-sm cursor-pointer"
+            >
+              <option value="">— اختر باقة —</option>
+              {packages.filter((p) => UUID_RE.test(p.id)).map((p) => (
+                <option key={p.id} value={p.id}>{p.nameAr}</option>
+              ))}
+            </select>
+          </Field>
+        )}
         <Field label="ترتيب العرض"><TextInput type="number" value={draft.displayOrder} onChange={(e) => set("displayOrder", Number(e.target.value))} /></Field>
       </div>
+      {error && <p className="mt-3 text-xs text-rose-600">{error}</p>}
       <div className="flex items-center justify-between mt-4">
         <Toggle checked={draft.isActive} onChange={(v) => set("isActive", v)} label="نشط" />
         <div className="flex gap-2">
           <Button variant="outline" onClick={onCancel}>إلغاء</Button>
-          <Button variant="primary" disabled={!draft.titleAr.trim()} onClick={() => onSubmit(draft)}>حفظ</Button>
+          <Button variant="primary" disabled={!draft.titleAr.trim()} onClick={handleSubmit}>حفظ</Button>
         </div>
       </div>
     </Modal>
   );
 }
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function IconsAdmin({ icons, setIcons }: { icons: SvgIcon[]; setIcons: React.Dispatch<React.SetStateAction<SvgIcon[]>> }) {
   const me = useCurrentAdmin();

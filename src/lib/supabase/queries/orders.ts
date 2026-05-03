@@ -42,7 +42,11 @@ export async function fetchOrdersForCustomer(
     .eq("customer_id", customerId)
     .is("deleted_at", null)
     .order("created_at", { ascending: false });
-  if (error || !data) return null;
+  if (error) {
+    console.error("[supabase] fetchOrdersForCustomer failed", { customerId, error });
+    return null;
+  }
+  if (!data) return null;
   return (data as unknown as RawOrderRow[]).map(mapRowToOrder);
 }
 
@@ -53,7 +57,11 @@ export async function fetchOrdersForAdmin(sb: SupabaseClient): Promise<Order[] |
     .select(ORDER_SELECT)
     .is("deleted_at", null)
     .order("created_at", { ascending: false });
-  if (error || !data) return null;
+  if (error) {
+    console.error("[supabase] fetchOrdersForAdmin failed", error);
+    return null;
+  }
+  if (!data) return null;
   return (data as unknown as RawOrderRow[]).map(mapRowToOrder);
 }
 
@@ -72,7 +80,11 @@ export async function fetchOrdersForNurse(
     .eq("nurse_id", nurseId)
     .is("deleted_at", null)
     .order("created_at", { ascending: false });
-  if (error || !data) return null;
+  if (error) {
+    console.error("[supabase] fetchOrdersForNurse failed", { nurseId, error });
+    return null;
+  }
+  if (!data) return null;
   return (data as unknown as RawOrderRow[]).map(mapRowToOrder);
 }
 
@@ -132,14 +144,24 @@ export async function enrichOrdersWithSignedUrls(
 }
 
 export async function fetchOrderById(sb: SupabaseClient, id: string): Promise<Order | null> {
-  if (!isUuid(id)) return null;
+  if (!isUuid(id)) {
+    console.warn("[supabase] fetchOrderById skipped: invalid uuid", id);
+    return null;
+  }
   const { data, error } = await sb
     .from("orders")
     .select(ORDER_SELECT)
     .eq("id", id)
     .is("deleted_at", null)
     .maybeSingle();
-  if (error || !data) return null;
+  if (error) {
+    console.error("[supabase] fetchOrderById failed", { id, error });
+    return null;
+  }
+  if (!data) {
+    console.warn("[supabase] fetchOrderById: no row for id", id);
+    return null;
+  }
   return mapRowToOrder(data as unknown as RawOrderRow);
 }
 

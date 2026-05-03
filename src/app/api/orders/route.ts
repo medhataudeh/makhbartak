@@ -1,6 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabase/server-admin";
-import { fetchOrdersForAdmin, fetchOrdersForCustomer, fetchOrdersForNurse, enrichOrdersWithSignedUrls } from "@/lib/supabase/queries/orders";
+import { fetchOrdersForAdmin, fetchOrdersForCustomer, fetchOrdersForNurse, fetchOrderById, enrichOrdersWithSignedUrls } from "@/lib/supabase/queries/orders";
 import { tsStatusToSql } from "@/lib/supabase/order-status";
 import { isUuid } from "@/lib/supabase/uuid";
 import { requireAuthedUser } from "@/lib/route-auth";
@@ -115,10 +115,19 @@ export async function POST(req: NextRequest) {
     console.warn("[api/orders] auto_assign_order failed; order created without assignment", autoErr.message);
   }
 
-  const orders = await fetchOrdersForCustomer(sb, customerId);
-  const enriched = orders ? await enrichOrdersWithSignedUrls(sb, orders) : [];
-  const created = enriched.find((o) => o.id === orderId) ?? null;
-  return NextResponse.json({ order: created, orderId } satisfies { order: Order | null; orderId: string });
+  // Fetch the just-created order by its UUID via service role. This bypasses
+  // any customer-scoped filter and surfaces the underlying join/select error
+  // so we never return a 200 with order:null on a successful insert.
+  const hydrated = await fetchOrderById(sb, orderId);
+  if (!hydrated) {
+    console.error("[api/orders] place_order_admin succeeded but fetchOrderById returned null", { orderId, customerId });
+    return NextResponse.json(
+      { error: "تم إنشاء الطلب لكن تعذر تحميل بياناته. حدّث الصفحة لعرض الطلب." },
+      { status: 500 },
+    );
+  }
+  const [enrichedOne] = await enrichOrdersWithSignedUrls(sb, [hydrated]);
+  return NextResponse.json({ order: enrichedOne ?? hydrated, orderId } satisfies { order: Order; orderId: string });
 }
 
 export async function GET() {

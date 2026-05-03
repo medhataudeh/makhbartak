@@ -28,17 +28,16 @@ export interface ApiCreateOrderInput {
 export async function apiCreateOrder(
   idempotencyKey: string,
   order: ApiCreateOrderInput,
-): Promise<{ order: Order | null; orderId: string } | { error: string }> {
+): Promise<{ order: Order; orderId: string } | { error: string }> {
   const res = await fetch("/api/orders", {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ idempotencyKey, order }),
   });
-  if (!res.ok) {
-    const body = await res.json().catch(() => ({}));
-    return { error: body.error ?? `HTTP ${res.status}` };
-  }
-  return res.json();
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) return { error: body.error ?? `HTTP ${res.status}` };
+  if (!body.order) return { error: body.error ?? "تعذر تحميل بيانات الطلب بعد إنشائه" };
+  return { order: body.order as Order, orderId: body.orderId as string };
 }
 
 export async function apiListOrdersForCustomer(customerId: string): Promise<Order[] | null> {

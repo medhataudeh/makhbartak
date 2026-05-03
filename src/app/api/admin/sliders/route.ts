@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabase/server-admin";
+import { isUuid } from "@/lib/supabase/uuid";
 import { requireAdmin } from "@/lib/route-auth";
 
 interface UpsertBody {
@@ -33,6 +34,16 @@ export async function POST(req: NextRequest) {
   if (!auth.ok) return NextResponse.json({ error: auth.error }, { status: auth.status });
   const body = (await req.json().catch(() => null)) as UpsertBody | null;
   if (!body) return NextResponse.json({ error: "invalid json" }, { status: 400 });
+  if (body.id != null && !isUuid(body.id)) {
+    return NextResponse.json({ error: "معرّف السلايدر غير صالح" }, { status: 400 });
+  }
+  if (body.ctaTarget === "package") {
+    if (!body.ctaTargetId || !isUuid(body.ctaTargetId)) {
+      return NextResponse.json({ error: "اختر باقة صحيحة من القائمة" }, { status: 400 });
+    }
+  } else if (body.ctaTargetId && !isUuid(body.ctaTargetId)) {
+    return NextResponse.json({ error: "معرّف الهدف يجب أن يكون UUID صالحاً" }, { status: 400 });
+  }
 
   const sb = getSupabaseAdmin();
   const { data: id, error } = await sb.rpc("upsert_slider_admin", {

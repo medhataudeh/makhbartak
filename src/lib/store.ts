@@ -425,8 +425,8 @@ async function writeOrderRemote(order: Order, input: CreateOrderInput): Promise<
   // Swap the in-memory placeholder id for the real Supabase UUID so subsequent
   // reads (refresh → hydrate) align without duplicates. The `created` server
   // payload also carries any server-defaulted fields (timestamps, etc.).
-  if (result.order && result.orderId !== order.id) {
-    _orders = _orders.map((o) => (o.id === order.id ? { ...result.order!, instructions: order.instructions } : o));
+  if (result.orderId !== order.id) {
+    _orders = _orders.map((o) => (o.id === order.id ? { ...result.order, instructions: order.instructions } : o));
     _idempotency.set(input.idempotencyKey, result.order.id);
     emit();
   }
