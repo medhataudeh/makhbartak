@@ -20,6 +20,7 @@ import { checkPassword, PASSWORD_HINT_AR } from "@/lib/password-policy";
 import { formatDate, formatPrice, relativeTime } from "@/lib/utils";
 import { Button } from "@/components/ui/Button";
 import { StatusBadge } from "@/components/ui/StatusBadge";
+import { CredentialsShareSheet, generateTempPassword, type ShareableCredentials } from "@/components/admin/CredentialsShareSheet";
 
 interface Props {
   adminId: string;
@@ -596,6 +597,7 @@ function LabUsersTab({ lab, adminRef }: {
   const [creating, setCreating] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState<LabUser | null>(null);
   const [resetTarget, setResetTarget] = useState<LabUser | null>(null);
+  const [shareCreds, setShareCreds] = useState<ShareableCredentials | null>(null);
   const toast = useToast();
 
   return (
@@ -660,17 +662,32 @@ function LabUsersTab({ lab, adminRef }: {
           labId={lab.id}
           initial={editing ?? undefined}
           onCancel={() => { setEditing(null); setCreating(false); }}
-          onSubmit={(u) => {
-            upsertLabUser(u);
+          onSubmit={async (u) => {
+            const isCreate = !editing;
+            const r = await upsertLabUser(u);
+            if (!r.ok) { toast.error(r.error ?? "تعذر الحفظ"); return; }
             logActivity({
               adminId: adminRef.adminId, adminName: adminRef.adminName, role: adminRef.role,
-              action: "user_edit", entity: "lab_user", entityId: u.id,
+              action: "user_edit", entity: "lab_user", entityId: r.id ?? u.id,
               details: editing ? `تعديل مستخدم المخبر ${u.fullName}` : `إضافة مستخدم مخبر ${u.fullName}`,
             });
             toast.success("تم الحفظ بنجاح");
             setEditing(null); setCreating(false);
+            if (isCreate && u.password) {
+              setShareCreds({
+                roleLabel: LAB_USER_ROLE_LABELS[u.role],
+                fullName: u.fullName,
+                email: u.username,
+                password: u.password,
+                phone: (u as LabUser & { phone?: string }).phone,
+              });
+            }
           }}
         />
+      )}
+
+      {shareCreds && (
+        <CredentialsShareSheet credentials={shareCreds} onClose={() => setShareCreds(null)} />
       )}
 
       {resetTarget && (
@@ -716,43 +733,68 @@ function LabUserFormModal({ labId, initial, onCancel, onSubmit }: {
   labId: string;
   initial?: LabUser;
   onCancel: () => void;
-  onSubmit: (u: LabUser) => void;
+  onSubmit: (u: LabUser & { phone?: string }) => void;
 }) {
   const [d, setD] = useState<LabUser>(() => initial ?? {
     id: `lu-${Date.now()}`, labId, username: "", password: "", fullName: "",
     role: "lab_uploader", isActive: true,
   });
+  const [phone, setPhone] = useState<string>("");
   const set = <K extends keyof LabUser>(k: K, v: LabUser[K]) => setD((x) => ({ ...x, [k]: v }));
 
   // Password is only collected on create (resets go through ResetPasswordDialog).
   const passwordCheck = !initial ? checkPassword(d.password) : { ok: true, errors: [] as string[] };
+  const emailValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(d.username.trim());
 
   const canSubmit =
     d.fullName.trim().length > 0 &&
-    d.username.trim().length > 0 &&
+    emailValid &&
     (!!initial || passwordCheck.ok);
 
   return (
     <div role="dialog" aria-modal="true" className="fixed inset-0 z-[60] bg-black/50 flex items-center justify-center p-4">
-      <div className="bg-white w-full max-w-md rounded-2xl p-5 space-y-3">
+      <div className="bg-white w-full max-w-md rounded-2xl p-5 space-y-3 max-h-[90vh] overflow-y-auto">
         <h3 className="text-sm font-bold text-[#164E63]">{initial ? "تعديل مستخدم" : "إضافة مستخدم"}</h3>
-        <Field label="الاسم الكامل">
+        <Field label="الاسم الكامل *">
           <input value={d.fullName} onChange={(e) => set("fullName", e.target.value)} className="w-full h-11 px-3 rounded-xl border border-gray-200 text-sm" />
         </Field>
-        <Field label="اسم المستخدم">
-          <input value={d.username} onChange={(e) => set("username", e.target.value)} className="w-full h-11 px-3 rounded-xl border border-gray-200 text-sm lat" dir="ltr" />
+        <Field label="البريد الإلكتروني *">
+          <input
+            type="email"
+            value={d.username}
+            onChange={(e) => set("username", e.target.value)}
+            placeholder="user@lab.com"
+            className="w-full h-11 px-3 rounded-xl border border-gray-200 text-sm lat"
+            dir="ltr"
+          />
+          {d.username && !emailValid && (
+            <p className="text-[11px] text-red-500 mt-1">صيغة البريد غير صحيحة</p>
+          )}
+        </Field>
+        <Field label="رقم الهاتف">
+          <input
+            type="tel"
+            value={phone}
+            onChange={(e) => setPhone(e.target.value)}
+            placeholder="+963 9XX XXX XXX"
+            className="w-full h-11 px-3 rounded-xl border border-gray-200 text-sm lat"
+            dir="ltr"
+          />
         </Field>
         {!initial && (
-          <Field label="كلمة المرور المبدئية">
-            <input
-              value={d.password}
-              onChange={(e) => set("password", e.target.value)}
-              type="text"
-              aria-invalid={d.password.length > 0 && !passwordCheck.ok}
-              aria-describedby="lab-user-pw-hint"
-              className={`w-full h-11 px-3 rounded-xl border text-sm lat ${d.password.length > 0 && !passwordCheck.ok ? "border-red-300 focus:border-red-400" : "border-gray-200 focus:border-[#0891B2]"} outline-none`}
-              dir="ltr"
-            />
+          <Field label="كلمة المرور المبدئية *">
+            <div className="flex gap-2">
+              <input
+                value={d.password}
+                onChange={(e) => set("password", e.target.value)}
+                type="text"
+                aria-invalid={d.password.length > 0 && !passwordCheck.ok}
+                aria-describedby="lab-user-pw-hint"
+                className={`flex-1 h-11 px-3 rounded-xl border text-sm lat ${d.password.length > 0 && !passwordCheck.ok ? "border-red-300 focus:border-red-400" : "border-gray-200 focus:border-[#0891B2]"} outline-none`}
+                dir="ltr"
+              />
+              <Button variant="outline" size="sm" onClick={() => set("password", generateTempPassword())}>توليد</Button>
+            </div>
             <p id="lab-user-pw-hint" className={`text-[11px] mt-1 leading-relaxed ${d.password.length > 0 && !passwordCheck.ok ? "text-red-600" : "text-gray-400"}`}>
               {d.password.length > 0 && !passwordCheck.ok
                 ? `ينقص: ${passwordCheck.errors.join("، ")}`
@@ -773,7 +815,7 @@ function LabUserFormModal({ labId, initial, onCancel, onSubmit }: {
         </label>
         <div className="flex gap-2 pt-2">
           <Button variant="outline" className="flex-1" onClick={onCancel}>إلغاء</Button>
-          <Button variant="primary" className="flex-1" disabled={!canSubmit} onClick={() => onSubmit(d)}>
+          <Button variant="primary" className="flex-1" disabled={!canSubmit} onClick={() => onSubmit({ ...d, phone: phone.trim() || undefined })}>
             حفظ
           </Button>
         </div>

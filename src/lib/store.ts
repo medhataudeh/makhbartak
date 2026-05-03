@@ -56,14 +56,22 @@ function seedPublicNumber(): string {
   _seedCounter += 1;
   return `HL-2026-${String(_seedCounter).padStart(6, "0")}`;
 }
-let _orders: Order[] = MOCK_ORDERS.map((o) => ({
-  ...o,
-  publicNumber: o.publicNumber ?? seedPublicNumber(),
-  status: o.status === "result_ready" ? "completed" : o.status,
-  events: o.events ?? seedEventsFor(o),
-  resultFiles: o.resultFiles ?? MOCK_RESULT_FILES.filter((f) => f.orderId === o.id),
-}));
-let _notifications: Notification[] = [...MOCK_NOTIFICATIONS];
+// When Supabase is on, the live admin/customer/nurse views must show ONLY
+// real DB rows. Seeding MOCK_ORDERS here was leaking mock nurseId/labId
+// values (SEED_NURSE_*) into admin assignment flows, where the OCC quick-
+// action prompt prefilled them and produced
+// "nurse 00000000-0000-4000-8000-0000000a0002 does not exist" on save.
+// Mock seed is only useful when running flag-off as a static prototype.
+let _orders: Order[] = USE_SUPABASE
+  ? []
+  : MOCK_ORDERS.map((o) => ({
+      ...o,
+      publicNumber: o.publicNumber ?? seedPublicNumber(),
+      status: o.status === "result_ready" ? "completed" : o.status,
+      events: o.events ?? seedEventsFor(o),
+      resultFiles: o.resultFiles ?? MOCK_RESULT_FILES.filter((f) => f.orderId === o.id),
+    }));
+let _notifications: Notification[] = USE_SUPABASE ? [] : [...MOCK_NOTIFICATIONS];
 const _nurseNotifications: Notification[] = [...MOCK_NURSE_NOTIFICATIONS];
 let _labIssues: LabIssue[] = [];
 

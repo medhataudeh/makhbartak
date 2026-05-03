@@ -760,7 +760,10 @@ export const ROLE_LABELS: Record<AdminRole, string> = {
 export const ROLE_PERMISSIONS: Record<AdminRole, string[]> = {
   super_admin: ["*"],
   operations_admin: ["overview", "orders", "users", "nurses", "scheduling", "gamification", "shortages", "notifications"],
-  lab_admin: ["overview", "orders", "labs", "tests"],
+  // Test catalog editing is admin-only (super_admin / content_admin). The
+  // admin sub-role "lab_admin" oversees lab partnerships and operations but
+  // must not touch the tests catalog.
+  lab_admin: ["overview", "orders", "labs"],
   customer_support: ["overview", "orders", "users", "notifications"],
   finance_admin: ["overview", "invoices", "payments", "coupons"],
   content_admin: ["overview", "tests", "packages", "sliders", "icons", "branding", "content", "libraries", "settings"],

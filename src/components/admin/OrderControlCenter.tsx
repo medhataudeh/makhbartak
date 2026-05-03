@@ -151,7 +151,7 @@ export function OrderControlCenter({ order, role, nurses, labs, onClose, inline 
 }
 
 // ─── Sticky header with role-gated quick actions ──────────────────────────────
-function StickyHeader({ order, role, nurses, labs, onClose, onOpenUser }: {
+function StickyHeader({ order, role, onClose, onOpenUser }: {
   order: Order; role: ControlCenterRole; nurses: Nurse[]; labs: Lab[]; onClose: () => void;
   onOpenUser?: (userId: string) => void;
 }) {
@@ -207,24 +207,10 @@ function StickyHeader({ order, role, nurses, labs, onClose, onOpenUser }: {
               <div role="menu" className="absolute end-0 mt-1 w-64 bg-white rounded-xl border border-gray-100 shadow-lg z-10 py-1">
                 {!isLab && (
                   <>
-                    <ActionItem icon={UserCog} label="تعيين/تغيير الممرض" onClick={async () => {
-                      const id = window.prompt("أدخل معرّف الممرض:", order.nurseId ?? nurses[0]?.id ?? "");
-                      if (id) {
-                        const r = await assignNurse(order.id, id, ref);
-                        if (!r.ok) toast.error(r.error ?? "تعذر تعيين الممرض");
-                        else record(role, "order_update", "order", order.id, `تعيين ممرض → ${id}`);
-                        setActionsOpen(false);
-                      }
-                    }} />
-                    <ActionItem icon={Building2} label="تعيين/تغيير المخبر" onClick={async () => {
-                      const id = window.prompt("أدخل معرّف المخبر:", order.labId ?? labs[0]?.id ?? "");
-                      if (id) {
-                        const r = await assignLab(order.id, id, ref);
-                        if (!r.ok) toast.error(r.error ?? "تعذر تعيين المخبر");
-                        else record(role, "order_update", "order", order.id, `تعيين مخبر → ${id}`);
-                        setActionsOpen(false);
-                      }
-                    }} />
+                    {/* Nurse + lab assignment is intentionally NOT in this
+                       quick-actions menu anymore. Use the dropdowns under
+                       the "Operations" tab — they read real DB rows so the
+                       admin can never accidentally submit a stale id. */}
                     <ActionItem icon={RefreshCw} label="إعادة جدولة" onClick={async () => {
                       const date = window.prompt("تاريخ جديد (YYYY-MM-DD):", order.visitDate);
                       if (date) {

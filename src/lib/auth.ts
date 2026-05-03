@@ -339,7 +339,9 @@ export async function resetAdminPassword(id: string, password: string): Promise<
   return apiResetUserPassword(id, password);
 }
 
-export async function upsertCustomerUser(u: AuthUser): Promise<{ ok: boolean; error?: string }> {
+export async function upsertCustomerUser(
+  u: AuthUser & { phone?: string },
+): Promise<{ ok: boolean; id?: string; error?: string }> {
   const isCreate = !u.id;
   const result = isCreate
     ? await apiCreateUser({
@@ -347,9 +349,10 @@ export async function upsertCustomerUser(u: AuthUser): Promise<{ ok: boolean; er
         email: u.username,
         password: u.password || "phase8-customer-temp-password",
         fullName: u.name,
+        phone: u.phone,
         isActive: u.isActive,
       })
-    : await apiPatchUser(u.id, { fullName: u.name, isActive: u.isActive });
+    : await apiPatchUser(u.id, { fullName: u.name, phone: u.phone, isActive: u.isActive });
   if (result.ok) await customerStore.refresh();
   return result;
 }
@@ -370,7 +373,9 @@ export async function resetCustomerUserPassword(id: string, password: string): P
   return apiResetUserPassword(id, password);
 }
 
-export async function upsertNurseUser(u: AuthUser): Promise<{ ok: boolean; error?: string }> {
+export async function upsertNurseUser(
+  u: AuthUser & { phone?: string; city?: string },
+): Promise<{ ok: boolean; id?: string; error?: string }> {
   const isCreate = !u.id;
   const result = isCreate
     ? await apiCreateUser({
@@ -378,9 +383,11 @@ export async function upsertNurseUser(u: AuthUser): Promise<{ ok: boolean; error
         email: u.username,
         password: u.password || "phase8-nurse-temp-password",
         fullName: u.name,
+        phone: u.phone,
+        city: u.city,
         isActive: u.isActive,
       })
-    : await apiPatchUser(u.id, { fullName: u.name, isActive: u.isActive });
+    : await apiPatchUser(u.id, { fullName: u.name, phone: u.phone, city: u.city, isActive: u.isActive });
   if (result.ok) await nurseStore.refresh();
   return result;
 }
@@ -401,7 +408,9 @@ export async function resetNurseUserPassword(id: string, password: string): Prom
   return apiResetUserPassword(id, password);
 }
 
-export async function upsertLabUser(u: LabUser): Promise<{ ok: boolean; error?: string }> {
+export async function upsertLabUser(
+  u: LabUser & { phone?: string },
+): Promise<{ ok: boolean; id?: string; error?: string }> {
   const isCreate = !u.id;
   const result = isCreate
     ? await apiCreateUser({
@@ -409,12 +418,14 @@ export async function upsertLabUser(u: LabUser): Promise<{ ok: boolean; error?: 
         email: u.username,
         password: u.password || "phase8-lab-temp-password",
         fullName: u.fullName,
+        phone: u.phone,
         labId: u.labId,
         labRole: u.role,
         isActive: u.isActive,
       })
     : await apiPatchUser(u.id, {
         fullName: u.fullName,
+        phone: u.phone,
         labId: u.labId,
         labRole: u.role,
         isActive: u.isActive,

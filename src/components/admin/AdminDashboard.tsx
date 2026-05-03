@@ -8,7 +8,7 @@ import {
   ChevronUp, ChevronDown, ChevronLeft, Route, MapPin, Wrench,
 } from "lucide-react";
 import {
-  MOCK_ORDERS, ADMIN_STATS, MOCK_TESTS, MOCK_PACKAGES, MOCK_NURSES,
+  MOCK_ORDERS, ADMIN_STATS, MOCK_TESTS, MOCK_PACKAGES,
   ORDER_STATUS_LABELS, MOCK_INVOICES,
   MOCK_ICONS, MOCK_SLIDERS, MOCK_PATIENTS, MOCK_ADDRESSES, MOCK_NOTIFICATIONS, SEED_CUSTOMER_1_ID,
   MOCK_COUPONS, MOCK_NURSE_ROUTES, MOCK_GAMIFICATION,
@@ -25,6 +25,7 @@ import { StatusBadge } from "@/components/ui/StatusBadge";
 import { Button } from "@/components/ui/Button";
 import { InvoiceView } from "@/components/admin/InvoiceView";
 import { OrderControlCenter } from "@/components/admin/OrderControlCenter";
+import { CredentialsShareSheet, generateTempPassword, type ShareableCredentials } from "@/components/admin/CredentialsShareSheet";
 import { LabsAdmin } from "@/components/admin/LabsAdmin";
 import { BrandingAdmin } from "@/components/admin/BrandingAdmin";
 import { ContentAdmin } from "@/components/admin/ContentAdmin";
@@ -2352,6 +2353,7 @@ function CustomerAccountsAdmin({ currentUser }: { currentUser: AdminUser }) {
   const [creating, setCreating] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState<import("@/lib/types").AuthUser | null>(null);
   const [resetTarget, setResetTarget] = useState<import("@/lib/types").AuthUser | null>(null);
+  const [shareCreds, setShareCreds] = useState<ShareableCredentials | null>(null);
 
   return (
     <>
@@ -2382,10 +2384,15 @@ function CustomerAccountsAdmin({ currentUser }: { currentUser: AdminUser }) {
         />
       </Section>
 
-      {(editing || creating) && <AuthUserForm role="customer" initial={editing ?? undefined} onCancel={() => { setEditing(null); setCreating(false); }} onSubmit={(u) => {
-        upsertCustomerUser(u);
-        logActivity({ adminId: currentUser.id, adminName: currentUser.name, role: currentUser.role, action: "user_edit", entity: "customer_user", entityId: u.id, details: editing ? `تعديل حساب العميل ${u.name}` : `إضافة حساب عميل ${u.name}` });
+      {(editing || creating) && <AuthUserForm role="customer" initial={editing ?? undefined} onCancel={() => { setEditing(null); setCreating(false); }} onSubmit={async (u) => {
+        const isCreate = !editing;
+        const r = await upsertCustomerUser(u);
+        if (!r.ok) { toast.error(r.error ?? "تعذر الحفظ"); return; }
+        logActivity({ adminId: currentUser.id, adminName: currentUser.name, role: currentUser.role, action: "user_edit", entity: "customer_user", entityId: r.id ?? u.id, details: editing ? `تعديل حساب العميل ${u.name}` : `إضافة حساب عميل ${u.name}` });
         toast.success("تم الحفظ بنجاح"); setEditing(null); setCreating(false);
+        if (isCreate && u.password) {
+          setShareCreds({ roleLabel: "عميل", fullName: u.name, email: u.username, password: u.password, phone: u.phone });
+        }
       }} />}
 
       {confirmDelete && (
@@ -2400,6 +2407,10 @@ function CustomerAccountsAdmin({ currentUser }: { currentUser: AdminUser }) {
           onConfirm={(pw) => { resetCustomerUserPassword(resetTarget.id, pw); toast.success("تم إعادة تعيين كلمة المرور"); setResetTarget(null); }}
         />
       )}
+
+      {shareCreds && (
+        <CredentialsShareSheet credentials={shareCreds} onClose={() => setShareCreds(null)} />
+      )}
     </>
   );
 }
@@ -2411,6 +2422,7 @@ function NurseAccountsAdmin({ currentUser }: { currentUser: AdminUser }) {
   const [creating, setCreating] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState<import("@/lib/types").AuthUser | null>(null);
   const [resetTarget, setResetTarget] = useState<import("@/lib/types").AuthUser | null>(null);
+  const [shareCreds, setShareCreds] = useState<ShareableCredentials | null>(null);
 
   return (
     <>
@@ -2424,10 +2436,9 @@ function NurseAccountsAdmin({ currentUser }: { currentUser: AdminUser }) {
           columns={[
             { key: "user", label: "اسم المستخدم", render: (u) => <span className="lat" dir="ltr">{u.username}</span> },
             { key: "name", label: "الاسم",        render: (u) => u.name },
-            { key: "linked", label: "ربط",        render: (u) => {
-              const nurse = MOCK_NURSES.find((n) => n.id === u.linkedEntityId);
-              return <span className="text-xs text-gray-500">{nurse ? nurse.name : <span className="lat" dir="ltr">{u.linkedEntityId}</span>}</span>;
-            } },
+            { key: "linked", label: "ربط", render: (u) => (
+              <span className="lat text-[11px] text-gray-400" dir="ltr">{u.linkedEntityId}</span>
+            ) },
             { key: "active", label: "حالة",       render: (u) => u.isActive ? <Pill color="green">نشط</Pill> : <Pill color="red">موقوف</Pill> },
             { key: "last", label: "آخر دخول",     render: (u) => <span className="text-xs text-gray-500">{u.lastLoginAt ? relativeTime(u.lastLoginAt) : "—"}</span> },
             { key: "act", label: "إجراءات",       render: (u) => (
@@ -2444,10 +2455,15 @@ function NurseAccountsAdmin({ currentUser }: { currentUser: AdminUser }) {
         />
       </Section>
 
-      {(editing || creating) && <AuthUserForm role="nurse" initial={editing ?? undefined} onCancel={() => { setEditing(null); setCreating(false); }} onSubmit={(u) => {
-        upsertNurseUser(u);
-        logActivity({ adminId: currentUser.id, adminName: currentUser.name, role: currentUser.role, action: "user_edit", entity: "nurse_user", entityId: u.id, details: editing ? `تعديل حساب الممرض ${u.name}` : `إضافة حساب ممرض ${u.name}` });
+      {(editing || creating) && <AuthUserForm role="nurse" initial={editing ?? undefined} onCancel={() => { setEditing(null); setCreating(false); }} onSubmit={async (u) => {
+        const isCreate = !editing;
+        const r = await upsertNurseUser(u);
+        if (!r.ok) { toast.error(r.error ?? "تعذر الحفظ"); return; }
+        logActivity({ adminId: currentUser.id, adminName: currentUser.name, role: currentUser.role, action: "user_edit", entity: "nurse_user", entityId: r.id ?? u.id, details: editing ? `تعديل حساب الممرض ${u.name}` : `إضافة حساب ممرض ${u.name}` });
         toast.success("تم الحفظ بنجاح"); setEditing(null); setCreating(false);
+        if (isCreate && u.password) {
+          setShareCreds({ roleLabel: "ممرض", fullName: u.name, email: u.username, password: u.password, phone: u.phone });
+        }
       }} />}
 
       {confirmDelete && (
@@ -2462,6 +2478,10 @@ function NurseAccountsAdmin({ currentUser }: { currentUser: AdminUser }) {
           onConfirm={(pw) => { resetNurseUserPassword(resetTarget.id, pw); toast.success("تم إعادة تعيين كلمة المرور"); setResetTarget(null); }}
         />
       )}
+
+      {shareCreds && (
+        <CredentialsShareSheet credentials={shareCreds} onClose={() => setShareCreds(null)} />
+      )}
     </>
   );
 }
@@ -2470,7 +2490,10 @@ function AuthUserForm({ role, initial, onCancel, onSubmit }: {
   role: "customer" | "nurse";
   initial?: import("@/lib/types").AuthUser;
   onCancel: () => void;
-  onSubmit: (u: import("@/lib/types").AuthUser) => void;
+  // Returning the draft + the optional richer profile fields lets the caller
+  // forward `phone` / `city` into apiCreateUser without breaking the legacy
+  // AuthUser shape.
+  onSubmit: (u: import("@/lib/types").AuthUser & { phone?: string; city?: string }) => void;
 }) {
   const idPrefix = role === "customer" ? "cu" : "nu";
   const [draft, setDraft] = useState<import("@/lib/types").AuthUser>(() => initial ?? {
@@ -2482,23 +2505,71 @@ function AuthUserForm({ role, initial, onCancel, onSubmit }: {
     linkedEntityId: "",
     isActive: true,
   });
+  const [phone, setPhone] = useState("");
+  const [city, setCity] = useState(role === "nurse" ? "دمشق" : "");
   const set = <K extends keyof import("@/lib/types").AuthUser>(k: K, v: import("@/lib/types").AuthUser[K]) =>
     setDraft((d) => ({ ...d, [k]: v }));
+
+  const generatePassword = () => set("password", generateTempPassword());
+
+  const emailValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(draft.username.trim());
+  const passwordValid = !!initial || draft.password.length >= 8;
+
   return (
     <Modal title={initial ? (role === "customer" ? "تعديل عميل" : "تعديل ممرض") : (role === "customer" ? "إضافة عميل" : "إضافة ممرض")} onClose={onCancel}>
       <div className="space-y-3">
-        <Field label="الاسم *"><TextInput value={draft.name} onChange={(e) => set("name", e.target.value)} /></Field>
-        <Field label="اسم المستخدم *"><TextInput value={draft.username} onChange={(e) => set("username", e.target.value)} style={{ direction: "ltr", textAlign: "right" }} /></Field>
-        <Field label="كلمة المرور *"><TextInput type="text" value={draft.password} onChange={(e) => set("password", e.target.value)} style={{ direction: "ltr", textAlign: "right" }} /></Field>
-        {role === "nurse" ? (
-          <Field label="ربط بسجل الممرض *">
-            <select value={draft.linkedEntityId} onChange={(e) => set("linkedEntityId", e.target.value)} className="w-full h-10 px-3 rounded-xl border border-gray-200 text-sm cursor-pointer">
-              <option value="">— اختر ممرضاً —</option>
-              {MOCK_NURSES.map((n) => <option key={n.id} value={n.id}>{n.name}</option>)}
+        <Field label="الاسم الكامل *">
+          <TextInput value={draft.name} onChange={(e) => set("name", e.target.value)} />
+        </Field>
+        <Field label="البريد الإلكتروني *">
+          <TextInput
+            type="email"
+            value={draft.username}
+            onChange={(e) => set("username", e.target.value)}
+            style={{ direction: "ltr", textAlign: "right" }}
+            placeholder="user@example.com"
+          />
+          {draft.username && !emailValid && (
+            <p className="text-[11px] text-red-500 mt-1">صيغة البريد غير صحيحة</p>
+          )}
+        </Field>
+        <Field label="رقم الهاتف">
+          <TextInput
+            type="tel"
+            value={phone}
+            onChange={(e) => setPhone(e.target.value)}
+            style={{ direction: "ltr", textAlign: "right" }}
+            placeholder="+963 9XX XXX XXX"
+          />
+        </Field>
+        {role === "nurse" && (
+          <Field label="المدينة">
+            <select
+              value={city}
+              onChange={(e) => setCity(e.target.value)}
+              className="w-full h-10 px-3 rounded-xl border border-gray-200 text-sm cursor-pointer"
+            >
+              <option value="دمشق">دمشق</option>
+              <option value="ريف دمشق">ريف دمشق</option>
             </select>
           </Field>
-        ) : (
-          <Field label="معرّف العميل *"><TextInput value={draft.linkedEntityId} onChange={(e) => set("linkedEntityId", e.target.value)} placeholder="مثال: u-3" style={{ direction: "ltr", textAlign: "right" }} /></Field>
+        )}
+        {!initial && (
+          <Field label="كلمة المرور المبدئية * (٨ أحرف على الأقل)">
+            <div className="flex gap-2">
+              <TextInput
+                type="text"
+                value={draft.password}
+                onChange={(e) => set("password", e.target.value)}
+                style={{ direction: "ltr", textAlign: "right" }}
+                className="flex-1"
+              />
+              <Button variant="outline" size="sm" onClick={generatePassword}>توليد</Button>
+            </div>
+            {draft.password && !passwordValid && (
+              <p className="text-[11px] text-red-500 mt-1">يجب ألا تقل عن ٨ أحرف</p>
+            )}
+          </Field>
         )}
         <div className="flex items-center justify-between">
           <span className="text-sm text-[#164E63]">نشط</span>
@@ -2507,7 +2578,11 @@ function AuthUserForm({ role, initial, onCancel, onSubmit }: {
       </div>
       <div className="flex justify-end gap-2 mt-4">
         <Button variant="outline" onClick={onCancel}>إلغاء</Button>
-        <Button variant="primary" disabled={!draft.username.trim() || !draft.password.trim() || !draft.name.trim() || !draft.linkedEntityId.trim()} onClick={() => onSubmit(draft)}>حفظ</Button>
+        <Button
+          variant="primary"
+          disabled={!draft.name.trim() || !emailValid || !passwordValid}
+          onClick={() => onSubmit({ ...draft, phone: phone.trim() || undefined, city: city.trim() || undefined })}
+        >حفظ</Button>
       </div>
     </Modal>
   );
