@@ -7,7 +7,7 @@ import { isUuid } from "./supabase/uuid";
 import {
   apiCreatePatient, apiUpdatePatient, apiDeletePatient,
   apiCreateAddress, apiUpdateAddress, apiDeleteAddress,
-  apiGetCustomerProfile,
+  apiGetCustomerProfile, apiSetDefaultPatient,
 } from "./customer-api";
 import { setHydratedPreferredPayment } from "./payment-pref";
 
@@ -23,6 +23,10 @@ const ADDRESSES_KEY = "makhbartak.profile.addresses.v1";
 
 let _patients: Patient[]   = [...MOCK_PATIENTS];
 let _addresses: Address[]  = [...MOCK_ADDRESSES];
+// Mirrors customers.default_patient_id. The booking flow reads this to
+// preselect the last patient the user picked. Null until the profile
+// hydrate completes — first-time customers stay null.
+let _defaultPatientId: string | null = null;
 let _hydrated = false;
 let _hydratedCustomerId: string | null = null;
 
@@ -60,11 +64,38 @@ export async function hydrateProfileForCustomer(customerId: string): Promise<voi
   if (!snap) return;
   _patients = snap.patients;
   _addresses = snap.addresses;
+  _defaultPatientId = snap.defaultPatientId;
   _hydratedCustomerId = customerId;
   persistPatients();
   persistAddresses();
   setHydratedPreferredPayment(snap.paymentPreference);
   emit();
+}
+
+// ─── Default patient (last selected) ───────────────────────────────────────
+export function getDefaultPatientId(): string | null {
+  return _defaultPatientId;
+}
+export function useDefaultPatientId(): string | null {
+  return useSyncExternalStore(subscribe, getDefaultPatientId, () => null);
+}
+
+/**
+ * Persist the user's most-recently-selected patient on
+ * customers.default_patient_id. Optimistically updates the local store and
+ * fires the API call in the background. Server-side validates the patient
+ * belongs to the customer.
+ */
+export async function setDefaultPatient(patientId: string | null): Promise<{ ok: boolean; error?: string }> {
+  _defaultPatientId = patientId;
+  emit();
+  if (!USE_SUPABASE) return { ok: true };
+  const session = await getSession();
+  if (!session || session.role !== "customer" || !isUuid(session.linkedEntityId)) {
+    return { ok: true };
+  }
+  if (patientId != null && !isUuid(patientId)) return { ok: true };
+  return apiSetDefaultPatient(session.linkedEntityId, patientId);
 }
 
 async function getSession(): Promise<AuthSession | null> {
@@ -143,6 +174,10 @@ export async function deletePatient(id: string): Promise<{ ok: boolean; error?: 
   if (_patients.length && !_patients.some((p) => p.isDefault)) {
     _patients = _patients.map((p, i) => i === 0 ? { ...p, isDefault: true } : p);
   }
+  // If the deleted patient was the saved default, clear the local cache.
+  // The DB FK is `on delete set null`, so the server side is consistent
+  // automatically.
+  if (_defaultPatientId === id) _defaultPatientId = null;
   persistPatients();
   emit();
   if (!USE_SUPABASE) return { ok: true };

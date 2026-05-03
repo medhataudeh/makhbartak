@@ -735,8 +735,11 @@ function LabUserFormModal({ labId, initial, onCancel, onSubmit }: {
   onCancel: () => void;
   onSubmit: (u: LabUser & { phone?: string }) => void;
 }) {
+  // Empty id on new drafts — server returns the real UUID after create.
+  // A pre-generated "lu-…" slug used to leak into the PATCH path and
+  // produced "user id must be a uuid".
   const [d, setD] = useState<LabUser>(() => initial ?? {
-    id: `lu-${Date.now()}`, labId, username: "", password: "", fullName: "",
+    id: "", labId, username: "", password: "", fullName: "",
     role: "lab_uploader", isActive: true,
   });
   const [phone, setPhone] = useState<string>("");

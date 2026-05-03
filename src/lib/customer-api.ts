@@ -195,3 +195,21 @@ export async function apiSetPaymentPreference(
   }
   return { ok: true };
 }
+
+// Persist the customer's "last selected patient" on
+// customers.default_patient_id. Pass `null` to clear.
+export async function apiSetDefaultPatient(
+  customerId: string,
+  patientId: string | null,
+): Promise<{ ok: boolean; error?: string }> {
+  const res = await fetch(`/api/customers/${encodeURIComponent(customerId)}/default-patient`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ patientId }),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    return { ok: false, error: body.error ?? `HTTP ${res.status}` };
+  }
+  return { ok: true };
+}

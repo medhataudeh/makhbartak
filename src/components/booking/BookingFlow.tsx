@@ -5,7 +5,7 @@ import { MapPin, User, Clock, ChevronLeft, Plus, Calendar as CalendarIcon } from
 import { getShiftConfigs, SEED_CUSTOMER_1_ID } from "@/lib/mock-data";
 import { USE_SUPABASE } from "@/lib/supabase/flags";
 import { isUuid } from "@/lib/supabase/uuid";
-import { usePatients, useAddresses, upsertPatient, upsertAddress } from "@/lib/profile";
+import { usePatients, useAddresses, upsertPatient, upsertAddress, useDefaultPatientId, setDefaultPatient } from "@/lib/profile";
 import { useToast } from "@/components/ui/Toast";
 import { useSystemSettings } from "@/lib/system-settings";
 import { useOrders } from "@/lib/store";
@@ -33,51 +33,40 @@ interface BookingFlowProps {
 const ymd = (d: Date) => d.toISOString().split("T")[0];
 const WEEKDAYS_AR = ["الأحد", "الاثنين", "الثلاثاء", "الأربعاء", "الخميس", "الجمعة", "السبت"];
 
-const LAST_PATIENT_KEY = "makhbartak.booking.lastPatientId.v1";
-
-function getLastPatientId(): string | null {
-  if (typeof window === "undefined") return null;
-  try { return window.localStorage.getItem(LAST_PATIENT_KEY); } catch { return null; }
-}
-function rememberPatientId(id: string) {
-  if (typeof window === "undefined") return;
-  try { window.localStorage.setItem(LAST_PATIENT_KEY, id); } catch {}
-}
-
 export function BookingFlow({ tests, pkg, onContinue, onBack }: BookingFlowProps) {
   const allAddresses = useAddresses();
   const allPatients = usePatients();
+  const defaultPatientId = useDefaultPatientId();
   const settings = useSystemSettings();
   const liveOrders = useOrders();
 
-  // Patient defaults to the last patient the user explicitly picked in a
-  // prior checkout (persisted in localStorage). On first checkout it stays
-  // empty so the user makes a deliberate choice — we still never auto-fill
-  // the slot from the account name. The patient is a distinct entity.
+  // Patient defaults to the last one the customer picked. The preference
+  // lives in Supabase (customers.default_patient_id) and is loaded by
+  // hydrateProfileForCustomer at app startup; we read it through
+  // useDefaultPatientId so this component re-renders when the hydrate lands.
+  // First-time customers have no default — patient stays null so they make
+  // a deliberate choice. We never auto-fill the slot from the account name.
   const [visitDate, setVisitDate] = useState<string>("");
   const [shift, setShift] = useState<Shift | null>(null);
   const [address, setAddress] = useState<Address | null>(allAddresses.find((a) => a.isDefault) ?? allAddresses[0] ?? null);
   const [patient, setPatient] = useState<Patient | null>(() => {
-    const lastId = getLastPatientId();
-    if (!lastId) return null;
-    return allPatients.find((p) => p.id === lastId) ?? null;
+    if (!defaultPatientId) return null;
+    return allPatients.find((p) => p.id === defaultPatientId) ?? null;
   });
-  // Re-resolve once the patient list arrives from Supabase (the initial
-  // useState ran before the hydrate). Only patches when we don't yet have a
-  // selection so we never overwrite an explicit user pick. setState in an
-  // effect is the right tool: external state (Supabase patient list) just
-  // changed and we mirror it into the local form selection.
+  // Late-hydration safety net: when the patients list and/or the
+  // defaultPatientId arrive from Supabase after first paint, mirror that
+  // server state into the local form selection. Only patches when the user
+  // hasn't already made a fresh pick.
   useEffect(() => {
     if (patient) return;
-    const lastId = getLastPatientId();
-    if (!lastId) return;
-    const match = allPatients.find((p) => p.id === lastId);
+    if (!defaultPatientId) return;
+    const match = allPatients.find((p) => p.id === defaultPatientId);
     // eslint-disable-next-line react-hooks/set-state-in-effect
     if (match) setPatient(match);
-  }, [allPatients, patient]);
+  }, [allPatients, defaultPatientId, patient]);
   const choosePatient = (p: Patient) => {
     setPatient(p);
-    if (p.id) rememberPatientId(p.id);
+    if (p.id) void setDefaultPatient(p.id);
   };
   const [whenSheet, setWhenSheet] = useState(false);
   const [addressSheet, setAddressSheet] = useState(false);
@@ -460,11 +449,11 @@ function SectionRow({ icon, title, value, placeholder, required, onClick }: {
 }
 
 // ─── Combined day + slot picker (single step) ───────────────────────────────
-// Always renders all 3 candidate day cards. Days with zero available shifts
-// render greyed-out so the customer sees them and understands they're full.
-// Inside an available day, every shift renders — disabled shifts show their
-// reason; tapping them is a no-op. The submit() guard also re-checks
-// `available` so a bypassed UI cannot push an invalid date through.
+// Two-row layout: a row of three day pills (today / tomorrow / day-after)
+// is always rendered — disabled days stay visible but un-selectable. Below
+// the pills, the time-slot grid for the *selected* day appears in the same
+// sheet, so the user never leaves this screen to pick a time. Tapping an
+// available slot commits both selections and closes the sheet.
 function WhenPicker({
   days,
   selectedDate,
@@ -477,86 +466,117 @@ function WhenPicker({
   onPick: (date: string, shift: Shift) => void;
 }) {
   const today = new Date(); today.setHours(0, 0, 0, 0);
-  const offsetTag = (date: string) => {
+  const offsetTag = (date: string): string => {
     const d = new Date(date + "T00:00:00");
     const diff = Math.round((d.getTime() - today.getTime()) / 86_400_000);
     if (diff === 0) return "اليوم";
     if (diff === 1) return "غداً";
     if (diff === 2) return "بعد غد";
-    return null;
+    return WEEKDAYS_AR[d.getDay()];
   };
+
+  // Local "active" day: whichever day's slot grid is shown beneath the pills.
+  // Falls back to the prior selection, then to the first available day, then
+  // to the first day overall (so the empty state always has context).
+  const fallback = selectedDate || days.find((d) => d.available)?.date || days[0]?.date || "";
+  const [activeDate, setActiveDate] = useState<string>(fallback);
+  const activeDay = days.find((d) => d.date === activeDate) ?? days[0];
+
   return (
     <div className="space-y-4">
-      <p className="text-[12px] text-[#164E63] font-medium">اختر يوماً وفترة من الأيام المتاحة.</p>
-      {days.map((day) => {
-        const tag = offsetTag(day.date);
-        const dObj = new Date(day.date + "T00:00:00");
-        const dayDisabled = !day.available;
-        return (
-          <div
-            key={day.date}
-            aria-disabled={dayDisabled}
-            className={`rounded-2xl border p-3 ${
-              dayDisabled ? "border-gray-100 bg-gray-50/60 opacity-70" : "border-gray-100 bg-white"
-            }`}
-          >
-            <div className="flex items-center justify-between mb-2 px-1">
-              <div className="flex items-center gap-2">
-                <div className={`w-9 h-9 rounded-xl flex items-center justify-center ${dayDisabled ? "bg-gray-100" : "bg-[#ECFEFF]"}`}>
-                  <span className={`text-sm font-bold lat ${dayDisabled ? "text-gray-400" : "text-[#0891B2]"}`} dir="ltr">{dObj.getDate()}</span>
-                </div>
-                <div>
-                  <p className={`text-sm font-bold ${dayDisabled ? "text-gray-400" : "text-[#164E63]"}`}>{WEEKDAYS_AR[dObj.getDay()]}</p>
-                  <p className="text-[11px] text-gray-400">{formatDate(day.date)}</p>
-                </div>
-              </div>
-              {tag && (
-                <span className={`text-[10px] font-semibold rounded-full px-2 py-1 ${
-                  dayDisabled ? "text-gray-400 bg-gray-100" : "text-[#0891B2] bg-[#ECFEFF]"
-                }`}>
-                  {tag}
-                </span>
-              )}
-            </div>
-            {dayDisabled && (
-              <p className="text-[11px] text-amber-600 px-1 mb-2">لا توجد مواعيد متاحة في هذا اليوم.</p>
-            )}
-            <div className="grid grid-cols-2 gap-2">
-              {day.shifts.map((s) => {
-                const isSelected = selectedDate === day.date && selectedShift === s.shift;
-                const slotDisabled = !s.available;
-                return (
-                  <motion.button
-                    key={s.shift}
-                    whileTap={{ scale: slotDisabled ? 1 : 0.97 }}
-                    onClick={() => { if (!slotDisabled) onPick(day.date, s.shift); }}
-                    disabled={slotDisabled}
-                    aria-pressed={isSelected}
-                    aria-disabled={slotDisabled}
-                    className={`flex flex-col items-start gap-1 p-3 rounded-xl border-2 transition-all text-start ${
-                      isSelected
-                        ? "border-[#0891B2] bg-[#ECFEFF] cursor-pointer"
-                        : slotDisabled
-                          ? "border-gray-100 bg-gray-50/80 opacity-60 cursor-not-allowed"
-                          : "border-gray-200 bg-white active:bg-gray-50 cursor-pointer"
-                    }`}
-                  >
-                    <span className={`text-sm font-bold ${isSelected ? "text-[#0891B2]" : slotDisabled ? "text-gray-400" : "text-[#164E63]"}`}>
-                      {s.labelAr}
-                    </span>
-                    <span className="text-[11px] text-gray-500 lat" dir="ltr">
-                      {String(s.startHour).padStart(2, "0")}:00 – {String(s.endHour).padStart(2, "0")}:00
-                    </span>
-                    {slotDisabled && s.unavailableReason && (
-                      <span className="text-[10px] text-amber-600 leading-tight">{s.unavailableReason}</span>
-                    )}
-                  </motion.button>
-                );
-              })}
-            </div>
+      <p className="text-[12px] text-[#164E63] font-medium">اختر اليوم ثم الوقت في نفس الشاشة.</p>
+
+      {/* Three day pills — always exactly today / tomorrow / day-after. */}
+      <div className="grid grid-cols-3 gap-2" role="tablist" aria-label="اختيار اليوم">
+        {days.map((day) => {
+          const dObj = new Date(day.date + "T00:00:00");
+          const isActive = day.date === activeDate;
+          const isDisabled = !day.available;
+          return (
+            <button
+              key={day.date}
+              type="button"
+              role="tab"
+              aria-selected={isActive}
+              aria-disabled={isDisabled}
+              disabled={isDisabled}
+              onClick={() => { if (!isDisabled) setActiveDate(day.date); }}
+              className={`flex flex-col items-center justify-center py-3 px-2 rounded-xl border-2 transition-all ${
+                isActive
+                  ? "border-[#0891B2] bg-[#ECFEFF] cursor-pointer"
+                  : isDisabled
+                    ? "border-gray-100 bg-gray-50/70 opacity-60 cursor-not-allowed"
+                    : "border-gray-200 bg-white active:bg-gray-50 cursor-pointer"
+              }`}
+            >
+              <span className={`text-[10px] font-semibold tracking-wide ${
+                isActive ? "text-[#0891B2]" : isDisabled ? "text-gray-400" : "text-gray-500"
+              }`}>
+                {offsetTag(day.date)}
+              </span>
+              <span className={`text-lg font-bold lat mt-0.5 ${
+                isActive ? "text-[#0891B2]" : isDisabled ? "text-gray-400" : "text-[#164E63]"
+              }`} dir="ltr">{dObj.getDate()}</span>
+              <span className={`text-[10px] mt-0.5 ${
+                isDisabled ? "text-amber-600" : "text-gray-400"
+              }`}>
+                {isDisabled ? "غير متاح" : WEEKDAYS_AR[dObj.getDay()]}
+              </span>
+            </button>
+          );
+        })}
+      </div>
+
+      {/* Slot grid for the active day. Stays in this same sheet — no
+         second-step navigation. */}
+      <div>
+        <p className="text-[11px] font-semibold text-gray-500 mb-2 px-0.5">
+          {activeDay && !activeDay.available
+            ? "لا توجد مواعيد متاحة في هذا اليوم"
+            : "اختر الوقت"}
+        </p>
+        {activeDay && activeDay.available ? (
+          <div className="grid grid-cols-2 gap-2">
+            {activeDay.shifts.map((s) => {
+              const isSelected = selectedDate === activeDay.date && selectedShift === s.shift;
+              const slotDisabled = !s.available;
+              return (
+                <motion.button
+                  key={s.shift}
+                  whileTap={{ scale: slotDisabled ? 1 : 0.97 }}
+                  onClick={() => { if (!slotDisabled) onPick(activeDay.date, s.shift); }}
+                  disabled={slotDisabled}
+                  aria-pressed={isSelected}
+                  aria-disabled={slotDisabled}
+                  className={`flex flex-col items-start gap-1 p-3 rounded-xl border-2 transition-all text-start ${
+                    isSelected
+                      ? "border-[#0891B2] bg-[#ECFEFF] cursor-pointer"
+                      : slotDisabled
+                        ? "border-gray-100 bg-gray-50/80 opacity-60 cursor-not-allowed"
+                        : "border-gray-200 bg-white active:bg-gray-50 cursor-pointer"
+                  }`}
+                >
+                  <span className={`text-sm font-bold ${isSelected ? "text-[#0891B2]" : slotDisabled ? "text-gray-400" : "text-[#164E63]"}`}>
+                    {s.labelAr}
+                  </span>
+                  <span className="text-[11px] text-gray-500 lat" dir="ltr">
+                    {String(s.startHour).padStart(2, "0")}:00 – {String(s.endHour).padStart(2, "0")}:00
+                  </span>
+                  {slotDisabled && s.unavailableReason && (
+                    <span className="text-[10px] text-amber-600 leading-tight">{s.unavailableReason}</span>
+                  )}
+                </motion.button>
+              );
+            })}
           </div>
-        );
-      })}
+        ) : (
+          <div className="bg-amber-50 border border-amber-100 rounded-xl px-3 py-3">
+            <p className="text-[12px] text-amber-700 leading-relaxed">
+              اختر يوماً متاحاً من الأعلى لعرض المواعيد.
+            </p>
+          </div>
+        )}
+      </div>
     </div>
   );
 }

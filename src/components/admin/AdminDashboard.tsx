@@ -2257,10 +2257,11 @@ function AdminsAdmin({ currentUser }: { currentUser: AdminUser }) {
     return <p className="text-sm text-gray-500">هذه الصفحة متاحة للمدير العام فقط.</p>;
   }
 
-  const upsert = (a: AdminUser) => {
+  const upsert = async (a: AdminUser) => {
     const exists = admins.find((x) => x.id === a.id);
-    upsertAdmin(a);
-    logActivity({ adminId: currentUser.id, adminName: currentUser.name, role: currentUser.role, action: "user_edit", entity: "admin", entityId: a.id, details: exists ? `تعديل الموظف ${a.name}` : `إضافة الموظف ${a.name}` });
+    const r = await upsertAdmin(a);
+    if (!r.ok) { toast.error(r.error ?? "تعذر الحفظ"); return; }
+    logActivity({ adminId: currentUser.id, adminName: currentUser.name, role: currentUser.role, action: "user_edit", entity: "admin", entityId: r.id ?? a.id, details: exists ? `تعديل الموظف ${a.name}` : `إضافة الموظف ${a.name}` });
     toast.success("تم الحفظ بنجاح");
     setEditing(null); setCreating(false);
   };
@@ -2495,9 +2496,12 @@ function AuthUserForm({ role, initial, onCancel, onSubmit }: {
   // AuthUser shape.
   onSubmit: (u: import("@/lib/types").AuthUser & { phone?: string; city?: string }) => void;
 }) {
-  const idPrefix = role === "customer" ? "cu" : "nu";
+  // New-user drafts must NOT carry a fake slug id ("nu-…", "cu-…"). The
+  // server route validates id as a UUID; passing a slug routes to PATCH and
+  // the request fails with "user id must be a uuid". Empty id keeps every
+  // upsert wrapper on the create path until the server returns a real UUID.
   const [draft, setDraft] = useState<import("@/lib/types").AuthUser>(() => initial ?? {
-    id: `${idPrefix}-${Date.now()}`,
+    id: "",
     username: "",
     password: "",
     name: "",
@@ -2610,8 +2614,9 @@ function PasswordResetModal({ target, onCancel, onConfirm }: {
 }
 
 function AdminForm({ initial, onCancel, onSubmit }: { initial?: AdminUser; onCancel: () => void; onSubmit: (a: AdminUser) => void }) {
+  // Empty id on new drafts so the upsert wrapper hits POST, not PATCH.
   const [draft, setDraft] = useState<AdminUser>(() => initial ?? {
-    id: `ad-${Date.now()}`, username: "", password: "", name: "", role: "customer_support", isActive: true,
+    id: "", username: "", password: "", name: "", role: "customer_support", isActive: true,
   });
   const set = <K extends keyof AdminUser>(k: K, v: AdminUser[K]) => setDraft((d) => ({ ...d, [k]: v }));
   return (
