@@ -1,8 +1,9 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabase/server-admin";
 import { requireAdmin } from "@/lib/route-auth";
+import { ensureMediaInfra, MEDIA_BUCKET } from "@/lib/supabase/ensure-media-infra";
 
-const BUCKET = "media";
+const BUCKET = MEDIA_BUCKET;
 
 // GET /api/admin/media — list every media asset, newest first.
 // Returns the public URL so the admin grid can render thumbnails directly.
@@ -10,6 +11,13 @@ const BUCKET = "media";
 export async function GET() {
   const auth = await requireAdmin();
   if (!auth.ok) return NextResponse.json({ error: auth.error }, { status: auth.status });
+  // Best-effort self-heal: create the bucket if missing so a fresh project
+  // doesn't need a migration round-trip before media management works.
+  // Table absence still requires the migration; we surface that explicitly.
+  const ensure = await ensureMediaInfra();
+  if (!ensure.ok) {
+    return NextResponse.json({ error: ensure.error, details: ensure.details }, { status: 500 });
+  }
   const sb = getSupabaseAdmin();
   const { data, error } = await sb
     .from("media_assets")
@@ -34,6 +42,15 @@ export async function GET() {
 export async function POST(req: NextRequest) {
   const auth = await requireAdmin();
   if (!auth.ok) return NextResponse.json({ error: auth.error }, { status: auth.status });
+
+  // Self-heal first. If the bucket / table is missing on a fresh project we
+  // create the bucket here and surface a precise Arabic error if the table
+  // hasn't been migrated yet, instead of letting Storage return the cryptic
+  // "Bucket not found".
+  const ensure = await ensureMediaInfra();
+  if (!ensure.ok) {
+    return NextResponse.json({ error: ensure.error, details: ensure.details }, { status: 500 });
+  }
 
   const fd = await req.formData().catch(() => null);
   if (!fd) return NextResponse.json({ error: "expected multipart/form-data" }, { status: 400 });

@@ -86,3 +86,20 @@ export async function patchMediaAlt(
   }
   return { ok: true };
 }
+
+// One-tap bootstrap that ensures the `media` storage bucket + the
+// `media_assets` metadata table exist. Called from the "إصلاح" button on
+// the Media Library when uploads fail with infra errors.
+export async function initMediaInfra(): Promise<{
+  ok: boolean;
+  bucketCreated?: boolean;
+  bucketExists?: boolean;
+  tableCreated?: boolean;
+  tableExists?: boolean;
+  error?: string;
+}> {
+  const res = await fetch("/api/admin/media/init", { method: "POST" });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) return { ok: false, error: body.error ?? `HTTP ${res.status}` };
+  return body as Awaited<ReturnType<typeof initMediaInfra>>;
+}

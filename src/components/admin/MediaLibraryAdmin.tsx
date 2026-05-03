@@ -1,9 +1,9 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
-import { Upload, Trash2, Copy, Check } from "lucide-react";
+import { Upload, Trash2, Copy, Check, Wrench } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { useToast } from "@/components/ui/Toast";
-import { listMedia, uploadMedia, deleteMedia, type MediaAsset } from "@/lib/admin-media-api";
+import { listMedia, uploadMedia, deleteMedia, initMediaInfra, type MediaAsset } from "@/lib/admin-media-api";
 
 // Top-level "مكتبة الوسائط" section in the admin dashboard. Distinct from
 // the inline MediaPicker — this is the manage view: bulk upload, search,
@@ -15,7 +15,21 @@ export function MediaLibraryAdmin() {
   const [uploading, setUploading] = useState(false);
   const [search, setSearch] = useState("");
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [repairing, setRepairing] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
+
+  const repair = async () => {
+    setRepairing(true);
+    const r = await initMediaInfra();
+    setRepairing(false);
+    if (!r.ok) { toast.error(r.error ?? "تعذر تهيئة مكتبة الوسائط"); return; }
+    toast.success("تمت تهيئة مكتبة الوسائط");
+    // Re-fetch the list now that the bucket/table are usable.
+    setLoading(true);
+    const rows = await listMedia();
+    setItems(rows);
+    setLoading(false);
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -86,6 +100,10 @@ export function MediaLibraryAdmin() {
             hidden
             onChange={(e) => { void onUpload(e.target.files); e.target.value = ""; }}
           />
+          <Button size="sm" variant="outline" loading={repairing} onClick={repair}>
+            <Wrench size={13} aria-hidden="true" />
+            إصلاح
+          </Button>
           <Button
             size="sm"
             variant="primary"
