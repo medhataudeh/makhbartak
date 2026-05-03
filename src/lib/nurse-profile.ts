@@ -1,8 +1,14 @@
 "use client";
 import { useSyncExternalStore } from "react";
-import type { Nurse } from "./types";
+import type { AuthSession, Nurse } from "./types";
 import { MOCK_NURSES } from "./mock-data";
+import { USE_SUPABASE } from "./supabase/flags";
+import { isUuid } from "./supabase/uuid";
+import { apiUpdateNurseProfile } from "./nurse-api";
 
+// Stage C: nurse profile edits persist via /api/nurses/[id]/profile when the
+// flag is on. localStorage stays as a write-through cache so the UI keeps
+// working in flag-off mock mode and survives a brief offline window.
 const KEY = "makhbartak.nurse-profile.v1";
 
 interface NurseProfileOverrides {
@@ -89,10 +95,33 @@ export interface NurseEditableFields {
   /** Phone is intentionally not here — locked field, edited only by admin. */
 }
 
-export function updateNurseProfile(id: string, patch: NurseEditableFields): void {
+export function updateNurseProfile(id: string, patch: NurseEditableFields): Promise<{ ok: boolean; error?: string }> {
   if (!_hydrated) hydrate();
   const existing = _state.byId[id] ?? {};
   _state = { byId: { ..._state.byId, [id]: { ...existing, ...patch } } };
   persist();
   emit();
+  return persistNurseProfileViaApi(id, patch);
+}
+
+async function persistNurseProfileViaApi(
+  nurseId: string,
+  patch: NurseEditableFields,
+): Promise<{ ok: boolean; error?: string }> {
+  if (!USE_SUPABASE) return { ok: true };
+  if (!isUuid(nurseId)) {
+    return { ok: false, error: "تعذر حفظ الملف الشخصي، الممرض غير موجود في قاعدة البيانات" };
+  }
+  const session: AuthSession | null = (await import("./auth")).getStoredSession();
+  if (!session || (session.role !== "nurse" && session.role !== "admin")) return { ok: true };
+  const result = await apiUpdateNurseProfile(session, nurseId, {
+    name: patch.name,
+    city: patch.city,
+    photoUrl: patch.photoUrl,
+  });
+  if (!result.ok) {
+    console.warn("[api/nurses/profile] failed; keeping local edit", result.error);
+    return { ok: false, error: result.error };
+  }
+  return { ok: true };
 }

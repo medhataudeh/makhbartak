@@ -48,10 +48,41 @@ export function getSystemSettings(): SystemSettings {
   return _s;
 }
 
-export function updateSystemSettings(patch: Partial<SystemSettings>): void {
+export function updateSystemSettings(patch: Partial<SystemSettings>): Promise<{ ok: boolean; error?: string }> {
   _s = { ...getSystemSettings(), ...patch };
   try { window.localStorage.setItem(KEY, JSON.stringify(_s)); } catch {}
   emit();
+  return persistSystemSettingsViaApi(patch);
+}
+
+async function persistSystemSettingsViaApi(
+  patch: Partial<SystemSettings>,
+): Promise<{ ok: boolean; error?: string }> {
+  if (!USE_SUPABASE) return { ok: true };
+  const session = (await import("./auth")).getStoredSession();
+  if (!session || session.role !== "admin") return { ok: true };
+  // Map camelCase TS keys to the snake_case columns the RPC accepts.
+  const wire: Record<string, unknown> = {};
+  if (patch.minBookingNoticeMinutes != null) wire.min_booking_notice_minutes = patch.minBookingNoticeMinutes;
+  if (patch.morningShiftStart != null) wire.morning_shift_start = patch.morningShiftStart;
+  if (patch.morningShiftEnd != null) wire.morning_shift_end = patch.morningShiftEnd;
+  if (patch.eveningShiftStart != null) wire.evening_shift_start = patch.eveningShiftStart;
+  if (patch.eveningShiftEnd != null) wire.evening_shift_end = patch.eveningShiftEnd;
+  if (patch.supportedCities != null) wire.supported_cities = patch.supportedCities;
+  if (patch.whatsappNumber != null) wire.whatsapp_number = patch.whatsappNumber;
+  if (patch.allowCashOrders != null) wire.allow_cash_orders = patch.allowCashOrders;
+  if (patch.bookingWindowDays != null) wire.booking_horizon_days = patch.bookingWindowDays;
+  if (patch.maxOrdersPerShift != null) wire.max_orders_per_shift = patch.maxOrdersPerShift;
+  const res = await fetch("/api/admin/app-settings", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ session, patch: wire }),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    return { ok: false, error: body.error ?? `HTTP ${res.status}` };
+  }
+  return { ok: true };
 }
 
 export function useSystemSettings(): SystemSettings {

@@ -23,6 +23,7 @@ import {
   cancelOrder, rescheduleOrder, addNote, useOrders,
 } from "@/lib/store";
 import { logActivity } from "@/lib/activity-log";
+import { useToast } from "@/components/ui/Toast";
 
 type Tab = "overview" | "items" | "operations" | "timeline" | "issues" | "finance" | "notes";
 
@@ -157,6 +158,7 @@ function StickyHeader({ order, role, nurses, labs, onClose, onOpenUser }: {
   const [actionsOpen, setActionsOpen] = useState(false);
   const ref = { actor: role.actor, actorName: role.actorName };
   const isLab = role.role === "lab_user";
+  const toast = useToast();
 
   return (
     <header className="px-4 md:px-5 py-3 border-b border-gray-100 bg-white flex-shrink-0">
@@ -205,44 +207,49 @@ function StickyHeader({ order, role, nurses, labs, onClose, onOpenUser }: {
               <div role="menu" className="absolute end-0 mt-1 w-64 bg-white rounded-xl border border-gray-100 shadow-lg z-10 py-1">
                 {!isLab && (
                   <>
-                    <ActionItem icon={UserCog} label="تعيين/تغيير الممرض" onClick={() => {
+                    <ActionItem icon={UserCog} label="تعيين/تغيير الممرض" onClick={async () => {
                       const id = window.prompt("أدخل معرّف الممرض:", order.nurseId ?? nurses[0]?.id ?? "");
                       if (id) {
-                        assignNurse(order.id, id, ref);
-                        record(role, "order_update", "order", order.id, `تعيين ممرض → ${id}`);
+                        const r = await assignNurse(order.id, id, ref);
+                        if (!r.ok) toast.error(r.error ?? "تعذر تعيين الممرض");
+                        else record(role, "order_update", "order", order.id, `تعيين ممرض → ${id}`);
                         setActionsOpen(false);
                       }
                     }} />
-                    <ActionItem icon={Building2} label="تعيين/تغيير المخبر" onClick={() => {
+                    <ActionItem icon={Building2} label="تعيين/تغيير المخبر" onClick={async () => {
                       const id = window.prompt("أدخل معرّف المخبر:", order.labId ?? labs[0]?.id ?? "");
                       if (id) {
-                        assignLab(order.id, id, ref);
-                        record(role, "order_update", "order", order.id, `تعيين مخبر → ${id}`);
+                        const r = await assignLab(order.id, id, ref);
+                        if (!r.ok) toast.error(r.error ?? "تعذر تعيين المخبر");
+                        else record(role, "order_update", "order", order.id, `تعيين مخبر → ${id}`);
                         setActionsOpen(false);
                       }
                     }} />
-                    <ActionItem icon={RefreshCw} label="إعادة جدولة" onClick={() => {
+                    <ActionItem icon={RefreshCw} label="إعادة جدولة" onClick={async () => {
                       const date = window.prompt("تاريخ جديد (YYYY-MM-DD):", order.visitDate);
                       if (date) {
-                        rescheduleOrder(order.id, date, order.shift, ref);
-                        record(role, "order_update", "order", order.id, `إعادة جدولة → ${date}`);
+                        const r = await rescheduleOrder(order.id, date, order.shift, ref);
+                        if (!r.ok) toast.error(r.error ?? "تعذر إعادة الجدولة");
+                        else record(role, "order_update", "order", order.id, `إعادة جدولة → ${date}`);
                         setActionsOpen(false);
                       }
                     }} />
-                    <ActionItem icon={Tag} label="تطبيق/إزالة كوبون" onClick={() => {
+                    <ActionItem icon={Tag} label="تطبيق/إزالة كوبون" onClick={async () => {
                       const code = window.prompt("كود الكوبون (فارغ للإزالة):", order.couponCode ?? "");
                       if (code !== null) {
                         const disc = code ? Number(window.prompt("قيمة الخصم:", String(order.couponDiscount || 0)) || 0) : 0;
-                        applyCoupon(order.id, code, disc, ref);
-                        record(role, "coupon_change", "order", order.id, code ? `${code} -${disc}` : "إزالة الكوبون");
+                        const r = await applyCoupon(order.id, code, disc, ref);
+                        if (!r.ok) toast.error(r.error ?? "تعذر تحديث الكوبون");
+                        else record(role, "coupon_change", "order", order.id, code ? `${code} -${disc}` : "إزالة الكوبون");
                         setActionsOpen(false);
                       }
                     }} />
-                    <ActionItem icon={CreditCard} label="تغيير حالة الدفع" onClick={() => {
+                    <ActionItem icon={CreditCard} label="تغيير حالة الدفع" onClick={async () => {
                       const next = window.prompt("paid / pending / failed:", order.paymentStatus);
                       if (next === "paid" || next === "pending" || next === "failed") {
-                        setPaymentStatus(order.id, next, ref);
-                        record(role, "invoice_status", "order", order.id, `حالة الدفع → ${next}`);
+                        const r = await setPaymentStatus(order.id, next, ref);
+                        if (!r.ok) toast.error(r.error ?? "تعذر تغيير حالة الدفع");
+                        else record(role, "invoice_status", "order", order.id, `حالة الدفع → ${next}`);
                         setActionsOpen(false);
                       }
                     }} />
@@ -263,11 +270,12 @@ function StickyHeader({ order, role, nurses, labs, onClose, onOpenUser }: {
                   <>
                     <hr className="my-1 border-gray-100" />
                     <ActionItem icon={Download} label="عرض/تنزيل الفاتورة" onClick={() => { window.print(); setActionsOpen(false); }} />
-                    <ActionItem icon={X} label="إلغاء الطلب" danger onClick={() => {
+                    <ActionItem icon={X} label="إلغاء الطلب" danger onClick={async () => {
                       const reason = window.prompt("سبب الإلغاء:", "");
                       if (reason !== null) {
-                        cancelOrder(order.id, ref, reason || undefined);
-                        record(role, "order_update", "order", order.id, `إلغاء الطلب${reason ? ` — ${reason}` : ""}`);
+                        const r = await cancelOrder(order.id, ref, reason || undefined);
+                        if (!r.ok) toast.error(r.error ?? "تعذر إلغاء الطلب");
+                        else record(role, "order_update", "order", order.id, `إلغاء الطلب${reason ? ` — ${reason}` : ""}`);
                         setActionsOpen(false);
                       }
                     }} />
@@ -448,6 +456,7 @@ function ItemsTab({ order }: { order: Order }) {
 function OperationsTab({ order, role, nurses, labs, ref }: {
   order: Order; role: ControlCenterRole; nurses: Nurse[]; labs: Lab[]; ref: { actor: OrderEvent["actor"]; actorName?: string };
 }) {
+  const toast = useToast();
   const isLab = role.role === "lab_user";
   const nurse = nurses.find((n) => n.id === order.nurseId);
   const lab = labs.find((l) => l.id === order.labId);
@@ -466,7 +475,11 @@ function OperationsTab({ order, role, nurses, labs, ref }: {
           <div className="flex flex-wrap gap-2 pt-2">
             <select
               value={order.nurseId ?? ""}
-              onChange={(e) => assignNurse(order.id, e.target.value, ref)}
+              onChange={async (e) => {
+                if (!e.target.value) return;
+                const r = await assignNurse(order.id, e.target.value, ref);
+                if (!r.ok) toast.error(r.error ?? "تعذر تعيين الممرض");
+              }}
               className="h-9 px-3 rounded-lg border border-gray-200 text-xs cursor-pointer"
               aria-label="إسناد ممرض"
             >
@@ -485,7 +498,11 @@ function OperationsTab({ order, role, nurses, labs, ref }: {
           <div className="flex flex-wrap gap-2 pt-2">
             <select
               value={order.labId ?? ""}
-              onChange={(e) => assignLab(order.id, e.target.value, ref)}
+              onChange={async (e) => {
+                if (!e.target.value) return;
+                const r = await assignLab(order.id, e.target.value, ref);
+                if (!r.ok) toast.error(r.error ?? "تعذر تعيين المخبر");
+              }}
               className="h-9 px-3 rounded-lg border border-gray-200 text-xs cursor-pointer"
               aria-label="إسناد مخبر"
             >
@@ -577,9 +594,12 @@ function OperationsTab({ order, role, nurses, labs, ref }: {
             </Button>
             <Button
               size="sm" variant="ghost"
-              onClick={() => {
+              onClick={async () => {
                 const reason = window.prompt("سبب الإغلاق دون نتائج (مطلوب):", "");
-                if (reason && reason.trim()) forceCompleteOrder(order.id, ref, reason.trim());
+                if (reason && reason.trim()) {
+                  const r = await forceCompleteOrder(order.id, ref, reason.trim());
+                  if (!r.ok) toast.error(r.error ?? "تعذر إغلاق الطلب");
+                }
               }}
             >
               إغلاق دون نتائج
@@ -766,6 +786,7 @@ function IssuesTab({ order, role, ref }: {
 function FinanceTab({ order, role, ref }: {
   order: Order; role: ControlCenterRole; ref: { actor: OrderEvent["actor"]; actorName?: string };
 }) {
+  const toast = useToast();
   const editable = canEditPricing(role.role);
   return (
     <div className="space-y-3">
@@ -780,8 +801,14 @@ function FinanceTab({ order, role, ref }: {
       {editable && (
         <Card title="إجراءات" icon={<Pencil size={14} aria-hidden="true" />}>
           <div className="flex flex-wrap gap-2">
-            <Button size="sm" variant="outline" onClick={() => setPaymentStatus(order.id, "paid", ref)}>تأكيد الدفع</Button>
-            <Button size="sm" variant="outline" onClick={() => setPaymentStatus(order.id, "pending", ref)}>تعليق الدفع</Button>
+            <Button size="sm" variant="outline" onClick={async () => {
+              const r = await setPaymentStatus(order.id, "paid", ref);
+              if (!r.ok) toast.error(r.error ?? "تعذر تأكيد الدفع");
+            }}>تأكيد الدفع</Button>
+            <Button size="sm" variant="outline" onClick={async () => {
+              const r = await setPaymentStatus(order.id, "pending", ref);
+              if (!r.ok) toast.error(r.error ?? "تعذر تعليق الدفع");
+            }}>تعليق الدفع</Button>
             <Button size="sm" variant="outline" onClick={() => window.print()}>
               <Download size={13} aria-hidden="true" /> الفاتورة
             </Button>

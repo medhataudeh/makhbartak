@@ -284,6 +284,10 @@ export const COMMON_INSTRUCTIONS: Instruction[] = [
 // Supabase seed so the API route can resolve session.linkedEntityId →
 // customers.id and patient_id / address_id without an extra lookup.
 export const SEED_CUSTOMER_1_ID = "00000000-0000-4000-8000-00000000c001";
+// ─── Phase 3 nurse seed UUIDs (must match supabase/migrations/016) ──────────
+export const SEED_NURSE_1_ID = "00000000-0000-4000-8000-0000000a0001";
+export const SEED_NURSE_2_ID = "00000000-0000-4000-8000-0000000a0002";
+export const SEED_NURSE_3_ID = "00000000-0000-4000-8000-0000000a0003";
 export const SEED_CUSTOMER_2_ID = "00000000-0000-4000-8000-00000000c002";
 export const SEED_PATIENT_1_ID  = "00000000-0000-4000-8000-00000000d001";
 export const SEED_PATIENT_2_ID  = "00000000-0000-4000-8000-00000000d002";
@@ -334,7 +338,7 @@ export const MOCK_ORDERS: Order[] = [
     paymentMethod: "cash", paymentStatus: "pending",
     instructions: COMMON_INSTRUCTIONS,
     resultPdfUrl: "/results/ord-1.pdf",
-    nurseId: "nur-1", labId: "lab-1",
+    nurseId: SEED_NURSE_1_ID, labId: "lab-1",
     internalNotes: "المريض يفضّل الموعد الصباحي فقط",
     createdAt: "2025-04-30T08:00:00Z", updatedAt: "2025-05-01T11:30:00Z",
   },
@@ -376,7 +380,7 @@ export const MOCK_ORDERS: Order[] = [
     address: MOCK_ADDRESSES[0], patient: MOCK_PATIENTS[0],
     paymentMethod: "cash", paymentStatus: "pending",
     instructions: [COMMON_INSTRUCTIONS[0]],
-    nurseId: "nur-1", labId: "lab-1",
+    nurseId: SEED_NURSE_1_ID, labId: "lab-1",
     createdAt: "2025-05-03T07:00:00Z", updatedAt: "2025-05-03T10:30:00Z",
   },
   {
@@ -390,7 +394,7 @@ export const MOCK_ORDERS: Order[] = [
     address: MOCK_ADDRESSES[1], patient: MOCK_PATIENTS[1],
     paymentMethod: "cash", paymentStatus: "pending",
     instructions: [],
-    nurseId: "nur-2", labId: "lab-2",
+    nurseId: SEED_NURSE_2_ID, labId: "lab-2",
     createdAt: "2025-05-03T15:00:00Z", updatedAt: "2025-05-03T17:30:00Z",
   },
 ];
@@ -550,9 +554,9 @@ export const SYSTEM_SETTINGS: SystemSettings = {
 
 // ─── Nurses ──────────────────────────────────────────────────────────────────
 export const MOCK_NURSES: Nurse[] = [
-  { id: "nur-1", name: "محمد الأحمد", phone: "+963911111111", city: "دمشق",      photoUrl: img("makhbartak-nur1", 200, 200), isActive: true },
-  { id: "nur-2", name: "سارة السيد",  phone: "+963922222222", city: "دمشق",      photoUrl: img("makhbartak-nur2", 200, 200), isActive: true },
-  { id: "nur-3", name: "ليث ناصر",   phone: "+963933333333", city: "ريف دمشق", photoUrl: img("makhbartak-nur3", 200, 200), isActive: true },
+  { id: SEED_NURSE_1_ID, name: "محمد الأحمد", phone: "+963911111111", city: "دمشق",      photoUrl: img("makhbartak-nur1", 200, 200), isActive: true },
+  { id: SEED_NURSE_2_ID, name: "سارة السيد",  phone: "+963922222222", city: "دمشق",      photoUrl: img("makhbartak-nur2", 200, 200), isActive: true },
+  { id: SEED_NURSE_3_ID, name: "ليث ناصر",   phone: "+963933333333", city: "ريف دمشق", photoUrl: img("makhbartak-nur3", 200, 200), isActive: true },
 ];
 
 // ─── Admin Stats ─────────────────────────────────────────────────────────────
@@ -767,8 +771,8 @@ export const GAMIFICATION_CONFIG: GamificationConfig = {
 };
 
 export const MOCK_GAMIFICATION: Record<string, NurseGamification> = {
-  "nur-1": {
-    nurseId: "nur-1",
+  [SEED_NURSE_1_ID]: {
+    nurseId: SEED_NURSE_1_ID,
     totalCompleted: 142,
     totalPoints: 1820,
     pointsToday: 25,
@@ -780,8 +784,8 @@ export const MOCK_GAMIFICATION: Record<string, NurseGamification> = {
     failedCount: 9,
     streak: 6,
   },
-  "nur-2": {
-    nurseId: "nur-2",
+  [SEED_NURSE_2_ID]: {
+    nurseId: SEED_NURSE_2_ID,
     totalCompleted: 78,
     totalPoints: 720,
     pointsToday: 10,
@@ -793,8 +797,8 @@ export const MOCK_GAMIFICATION: Record<string, NurseGamification> = {
     failedCount: 7,
     streak: 3,
   },
-  "nur-3": {
-    nurseId: "nur-3",
+  [SEED_NURSE_3_ID]: {
+    nurseId: SEED_NURSE_3_ID,
     totalCompleted: 18,
     totalPoints: 130,
     pointsToday: 0,
@@ -818,7 +822,7 @@ function todayPlus(days: number): string {
 
 export const MOCK_NURSE_ROUTES: NurseRoute[] = [
   {
-    nurseId: "nur-1",
+    nurseId: SEED_NURSE_1_ID,
     date: todayPlus(0),
     stops: [
       { orderId: MOCK_ORDERS[2].id, order: MOCK_ORDERS[2], sequence: 1, status: "pending" },
@@ -826,14 +830,14 @@ export const MOCK_NURSE_ROUTES: NurseRoute[] = [
     ],
   },
   {
-    nurseId: "nur-1",
+    nurseId: SEED_NURSE_1_ID,
     date: todayPlus(1),
     stops: [
       { orderId: MOCK_ORDERS[0].id, order: MOCK_ORDERS[0], sequence: 1, status: "pending" },
     ],
   },
   {
-    nurseId: "nur-1",
+    nurseId: SEED_NURSE_1_ID,
     date: todayPlus(2),
     stops: [],
   },
@@ -862,21 +866,21 @@ export function buildPrepChecklist(nurseId: string, date: string = todayPlus(0))
 // ─── Nurse notifications (separate inbox) ───────────────────────────────────
 export const MOCK_NURSE_NOTIFICATIONS: Notification[] = [
   {
-    id: "nn-1", userId: "nur-1",
+    id: "nn-1", userId: SEED_NURSE_1_ID,
     titleAr: "زيارة جديدة في جدولك",
     bodyAr: "تم إسناد طلب جديد لليوم في منطقة المالكي",
     type: "nurse_assigned", orderId: "ord-3", isRead: false,
     createdAt: new Date(Date.now() - 1000 * 60 * 25).toISOString(),
   },
   {
-    id: "nn-2", userId: "nur-1",
+    id: "nn-2", userId: SEED_NURSE_1_ID,
     titleAr: "تم تعديل ترتيب الجدول",
     bodyAr: "غيّرت الإدارة ترتيب الزيارات اليوم — راجع جدولك.",
     type: "route_changed", isRead: false,
     createdAt: new Date(Date.now() - 1000 * 60 * 90).toISOString(),
   },
   {
-    id: "nn-3", userId: "nur-1",
+    id: "nn-3", userId: SEED_NURSE_1_ID,
     titleAr: "ملاحظة من المخبر",
     bodyAr: "العينة السابقة بحاجة إعادة سحب — تواصل مع الإدارة.",
     type: "lab_issue", orderId: "ord-1", isRead: true,
@@ -980,8 +984,8 @@ export const MOCK_CUSTOMER_USERS: AuthUser[] = [
 // ─── Nurse login accounts ───────────────────────────────────────────────────
 // linkedEntityId points at the Nurse record in MOCK_NURSES.
 export const MOCK_NURSE_USERS: AuthUser[] = [
-  { id: "nu-1", username: "nurse1", password: "nurse123", name: "محمد الأحمد", role: "nurse", linkedEntityId: "nur-1", isActive: true },
-  { id: "nu-2", username: "nurse2", password: "nurse123", name: "سارة السيد",  role: "nurse", linkedEntityId: "nur-2", isActive: true },
+  { id: "nu-1", username: "nurse1", password: "nurse123", name: "محمد الأحمد", role: "nurse", linkedEntityId: SEED_NURSE_1_ID, isActive: true },
+  { id: "nu-2", username: "nurse2", password: "nurse123", name: "سارة السيد",  role: "nurse", linkedEntityId: SEED_NURSE_2_ID, isActive: true },
 ];
 
 // ─── Lab price agreements ──────────────────────────────────────────────────
@@ -1095,7 +1099,7 @@ export const MOCK_CONTENT_PAGES: ContentPage[] = [
 export const MOCK_ORDER_RATINGS: OrderRating[] = [
   {
     id: "rt-1", orderId: "ord-1", userId: SEED_CUSTOMER_1_ID,
-    nurseId: "nur-1", labId: "lab-1",
+    nurseId: SEED_NURSE_1_ID, labId: "lab-1",
     nurseRating: 5, labRating: 4, overallRating: 5,
     comment: "ممرض ودود، النتائج وصلت بسرعة.",
     createdAt: "2026-05-02T08:00:00Z",

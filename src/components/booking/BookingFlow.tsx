@@ -3,6 +3,8 @@ import { useState } from "react";
 import { motion } from "framer-motion";
 import { MapPin, User, Clock, ChevronLeft, Plus, Calendar as CalendarIcon } from "lucide-react";
 import { getShiftConfigs, SEED_CUSTOMER_1_ID } from "@/lib/mock-data";
+import { USE_SUPABASE } from "@/lib/supabase/flags";
+import { isUuid } from "@/lib/supabase/uuid";
 import { usePatients, useAddresses, upsertPatient, upsertAddress } from "@/lib/profile";
 import { useToast } from "@/components/ui/Toast";
 import { useSystemSettings } from "@/lib/system-settings";
@@ -78,6 +80,15 @@ export function BookingFlow({ tests, pkg, onContinue, onBack }: BookingFlowProps
     if (!sCfg?.available) {
       toast.error("هذا الموعد غير متاح، يرجى اختيار وقت آخر");
       return;
+    }
+    // Stage E race-fix: refuse to forward a placeholder UUID that would
+    // later make /api/orders reject the create with an FK error. Customer
+    // must wait for upsertPatient/upsertAddress to round-trip first.
+    if (USE_SUPABASE) {
+      if (!isUuid(patient!.id) || !isUuid(address!.id)) {
+        toast.error("جاري حفظ بياناتك… حاول مرة أخرى بعد لحظة");
+        return;
+      }
     }
     const startH = String(sCfg.startHour).padStart(2, "0");
     const endH = String(sCfg.endHour).padStart(2, "0");
@@ -298,9 +309,10 @@ export function BookingFlow({ tests, pkg, onContinue, onBack }: BookingFlowProps
       <BottomSheet open={addingAddress} onClose={() => setAddingAddress(false)} title="إضافة عنوان">
         <AddressInlineForm
           onCancel={() => setAddingAddress(false)}
-          onSubmit={(a) => {
-            upsertAddress(a);
-            setAddress(a);
+          onSubmit={async (a) => {
+            const r = await upsertAddress(a);
+            if (!r.ok) { toast.error(r.error ?? "تعذر حفظ العنوان"); return; }
+            setAddress(r.address ?? a);
             setAddingAddress(false);
             toast.success("تم الحفظ بنجاح");
           }}
@@ -311,9 +323,10 @@ export function BookingFlow({ tests, pkg, onContinue, onBack }: BookingFlowProps
       <BottomSheet open={addingPatient} onClose={() => setAddingPatient(false)} title="إضافة مريض">
         <PatientInlineForm
           onCancel={() => setAddingPatient(false)}
-          onSubmit={(p) => {
-            upsertPatient(p);
-            setPatient(p);
+          onSubmit={async (p) => {
+            const r = await upsertPatient(p);
+            if (!r.ok) { toast.error(r.error ?? "تعذر حفظ المريض"); return; }
+            setPatient(r.patient ?? p);
             setAddingPatient(false);
             toast.success("تم الحفظ بنجاح");
           }}

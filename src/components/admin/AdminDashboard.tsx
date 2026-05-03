@@ -38,7 +38,7 @@ import { useOrders, createOrder, hydrateOrdersForAdmin } from "@/lib/store";
 import { generateOrderNumber, dedupeInstructions } from "@/lib/order-utils";
 import { validateCoupon, COMMON_INSTRUCTIONS } from "@/lib/mock-data";
 import { MOCK_LABS } from "@/lib/mock-data";
-import { useActivityLogs } from "@/lib/activity-log";
+import { useActivityLogs, hydrateActivityLogs } from "@/lib/activity-log";
 import { logActivity } from "@/lib/activity-log";
 import { useToast } from "@/components/ui/Toast";
 import { useSystemSettings, updateSystemSettings } from "@/lib/system-settings";
@@ -2390,6 +2390,8 @@ function ActivityAdmin() {
   const [search, setSearch] = useState("");
   const [page, setPage] = useState(1);
   const logs = useActivityLogs();
+  // Stage G: pull persisted activity entries on mount.
+  useEffect(() => { void hydrateActivityLogs(); }, []);
 
   const filtered = logs.filter((l) => {
     if (actorFilter !== "all" && l.role !== actorFilter) return false;

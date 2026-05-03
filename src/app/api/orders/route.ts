@@ -124,6 +124,14 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: rpcErr?.message ?? "place_order_admin returned no id" }, { status: 500 });
   }
 
+  // Stage A: auto-assign nurse + lab. Failures here do not block the order
+  // — the row is already in `orders` and admin can assign manually later.
+  // The RPC tolerates a no-eligible-row outcome (leaves the field null).
+  const { error: autoErr } = await sb.rpc("auto_assign_order", { p_order_id: orderId });
+  if (autoErr) {
+    console.warn("[api/orders] auto_assign_order failed; order created without assignment", autoErr.message);
+  }
+
   // Hydrate the row so the client gets a full TS Order back. Falls back to
   // a minimal stub if the read fails (rare; the row was just inserted).
   const orders = await fetchOrdersForCustomer(sb, customerId);

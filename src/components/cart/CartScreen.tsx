@@ -5,6 +5,7 @@ import Image from "next/image";
 import { Tag, CreditCard, Banknote, MapPin, User, Clock, Trash2, Pencil } from "lucide-react";
 import type { Test, Package, Shift, Address, Patient, PaymentMethod } from "@/lib/types";
 import { validateCoupon } from "@/lib/mock-data";
+import { USE_SUPABASE } from "@/lib/supabase/flags";
 import { formatPrice, getShiftLabel } from "@/lib/utils";
 import { Button } from "@/components/ui/Button";
 import { BottomSheet } from "@/components/ui/BottomSheet";
@@ -64,17 +65,36 @@ export function CartScreen({ tests, pkg, shift, address, patient, onConfirm, onB
   const total = Math.max(0, subtotal - couponDiscount);
 
   const applyCoupon = async () => {
-    if (!couponCode.trim()) return;
+    const code = couponCode.trim();
+    if (!code) return;
     setCouponLoading(true);
-    await new Promise((r) => setTimeout(r, 700));
-    const result = validateCoupon(couponCode.trim(), subtotal);
+    let valid = false;
+    let discount = 0;
+    let message = "";
+    if (USE_SUPABASE) {
+      try {
+        const res = await fetch(`/api/coupons/validate?code=${encodeURIComponent(code)}&total=${encodeURIComponent(subtotal)}`, { cache: "no-store" });
+        const body = await res.json().catch(() => ({}));
+        valid = !!body.valid;
+        discount = Number(body.discount ?? 0);
+        message = body.message ?? "الكوبون غير صالح";
+      } catch {
+        message = "تعذر التحقق من الكوبون";
+      }
+    } else {
+      await new Promise((r) => setTimeout(r, 700));
+      const result = validateCoupon(code, subtotal);
+      valid = !!result.valid;
+      discount = result.discount ?? 0;
+      message = result.message;
+    }
     setCouponLoading(false);
-    if (result.valid && result.discount) {
-      setAppliedDiscount(result.discount);
-      setCouponMessage({ text: result.message, valid: true });
+    if (valid && discount > 0) {
+      setAppliedDiscount(discount);
+      setCouponMessage({ text: message, valid: true });
     } else {
       setAppliedDiscount(0);
-      setCouponMessage({ text: result.message, valid: false });
+      setCouponMessage({ text: message, valid: false });
     }
   };
 

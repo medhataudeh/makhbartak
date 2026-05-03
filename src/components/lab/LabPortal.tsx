@@ -16,7 +16,7 @@ import {
 } from "@/lib/store";
 import { useSession, logout, labUserFromSession } from "@/lib/auth";
 import { LoginForm } from "@/components/auth/LoginForm";
-import { useSettlementsForLab, useSettlementItems } from "@/lib/settlements";
+import { useSettlementsForLab, useSettlementItems, hydrateSettlementsForLab } from "@/lib/settlements";
 import { useEditableLab, updateLabSelf } from "@/lib/lab-overrides";
 import { formatDate, formatPrice, getShiftLabel } from "@/lib/utils";
 import { StatusBadge } from "@/components/ui/StatusBadge";
@@ -606,6 +606,8 @@ function AccountingSection({ lab, brand }: {
   const orders = useOrders();
   const settlements = useSettlementsForLab(lab.id);
   const showSellPrices = !!lab.revealSellPriceToLab;
+  // Stage D: pull this lab's persisted settlements on mount.
+  useEffect(() => { void hydrateSettlementsForLab(lab.id); }, [lab.id]);
 
   // Completed/result-ready orders for this lab — what counts toward future settlements.
   const eligibleOrders = useMemo(

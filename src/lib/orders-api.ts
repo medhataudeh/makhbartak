@@ -62,6 +62,42 @@ export async function apiListOrdersForNurse(nurseId: string): Promise<Order[] | 
   return (body?.orders ?? null) as Order[] | null;
 }
 
+export async function apiAssignNurse(
+  session: import("@/lib/types").AuthSession,
+  orderId: string,
+  nurseId: string | null,
+  note?: string,
+): Promise<{ order: Order | null } | { error: string }> {
+  const res = await fetch(`/api/orders/${encodeURIComponent(orderId)}/assign-nurse`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ session, nurseId, note }),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    return { error: body.error ?? `HTTP ${res.status}` };
+  }
+  return res.json();
+}
+
+export async function apiAssignLab(
+  session: import("@/lib/types").AuthSession,
+  orderId: string,
+  labId: string | null,
+  note?: string,
+): Promise<{ order: Order | null } | { error: string }> {
+  const res = await fetch(`/api/orders/${encodeURIComponent(orderId)}/assign-lab`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ session, labId, note }),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    return { error: body.error ?? `HTTP ${res.status}` };
+  }
+  return res.json();
+}
+
 export async function apiUploadLabResultFile(
   session: import("@/lib/types").AuthSession,
   orderId: string,
@@ -111,6 +147,133 @@ export async function apiConfirmLabResults(
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ session }),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    return { error: body.error ?? `HTTP ${res.status}` };
+  }
+  return res.json();
+}
+
+export async function apiAddOrderNote(
+  session: import("@/lib/types").AuthSession,
+  orderId: string,
+  text: string,
+): Promise<{ order: Order | null } | { error: string }> {
+  const res = await fetch(`/api/orders/${encodeURIComponent(orderId)}/notes`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ session, text }),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    return { error: body.error ?? `HTTP ${res.status}` };
+  }
+  return res.json();
+}
+
+export async function apiApplyCoupon(
+  session: import("@/lib/types").AuthSession,
+  orderId: string,
+  couponCode: string | null,
+  couponDiscount: number,
+  total: number,
+): Promise<{ order: Order | null } | { error: string }> {
+  const res = await fetch(`/api/orders/${encodeURIComponent(orderId)}/coupon`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ session, couponCode, couponDiscount, total }),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    return { error: body.error ?? `HTTP ${res.status}` };
+  }
+  return res.json();
+}
+
+export async function apiSetPaymentStatus(
+  session: import("@/lib/types").AuthSession,
+  orderId: string,
+  paymentStatus: "pending" | "paid" | "failed" | "refunded",
+  note?: string,
+): Promise<{ order: Order | null } | { error: string }> {
+  const res = await fetch(`/api/orders/${encodeURIComponent(orderId)}/payment-status`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ session, paymentStatus, note }),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    return { error: body.error ?? `HTTP ${res.status}` };
+  }
+  return res.json();
+}
+
+export async function apiCancelOrder(
+  session: import("@/lib/types").AuthSession,
+  orderId: string,
+  reason?: string,
+): Promise<{ order: Order | null } | { error: string }> {
+  const res = await fetch(`/api/orders/${encodeURIComponent(orderId)}/cancel`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ session, reason }),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    return { error: body.error ?? `HTTP ${res.status}` };
+  }
+  return res.json();
+}
+
+export async function apiRescheduleOrder(
+  session: import("@/lib/types").AuthSession,
+  orderId: string,
+  visitDate: string,
+  shift: import("@/lib/types").Shift,
+  shiftStartTime?: string,
+  shiftEndTime?: string,
+): Promise<{ order: Order | null } | { error: string }> {
+  const res = await fetch(`/api/orders/${encodeURIComponent(orderId)}/reschedule`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ session, visitDate, shift, shiftStartTime, shiftEndTime }),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    return { error: body.error ?? `HTTP ${res.status}` };
+  }
+  return res.json();
+}
+
+export async function apiVerifyPatient(
+  session: import("@/lib/types").AuthSession,
+  orderId: string,
+  officialName: string,
+  nationalId?: string,
+  note?: string,
+): Promise<{ order: Order | null } | { error: string }> {
+  const res = await fetch(`/api/orders/${encodeURIComponent(orderId)}/verify-patient`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ session, officialName, nationalId, note }),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    return { error: body.error ?? `HTTP ${res.status}` };
+  }
+  return res.json();
+}
+
+export async function apiForceCompleteOrder(
+  session: import("@/lib/types").AuthSession,
+  orderId: string,
+  reason: string,
+): Promise<{ order: Order | null } | { error: string }> {
+  const res = await fetch(`/api/orders/${encodeURIComponent(orderId)}/force-complete`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ session, reason }),
   });
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));

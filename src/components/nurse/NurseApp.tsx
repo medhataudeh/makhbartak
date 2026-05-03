@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Image from "next/image";
 import { motion, AnimatePresence } from "framer-motion";
 import {
@@ -13,7 +13,7 @@ import {
   buildPrepChecklist, FAILED_COLLECTION_REASONS, NURSE_BADGES,
 } from "@/lib/mock-data";
 import type { Nurse, NurseRouteStop, NurseGamification, Notification, Order } from "@/lib/types";
-import { setOrderStatus, verifyPatient, useOrders, hydrateOrdersForNurse } from "@/lib/store";
+import { setOrderStatus, verifyPatient, useOrders, hydrateOrdersForNurse, hydrateNotificationsForNurse } from "@/lib/store";
 import { useEditableNurse, updateNurseProfile } from "@/lib/nurse-profile";
 import { useSystemSettings } from "@/lib/system-settings";
 import { isOrderActionable, instructionsForOrder, isStructuredInstructions } from "@/lib/order-utils";
@@ -30,11 +30,10 @@ import { useSession, logout, nurseFromSession } from "@/lib/auth";
 import { NurseLogin } from "@/components/nurse/NurseLogin";
 import { USE_SUPABASE } from "@/lib/supabase/flags";
 import { isUuid } from "@/lib/supabase/uuid";
+import { clearPrepForDay, hydratePrep, setPrep, usePrep } from "@/lib/nurse-prep";
+import { hydrateShortageRequestsForNurse } from "@/lib/shortage-requests";
 
 type NurseTab = "home" | "schedule" | "settings";
-
-const PREP_KEY = "makhbartak.nurse.prep";
-const STARTED_KEY = "makhbartak.nurse.started";
 
 export function NurseApp() {
   const session = useSession();
@@ -42,12 +41,9 @@ export function NurseApp() {
   const nurseRecord = nurseFromSession(session);
   if (!nurseRecord) return <NurseLogin />;
   const handleLogout = () => {
-    try {
-      // Clear today's prep state so a re-login starts fresh.
-      const today = new Date().toISOString().split("T")[0];
-      window.localStorage.removeItem(STARTED_KEY + ":" + today);
-      window.localStorage.removeItem(PREP_KEY + ":" + today);
-    } catch {}
+    // Clear today's prep state so a re-login starts fresh.
+    const today = new Date().toISOString().split("T")[0];
+    clearPrepForDay(today);
     logout();
   };
   return <NurseAppInner nurseId={nurseRecord.id} onLogout={handleLogout} />;
@@ -68,35 +64,24 @@ function NurseAppInner({ nurseId, onLogout }: { nurseId: string; onLogout: () =>
   // checklist rows are derived from aggregateNurseTools(), so adding/removing
   // orders, tweaking buffer pct, or editing a test's nurseTools updates the
   // list automatically.
-  const [checkedIds, setCheckedIds] = useState<Set<string>>(() => new Set());
-  const [started, setStarted] = useState(false);
+  const dateKey = today?.date ?? "_";
+  const prep = usePrep(nurseId, dateKey);
+  const checkedIds = useMemo(() => new Set(prep.checkedIds), [prep.checkedIds]);
+  const started = prep.started;
+
+  // Stage C: pull canonical prep state from Supabase on day change.
   useEffect(() => {
-    try {
-      const dateKey = today?.date ?? "_";
-      const startedRaw = window.localStorage.getItem(STARTED_KEY + ":" + dateKey);
-      const checkedRaw = window.localStorage.getItem(PREP_KEY + ":" + dateKey);
-      // eslint-disable-next-line react-hooks/set-state-in-effect -- localStorage hydration on mount
-      setStarted(startedRaw === "1");
-      if (checkedRaw) {
-        const ids = JSON.parse(checkedRaw) as string[];
-        setCheckedIds(new Set(ids));
-      }
-    } catch {}
-  }, [today?.date]);
+    if (USE_SUPABASE && isUuid(nurseId) && today?.date) {
+      void hydratePrep(nurseId, today.date);
+    }
+  }, [nurseId, today?.date]);
 
   const persistChecklist = (next: Set<string>) => {
-    try {
-      const dateKey = today?.date ?? "_";
-      window.localStorage.setItem(PREP_KEY + ":" + dateKey, JSON.stringify(Array.from(next)));
-    } catch {}
+    void setPrep(nurseId, dateKey, { checkedIds: Array.from(next) });
   };
 
   const startDay = () => {
-    setStarted(true);
-    try {
-      const dateKey = today?.date ?? "_";
-      window.localStorage.setItem(STARTED_KEY + ":" + dateKey, "1");
-    } catch {}
+    void setPrep(nurseId, dateKey, { started: true });
   };
 
   // Notifications
@@ -105,8 +90,13 @@ function NurseAppInner({ nurseId, onLogout }: { nurseId: string; onLogout: () =>
   const unread = notifs.filter((n) => !n.isRead).length;
 
   // Phase 2: pull this nurse's orders from Supabase on mount when the flag
-  // is on. No-op in mock-only mode.
-  useEffect(() => { void hydrateOrdersForNurse(nurse.id); }, [nurse.id]);
+  // is on. Stage C also pulls the nurse's shortage requests. Both are no-ops
+  // in mock-only mode.
+  useEffect(() => {
+    void hydrateOrdersForNurse(nurse.id);
+    void hydrateShortageRequestsForNurse(nurse.id);
+    void hydrateNotificationsForNurse(nurse.id);
+  }, [nurse.id]);
 
   // Visit detail flow — hydrate `stops` against the live order store so that
   // `patientVerification` and the latest order status update reflect here.
@@ -203,7 +193,6 @@ function NurseAppInner({ nurseId, onLogout }: { nurseId: string; onLogout: () =>
   const onToggleCheck = (id: string) => {
     const next = new Set(checkedIds);
     if (next.has(id)) next.delete(id); else next.add(id);
-    setCheckedIds(next);
     persistChecklist(next);
   };
 

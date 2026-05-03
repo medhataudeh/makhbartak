@@ -2,6 +2,8 @@
 import { useSyncExternalStore } from "react";
 import type { LibraryTool, NurseChecklistDefaults } from "./types";
 import { MOCK_LIBRARY_TOOLS, NURSE_CHECKLIST_DEFAULTS } from "./mock-data";
+import { USE_SUPABASE } from "./supabase/flags";
+import { isUuid } from "./supabase/uuid";
 
 const TOOLS_KEY    = "makhbartak.library.tools.v1";
 const DEFAULTS_KEY = "makhbartak.library.checklist-defaults.v1";
@@ -45,26 +47,73 @@ export function useLibraryTools(): LibraryTool[] {
   return useSyncExternalStore(subscribeTools, getToolsSnapshot, () => _serverTools);
 }
 
-export function upsertLibraryTool(item: LibraryTool): void {
+export function upsertLibraryTool(item: LibraryTool): Promise<{ ok: boolean; error?: string; id?: string }> {
   if (!_hydratedTools) hydrateTools();
   const exists = _tools.find((x) => x.id === item.id);
   _tools = exists ? _tools.map((x) => x.id === item.id ? item : x) : [..._tools, item];
   persistTools();
   emitTools();
+  return persistToolViaApi(item);
 }
 
-export function deleteLibraryTool(id: string): void {
+async function persistToolViaApi(
+  item: LibraryTool,
+): Promise<{ ok: boolean; error?: string; id?: string }> {
+  if (!USE_SUPABASE) return { ok: true };
+  const session = (await import("./auth")).getStoredSession();
+  if (!session || session.role !== "admin") return { ok: true };
+  const res = await fetch("/api/admin/nurse-tools", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      session,
+      id: isUuid(item.id) ? item.id : undefined,
+      nameAr: item.nameAr,
+      unit: item.unit,
+      isActive: item.isActive,
+    }),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    return { ok: false, error: body.error ?? `HTTP ${res.status}` };
+  }
+  const body = await res.json();
+  return { ok: true, id: body.id };
+}
+
+export function deleteLibraryTool(id: string): Promise<{ ok: boolean; error?: string }> {
   if (!_hydratedTools) hydrateTools();
   _tools = _tools.filter((x) => x.id !== id);
   persistTools();
   emitTools();
+  return persistDeleteToolViaApi(id);
 }
 
-export function setLibraryToolActive(id: string, isActive: boolean): void {
+async function persistDeleteToolViaApi(id: string): Promise<{ ok: boolean; error?: string }> {
+  if (!USE_SUPABASE) return { ok: true };
+  if (!isUuid(id)) return { ok: true };
+  const session = (await import("./auth")).getStoredSession();
+  if (!session || session.role !== "admin") return { ok: true };
+  const res = await fetch(`/api/admin/nurse-tools/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ session }),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    return { ok: false, error: body.error ?? `HTTP ${res.status}` };
+  }
+  return { ok: true };
+}
+
+export function setLibraryToolActive(id: string, isActive: boolean): Promise<{ ok: boolean; error?: string }> {
   if (!_hydratedTools) hydrateTools();
+  const found = _tools.find((x) => x.id === id);
   _tools = _tools.map((x) => x.id === id ? { ...x, isActive } : x);
   persistTools();
   emitTools();
+  if (!found) return Promise.resolve({ ok: true });
+  return persistToolViaApi({ ...found, isActive });
 }
 
 // ─── Checklist defaults (default tools + buffer pct) ────────────────────────

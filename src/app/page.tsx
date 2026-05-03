@@ -1,5 +1,6 @@
 "use client";
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { hydrateProfileForCustomer } from "@/lib/profile";
 import { AnimatePresence } from "framer-motion";
 
 import { CustomerLogin } from "@/components/auth/CustomerLogin";
@@ -18,7 +19,7 @@ import { AccountScreen } from "@/components/account/AccountScreen";
 import { ShoppingCart, ChevronLeft } from "lucide-react";
 
 import type { Test, Package, Shift, Address, Patient, PaymentMethod } from "@/lib/types";
-import { useCustomerNotifications, createOrder, useOrderByIdempotencyKey } from "@/lib/store";
+import { useCustomerNotifications, createOrder, useOrderByIdempotencyKey, hydrateNotificationsForCustomer } from "@/lib/store";
 import { useSystemSettings } from "@/lib/system-settings";
 import { COMMON_INSTRUCTIONS } from "@/lib/mock-data";
 import { dedupeInstructions, generateOrderNumber } from "@/lib/order-utils";
@@ -56,6 +57,13 @@ export default function App() {
 function CustomerApp({ userId }: { userId: string }) {
   const toast = useToast();
   const session = useSession();
+  // Stage E: pull the canonical patients/addresses/payment pref before any
+  // booking starts. Closes the placeholder-UUID race that used to make
+  // /api/orders reject the create with an FK error.
+  useEffect(() => {
+    void hydrateProfileForCustomer(userId);
+    void hydrateNotificationsForCustomer(userId);
+  }, [userId]);
   const [activeTab, setActiveTab] = useState<NavTab>("home");
   const [view, setView] = useState<AppView>("home");
   const [booking, setBooking] = useState<BookingState>({});

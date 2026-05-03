@@ -24,7 +24,8 @@ const ORDER_SELECT = `
   patient:patients ( id, customer_id, name, national_id, note, is_default ),
   items:order_items ( id, lab_test_id, name_ar_snapshot, name_en_snapshot, price_snapshot, display_order ),
   events:order_status_history ( id, status, actor_role, actor_name, note, created_at ),
-  result_files:lab_result_files ( id, storage_path, file_name, mime_type, size_bytes, status, uploaded_at, archived_at )
+  result_files:lab_result_files ( id, storage_path, file_name, mime_type, size_bytes, status, uploaded_at, archived_at ),
+  issues:lab_issues ( id, lab_id, type, description, customer_message_ar, status, created_by_role, created_by_name, created_at, resolved_at, resolved_by_name, resolution_note )
 `;
 
 export async function fetchOrdersForCustomer(
@@ -198,6 +199,20 @@ function mapRowToOrder(r: RawOrderRow): Order {
         note: e.note ?? undefined,
         createdAt: e.created_at,
       })),
+      issues: ((r.issues ?? []) as RawLabIssue[]).map((i) => ({
+        id: i.id,
+        orderId: r.id,
+        labId: i.lab_id,
+        type: i.type as import("@/lib/types").LabIssueType,
+        description: i.description,
+        customerMessageAr: i.customer_message_ar ?? undefined,
+        status: i.status as import("@/lib/types").LabIssue["status"],
+        createdBy: i.created_by_name ?? "—",
+        createdByRole: (i.created_by_role === "admin" ? "admin" : "lab"),
+        createdAt: i.created_at,
+        resolvedAt: i.resolved_at ?? undefined,
+        resolutionNote: i.resolution_note ?? undefined,
+      })),
       createdAt: r.created_at,
       updatedAt: r.updated_at,
     };
@@ -238,6 +253,14 @@ interface RawResultFile {
   mime_type: string | null; size_bytes: number | null; status: string;
   uploaded_at: string; archived_at: string | null;
 }
+interface RawLabIssue {
+  id: string; lab_id: string; type: string; description: string;
+  customer_message_ar: string | null; status: string;
+  created_by_role: string | null; created_by_name: string | null;
+  created_at: string;
+  resolved_at: string | null; resolved_by_name: string | null;
+  resolution_note: string | null;
+}
 interface RawOrderRow {
   id: string;
   public_number: string;
@@ -266,6 +289,7 @@ interface RawOrderRow {
   items: RawItem[] | null;
   events: RawEvent[] | null;
   result_files: RawResultFile[] | null;
+  issues: RawLabIssue[] | null;
 }
 
 function mapAddress(r: RawAddress): Address {

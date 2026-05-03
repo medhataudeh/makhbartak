@@ -18,19 +18,18 @@ import {
   MOCK_NURSE_NOTIFICATIONS,
   MOCK_RESULT_FILES,
 } from "./mock-data";
-import { USE_SUPABASE, supabaseEnvReady } from "./supabase/flags";
-import { getSupabaseBrowser } from "./supabase/client";
-import {
-  // Phase 2 retired setOrderStatusRemote (see persistOrderStatusViaApi).
-  // Phase 3 retired uploadResultFileRemote + archiveResultFileRemote (see
-  // persistUploadViaApi / persistArchiveViaApi). assignNurse is the only
-  // mutator still using the direct-RPC path; it is also broken under mock
-  // auth and slated for the next phase.
-  assignNurseRemote,
-} from "./supabase/queries/orders-mutations";
+import { USE_SUPABASE } from "./supabase/flags";
+// Phases 1-3 retired the direct-RPC mutator path; Stage A retired
+// assignNurseRemote (see persistAssignNurseViaApi). Every persist call
+// now goes through the /api/orders/* server routes. The legacy
+// orders-mutations.ts exports remain @deprecated for the future
+// authenticated-browser flow but are no longer imported here.
 import {
   apiCreateOrder, apiListOrdersForAdmin, apiListOrdersForCustomer, apiListOrdersForNurse,
   apiSetOrderStatus, apiUploadLabResultFile, apiArchiveLabResultFile, apiConfirmLabResults,
+  apiAssignNurse, apiAssignLab,
+  apiAddOrderNote, apiApplyCoupon, apiSetPaymentStatus, apiCancelOrder,
+  apiRescheduleOrder, apiVerifyPatient, apiForceCompleteOrder,
 } from "./orders-api";
 import { isUuid } from "./supabase/uuid";
 import type { AuthSession } from "./types";
@@ -160,6 +159,86 @@ export async function hydrateOrdersForNurse(nurseId: string): Promise<void> {
   mergeRemoteOrders(remote);
 }
 
+// Stage G: pull customer/nurse notifications from Supabase.
+interface RawNotificationRow {
+  id: string;
+  recipient_id: string;
+  type: string;
+  title_ar: string;
+  body_ar: string;
+  order_id: string | null;
+  is_read: boolean;
+  created_at: string;
+}
+
+function mergeRemoteNotifications(rows: RawNotificationRow[], userId: string) {
+  const mapped: Notification[] = rows.map((r) => ({
+    id: r.id,
+    userId,
+    type: r.type as Notification["type"],
+    titleAr: r.title_ar,
+    bodyAr: r.body_ar,
+    orderId: r.order_id ?? undefined,
+    isRead: !!r.is_read,
+    createdAt: r.created_at,
+  }));
+  const byId = new Map(_notifications.map((n) => [n.id, n]));
+  for (const n of mapped) byId.set(n.id, n);
+  _notifications = Array.from(byId.values()).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  emit();
+}
+
+export async function hydrateNotificationsForCustomer(customerId: string): Promise<void> {
+  if (!USE_SUPABASE) return;
+  if (!isUuid(customerId)) return;
+  try {
+    const res = await fetch(`/api/customers/${encodeURIComponent(customerId)}/notifications`, { cache: "no-store" });
+    if (!res.ok) return;
+    const body = await res.json().catch(() => null);
+    if (!body || !Array.isArray(body.notifications)) return;
+    mergeRemoteNotifications(body.notifications as RawNotificationRow[], customerId);
+  } catch (err) {
+    console.warn("[api/customers/notifications] hydrate failed", err);
+  }
+}
+
+export async function hydrateNotificationsForNurse(nurseId: string): Promise<void> {
+  if (!USE_SUPABASE) return;
+  if (!isUuid(nurseId)) return;
+  try {
+    const res = await fetch(`/api/nurses/${encodeURIComponent(nurseId)}/notifications`, { cache: "no-store" });
+    if (!res.ok) return;
+    const body = await res.json().catch(() => null);
+    if (!body || !Array.isArray(body.notifications)) return;
+    // Nurse notifications live in a separate inbox in the UI; we still merge
+    // into the same _notifications store and let consumers filter by type
+    // when needed. The mock _nurseNotifications array stays untouched for
+    // legacy callers in flag-off mode.
+    mergeRemoteNotifications(body.notifications as RawNotificationRow[], nurseId);
+  } catch (err) {
+    console.warn("[api/nurses/notifications] hydrate failed", err);
+  }
+}
+
+async function persistNotificationReadViaApi(
+  customerId: string,
+  notificationId: string,
+): Promise<void> {
+  if (!USE_SUPABASE) return;
+  if (!isUuid(customerId) || !isUuid(notificationId)) return;
+  const session = (await import("./auth")).getStoredSession();
+  if (!session) return;
+  try {
+    await fetch(`/api/customers/${encodeURIComponent(customerId)}/notifications/${encodeURIComponent(notificationId)}/read`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ session }),
+    });
+  } catch (err) {
+    console.warn("[api/customers/notifications/read] failed", err);
+  }
+}
+
 function mergeRemoteOrders(remote: Order[]) {
   if (remote.length === 0) return;
   const byId = new Map(_orders.map((o) => [o.id, o]));
@@ -285,15 +364,16 @@ export function createOrder(input: CreateOrderInput): Order {
   _idempotency.set(input.idempotencyKey, id);
 
   // Customer notification: order received.
+  const initialNotifBody = input.initialStatus === "created" && input.paymentMethod === "online"
+    ? "بانتظار تأكيد الدفع لبدء التحضير لزيارتك."
+    : "نحن معك خطوة بخطوة. سنرسل لك إشعاراً عند تأكيد الموعد.";
   _notifications = [
     {
       id: nextId("n"),
       userId: input.userId,
       type: "order_confirmed",
       titleAr: "تم استلام طلبك",
-      bodyAr: input.initialStatus === "created" && input.paymentMethod === "online"
-        ? "بانتظار تأكيد الدفع لبدء التحضير لزيارتك."
-        : "نحن معك خطوة بخطوة. سنرسل لك إشعاراً عند تأكيد الموعد.",
+      bodyAr: initialNotifBody,
       orderId: id,
       isRead: false,
       createdAt: now,
@@ -302,6 +382,13 @@ export function createOrder(input: CreateOrderInput): Order {
   ];
 
   emit();
+  // Stage G: mirror notification to Supabase.
+  void persistNotificationViaApi({
+    recipientCustomerId: input.userId,
+    type: "order_received",
+    titleAr: "تم استلام طلبك",
+    bodyAr: initialNotifBody,
+  });
   // Background remote write — Phase 1 routes through /api/orders (server-side
   // service-role). Falls back to local-only when flag off or when the session
   // isn't a customer (admin can't place orders in Phase 1).
@@ -347,23 +434,32 @@ async function writeOrderRemote(order: Order, input: CreateOrderInput): Promise<
   }
 }
 
-// Generic flag/auth-gated remote-write wrapper used by lifecycle mutators.
-// The fn receives a fresh Supabase client; auth is required (we don't run
-// status changes / file ops as anon).
-async function writeRemote(
-  fn: (sb: ReturnType<typeof getSupabaseBrowser> & object) => Promise<{ ok: boolean; error?: string }>,
-  label: string
-): Promise<void> {
-  if (!USE_SUPABASE || !supabaseEnvReady()) return;
-  const sb = getSupabaseBrowser();
-  if (!sb) return;
-  const user = (await sb.auth.getUser()).data.user;
-  if (!user) return;
-  const res = await fn(sb);
-  if (!res.ok) console.warn(`[supabase] ${label} failed`, res.error);
-}
-
 interface ActorRef { actor: OrderEvent["actor"]; actorName?: string }
+
+// Stage G: mirror customer/nurse notifications into Supabase. Caller has
+// already pushed the optimistic in-memory entry; this helper merely posts to
+// /api/admin/notifications which resolves the recipient profile_id.
+async function persistNotificationViaApi(payload: {
+  recipientCustomerId?: string;
+  recipientNurseId?: string;
+  type: string;
+  titleAr: string;
+  bodyAr: string;
+  orderId?: string;
+}): Promise<void> {
+  if (!USE_SUPABASE) return;
+  const session = (await import("./auth")).getStoredSession();
+  if (!session) return;
+  try {
+    await fetch("/api/admin/notifications", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ session, ...payload }),
+    });
+  } catch (err) {
+    console.warn("[api/admin/notifications] failed", err);
+  }
+}
 
 export function appendEvent(orderId: string, type: OrderEventType, ref: ActorRef, note?: string) {
   mutateOrder(orderId, (o) => ({
@@ -434,6 +530,22 @@ export function setOrderStatus(orderId: string, status: OrderStatus, ref: ActorR
         ..._notifications,
       ];
       emit();
+      // Stage G: mirror to Supabase. SQL notification_type doesn't include
+      // every TS type — map the common cases; unsupported map to 'admin_note'.
+      const sqlType =
+        n.type === "order_confirmed"   ? "order_confirmed" :
+        n.type === "nurse_assigned"    ? "nurse_assigned" :
+        n.type === "nurse_on_way"      ? "nurse_on_way" :
+        n.type === "sample_collected"  ? "sample_collected" :
+        n.type === "result_ready"      ? "results_ready" :
+        "admin_note";
+      void persistNotificationViaApi({
+        recipientCustomerId: order.userId,
+        type: sqlType,
+        titleAr: n.titleAr,
+        bodyAr: n.bodyAr,
+        orderId: isUuid(orderId) ? orderId : undefined,
+      });
     }
   }
   return remote;
@@ -482,12 +594,19 @@ async function persistOrderStatusViaApi(
 
 export function markNotificationRead(id: string) {
   let changed = false;
+  let recipientUserId: string | null = null;
   _notifications = _notifications.map((n) => {
     if (n.id !== id || n.isRead) return n;
     changed = true;
+    recipientUserId = n.userId;
     return { ...n, isRead: true };
   });
-  if (changed) emit();
+  if (changed) {
+    emit();
+    // Stage G: mirror the read flag to Supabase. The recipientUserId stored
+    // on the notification row is the customer UUID (Phase 1 seed swap).
+    if (recipientUserId) void persistNotificationReadViaApi(recipientUserId, id);
+  }
 }
 
 export function markAllNotificationsRead() {
@@ -496,23 +615,33 @@ export function markAllNotificationsRead() {
   emit();
 }
 
-export function applyCoupon(orderId: string, code: string, discount: number, ref: ActorRef) {
-  mutateOrder(orderId, (o) => ({
-    ...o,
-    couponCode: code,
-    couponDiscount: discount,
-    total: Math.max(0, o.subtotal - discount),
-    updatedAt: new Date().toISOString(),
-  }));
+export function applyCoupon(orderId: string, code: string, discount: number, ref: ActorRef): Promise<{ ok: boolean; error?: string }> {
+  let nextTotal = 0;
+  mutateOrder(orderId, (o) => {
+    nextTotal = Math.max(0, o.subtotal - discount);
+    return {
+      ...o,
+      couponCode: code,
+      couponDiscount: discount,
+      total: nextTotal,
+      updatedAt: new Date().toISOString(),
+    };
+  });
   appendEvent(orderId, "coupon_applied", ref, `${code} (-${discount})`);
+  return persistOrderActionViaApi(orderId, async (session) =>
+    apiApplyCoupon(session, orderId, code || null, discount, nextTotal),
+  );
 }
 
-export function setPaymentStatus(orderId: string, status: Order["paymentStatus"], ref: ActorRef) {
+export function setPaymentStatus(orderId: string, status: Order["paymentStatus"], ref: ActorRef): Promise<{ ok: boolean; error?: string }> {
   mutateOrder(orderId, (o) => ({ ...o, paymentStatus: status, updatedAt: new Date().toISOString() }));
   appendEvent(orderId, "payment_status_changed", ref, status);
+  return persistOrderActionViaApi(orderId, async (session) =>
+    apiSetPaymentStatus(session, orderId, status as "pending" | "paid" | "failed" | "refunded"),
+  );
 }
 
-export function addNote(orderId: string, note: Omit<OrderNote, "id" | "orderId" | "createdAt">) {
+export function addNote(orderId: string, note: Omit<OrderNote, "id" | "orderId" | "createdAt">): Promise<{ ok: boolean; error?: string }> {
   const full: OrderNote = {
     ...note,
     id: nextId("nt"),
@@ -521,6 +650,9 @@ export function addNote(orderId: string, note: Omit<OrderNote, "id" | "orderId" 
   };
   mutateOrder(orderId, (o) => ({ ...o, notes: [...(o.notes ?? []), full] }));
   appendEvent(orderId, "note_added", { actor: note.authorRole === "nurse" ? "nurse" : note.authorRole === "lab" ? "lab" : "admin", actorName: note.authorName });
+  return persistOrderActionViaApi(orderId, async (session) =>
+    apiAddOrderNote(session, orderId, note.text),
+  );
 }
 
 // ─── Result files (lifecycle: upload → archive/replace → restore) ──────────
@@ -733,11 +865,18 @@ async function persistConfirmViaApi(orderId: string): Promise<void> {
 }
 
 /** Admin override — close an order without uploaded results. Logged. */
-export function forceCompleteOrder(orderId: string, ref: ActorRef, reason: string) {
-  setOrderStatus(orderId, "completed", ref, `إغلاق دون نتائج: ${reason}`);
+export function forceCompleteOrder(orderId: string, ref: ActorRef, reason: string): Promise<{ ok: boolean; error?: string }> {
+  // Optimistic local flip — also fires Phase-2 status persistence; the
+  // server-side force_complete_order_admin call below stamps a canonical
+  // history row with note='force:<reason>', overriding the generic note
+  // produced by setOrderStatus.
+  void setOrderStatus(orderId, "completed", ref, `إغلاق دون نتائج: ${reason}`);
+  return persistOrderActionViaApi(orderId, async (session) =>
+    apiForceCompleteOrder(session, orderId, reason),
+  );
 }
 
-export function openLabIssue(issue: Omit<LabIssue, "id" | "createdAt" | "status">) {
+export function openLabIssue(issue: Omit<LabIssue, "id" | "createdAt" | "status">): Promise<{ ok: boolean; error?: string }> {
   const full: LabIssue = {
     ...issue,
     id: nextId("li"),
@@ -753,8 +892,6 @@ export function openLabIssue(issue: Omit<LabIssue, "id" | "createdAt" | "status"
     updatedAt: new Date().toISOString(),
   }));
   appendEvent(issue.orderId, "lab_issue_opened", { actor: issue.createdByRole, actorName: issue.createdBy }, issue.description);
-  // Customer notification — never expose technical detail; show the
-  // admin-provided customer message, or a safe generic.
   if (order) {
     const msg = full.customerMessageAr
       ?? "حدثت مشكلة في العينة، وسيتم التواصل معك من فريق الدعم.";
@@ -772,10 +909,46 @@ export function openLabIssue(issue: Omit<LabIssue, "id" | "createdAt" | "status"
       ..._notifications,
     ];
     emit();
+    // Stage G: mirror to Supabase.
+    void persistNotificationViaApi({
+      recipientCustomerId: order.userId,
+      type: "lab_issue",
+      titleAr: "تحديث على طلبك",
+      bodyAr: msg,
+      orderId: isUuid(order.id) ? order.id : undefined,
+    });
   }
+  return persistOpenLabIssueViaApi(issue);
 }
 
-export function updateLabIssueCustomerMessage(issueId: string, customerMessageAr: string) {
+async function persistOpenLabIssueViaApi(
+  issue: Omit<LabIssue, "id" | "createdAt" | "status">,
+): Promise<{ ok: boolean; error?: string }> {
+  if (!USE_SUPABASE) return { ok: true };
+  if (!isUuid(issue.orderId)) {
+    return { ok: false, error: "تعذر فتح المشكلة، الطلب غير موجود في قاعدة البيانات" };
+  }
+  const session = (await import("./auth")).getStoredSession();
+  if (!session || (session.role !== "lab" && session.role !== "admin")) return { ok: true };
+  const { apiOpenLabIssue } = await import("./lab-api");
+  const result = await apiOpenLabIssue(session, issue.orderId, {
+    type: issue.type,
+    description: issue.description,
+    customerMessageAr: issue.customerMessageAr,
+  });
+  if ("error" in result) {
+    console.warn("[api/orders/lab-issues] failed; keeping local issue", result.error);
+    return { ok: false, error: result.error };
+  }
+  if (result.order) {
+    const remote = result.order;
+    _orders = _orders.map((o) => (o.id === remote.id ? { ...o, ...remote } : o));
+    emit();
+  }
+  return { ok: true };
+}
+
+export function updateLabIssueCustomerMessage(issueId: string, customerMessageAr: string): Promise<{ ok: boolean; error?: string }> {
   let orderId: string | null = null;
   _labIssues = _labIssues.map((i) => {
     if (i.id !== issueId) return i;
@@ -789,9 +962,22 @@ export function updateLabIssueCustomerMessage(issueId: string, customerMessageAr
     }));
   }
   emit();
+  return persistUpdateLabIssueMessageViaApi(issueId, customerMessageAr);
 }
 
-export function resolveLabIssue(issueId: string, note: string, ref: ActorRef) {
+async function persistUpdateLabIssueMessageViaApi(
+  issueId: string,
+  customerMessageAr: string,
+): Promise<{ ok: boolean; error?: string }> {
+  if (!USE_SUPABASE) return { ok: true };
+  if (!isUuid(issueId)) return { ok: true };
+  const session = (await import("./auth")).getStoredSession();
+  if (!session || session.role !== "admin") return { ok: true };
+  const { apiUpdateLabIssueMessage } = await import("./lab-api");
+  return apiUpdateLabIssueMessage(session, issueId, customerMessageAr);
+}
+
+export function resolveLabIssue(issueId: string, note: string, ref: ActorRef): Promise<{ ok: boolean; error?: string }> {
   let orderId: string | null = null;
   _labIssues = _labIssues.map((i) => {
     if (i.id !== issueId) return i;
@@ -800,38 +986,142 @@ export function resolveLabIssue(issueId: string, note: string, ref: ActorRef) {
   });
   if (orderId) appendEvent(orderId, "lab_issue_resolved", ref, note);
   emit();
+  return persistResolveLabIssueViaApi(issueId, note);
 }
 
-export function assignNurse(orderId: string, nurseId: string, ref: ActorRef) {
+async function persistResolveLabIssueViaApi(
+  issueId: string,
+  note: string,
+): Promise<{ ok: boolean; error?: string }> {
+  if (!USE_SUPABASE) return { ok: true };
+  if (!isUuid(issueId)) return { ok: true };
+  const session = (await import("./auth")).getStoredSession();
+  if (!session || (session.role !== "admin" && session.role !== "lab")) return { ok: true };
+  const { apiResolveLabIssue } = await import("./lab-api");
+  return apiResolveLabIssue(session, issueId, note);
+}
+
+export function assignNurse(orderId: string, nurseId: string, ref: ActorRef): Promise<{ ok: boolean; error?: string }> {
   mutateOrder(orderId, (o) => ({ ...o, nurseId, status: o.status === "confirmed" ? "nurse_assigned" : o.status }));
   appendEvent(orderId, "nurse_assigned", ref, nurseId);
-  void writeRemote(async (sb) => assignNurseRemote(sb, orderId, nurseId), "assign_nurse");
+  return persistAssignNurseViaApi(orderId, nurseId);
 }
 
-export function assignLab(orderId: string, labId: string, ref: ActorRef) {
+export function assignLab(orderId: string, labId: string, ref: ActorRef): Promise<{ ok: boolean; error?: string }> {
   mutateOrder(orderId, (o) => ({ ...o, labId, updatedAt: new Date().toISOString() }));
   appendEvent(orderId, "sent_to_lab", ref, labId);
+  return persistAssignLabViaApi(orderId, labId);
 }
 
-export function cancelOrder(orderId: string, ref: ActorRef, reason?: string) {
+async function persistAssignNurseViaApi(
+  orderId: string,
+  nurseId: string,
+): Promise<{ ok: boolean; error?: string }> {
+  if (!USE_SUPABASE) return { ok: true };
+  if (!isUuid(orderId) || !isUuid(nurseId)) {
+    return { ok: false, error: "تعذر تعيين الممرض، السجل غير موجود في قاعدة البيانات" };
+  }
+  const session = (await import("./auth")).getStoredSession();
+  if (!session || session.role !== "admin") return { ok: true };
+  const result = await apiAssignNurse(session, orderId, nurseId);
+  if ("error" in result) {
+    console.warn("[api/orders/assign-nurse] failed; keeping local assignment", result.error);
+    return { ok: false, error: result.error };
+  }
+  if (result.order) {
+    const remote = result.order;
+    _orders = _orders.map((o) => (o.id === remote.id ? { ...o, ...remote } : o));
+    emit();
+  }
+  return { ok: true };
+}
+
+async function persistAssignLabViaApi(
+  orderId: string,
+  labId: string,
+): Promise<{ ok: boolean; error?: string }> {
+  if (!USE_SUPABASE) return { ok: true };
+  if (!isUuid(orderId) || !isUuid(labId)) {
+    return { ok: false, error: "تعذر تعيين المخبر، السجل غير موجود في قاعدة البيانات" };
+  }
+  const session = (await import("./auth")).getStoredSession();
+  if (!session || session.role !== "admin") return { ok: true };
+  const result = await apiAssignLab(session, orderId, labId);
+  if ("error" in result) {
+    console.warn("[api/orders/assign-lab] failed; keeping local assignment", result.error);
+    return { ok: false, error: result.error };
+  }
+  if (result.order) {
+    const remote = result.order;
+    _orders = _orders.map((o) => (o.id === remote.id ? { ...o, ...remote } : o));
+    emit();
+  }
+  return { ok: true };
+}
+
+// Shared persistence helper for the Stage B order-action mutators (note,
+// coupon, payment status, cancel, reschedule, verify, force-complete). Each
+// caller passes a `call` that targets the right /api/orders/[id]/* route;
+// the helper handles flag/auth checks and merges the canonical row back
+// into the store. Mock-only mode (flag off) returns `{ ok: true }` so
+// callers don't have to special-case it.
+type ActionApiResult = { order: import("./types").Order | null } | { error: string };
+async function persistOrderActionViaApi(
+  orderId: string,
+  call: (session: AuthSession) => Promise<ActionApiResult>,
+): Promise<{ ok: boolean; error?: string }> {
+  if (!USE_SUPABASE) return { ok: true };
+  if (!isUuid(orderId)) {
+    return { ok: false, error: "تعذر حفظ التغيير، الطلب غير موجود في قاعدة البيانات" };
+  }
+  const session = (await import("./auth")).getStoredSession();
+  // Phase-2 status route already runs from setOrderStatus when nurse triggers
+  // verifyPatient etc.; here we accept admin + nurse so verifyPatient stays
+  // valid for the field flow.
+  if (!session || (session.role !== "admin" && session.role !== "nurse" && session.role !== "lab")) {
+    return { ok: true };
+  }
+  const result = await call(session);
+  if ("error" in result) {
+    console.warn("[api/orders/<action>] failed; keeping local change", result.error);
+    return { ok: false, error: result.error };
+  }
+  if (result.order) {
+    const remote = result.order;
+    _orders = _orders.map((o) => (o.id === remote.id ? { ...o, ...remote } : o));
+    emit();
+  }
+  return { ok: true };
+}
+
+export function cancelOrder(orderId: string, ref: ActorRef, reason?: string): Promise<{ ok: boolean; error?: string }> {
   mutateOrder(orderId, (o) => ({ ...o, status: "cancelled", updatedAt: new Date().toISOString() }));
   appendEvent(orderId, "cancelled", ref, reason);
+  return persistOrderActionViaApi(orderId, async (session) =>
+    apiCancelOrder(session, orderId, reason),
+  );
 }
 
-export function rescheduleOrder(orderId: string, visitDate: string, shift: Order["shift"], ref: ActorRef) {
+export function rescheduleOrder(orderId: string, visitDate: string, shift: Order["shift"], ref: ActorRef): Promise<{ ok: boolean; error?: string }> {
   mutateOrder(orderId, (o) => ({ ...o, visitDate, shift, updatedAt: new Date().toISOString() }));
   appendEvent(orderId, "rescheduled", ref, `${visitDate} / ${shift}`);
+  return persistOrderActionViaApi(orderId, async (session) =>
+    apiRescheduleOrder(session, orderId, visitDate, shift),
+  );
 }
 
 export function verifyPatient(
   orderId: string,
   verification: { officialName: string; nationalId: string; note?: string },
   ref: ActorRef,
-) {
+): Promise<{ ok: boolean; error?: string }> {
   mutateOrder(orderId, (o) => ({
     ...o,
     patientVerification: { orderId, ...verification },
     updatedAt: new Date().toISOString(),
   }));
   appendEvent(orderId, "note_added", ref, `تحقق من المريض: ${verification.officialName} / ${verification.nationalId}`);
+  return persistOrderActionViaApi(orderId, async (session) =>
+    apiVerifyPatient(session, orderId, verification.officialName, verification.nationalId, verification.note),
+  );
 }

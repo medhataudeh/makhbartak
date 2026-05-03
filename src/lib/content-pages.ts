@@ -61,12 +61,45 @@ export function getContentPage(slug: ContentPageSlug): ContentPage | null {
   return getContentPages().find((p) => p.slug === slug) ?? null;
 }
 
-export function updateContentPage(slug: ContentPageSlug, patch: Partial<ContentPage>): void {
+export function updateContentPage(slug: ContentPageSlug, patch: Partial<ContentPage>): Promise<{ ok: boolean; error?: string }> {
   _pages = _pages.map((p) => p.slug === slug
     ? { ...p, ...patch, updatedAt: new Date().toISOString() }
     : p);
   persist();
   emit();
+  return persistContentPageViaApi(slug, patch);
+}
+
+async function persistContentPageViaApi(
+  slug: ContentPageSlug,
+  patch: Partial<ContentPage>,
+): Promise<{ ok: boolean; error?: string }> {
+  if (!USE_SUPABASE) return { ok: true };
+  const session = (await import("./auth")).getStoredSession();
+  if (!session || session.role !== "admin") return { ok: true };
+  // Look up the canonical row to fill required fields the patch may have
+  // omitted (titleAr is required at the RPC level).
+  const current = _pages.find((p) => p.slug === slug);
+  if (!current) return { ok: false, error: "page not found" };
+  const res = await fetch("/api/admin/content-pages", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      session,
+      slug: slug,
+      titleAr: patch.titleAr ?? current.titleAr,
+      bodyAr: patch.bodyAr ?? current.bodyAr,
+      faqItems: patch.faqItems ?? current.faqItems ?? null,
+      supportPhone: patch.supportPhone ?? current.supportPhone,
+      supportWhatsapp: patch.supportWhatsapp ?? current.supportWhatsapp,
+      isActive: patch.isActive ?? current.isActive,
+    }),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    return { ok: false, error: body.error ?? `HTTP ${res.status}` };
+  }
+  return { ok: true };
 }
 
 export function useContentPages(): ContentPage[] {

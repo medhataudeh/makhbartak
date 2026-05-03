@@ -137,9 +137,9 @@ function ProfilePage({ onBack }: { onBack: () => void }) {
     if (!name.trim()) { toast.error("الاسم مطلوب"); return; }
     if (!me) { toast.error("لا يوجد ملف مريض"); return; }
     setSaving(true);
-    await new Promise((r) => setTimeout(r, 400));
-    upsertPatient({ ...me, name: name.trim() });
+    const r = await upsertPatient({ ...me, name: name.trim() });
     setSaving(false);
+    if (!r.ok) { toast.error(r.error ?? "تعذر الحفظ"); return; }
     toast.success("تم الحفظ بنجاح");
     onBack();
   };
@@ -166,13 +166,15 @@ function AddressesPage({ onBack }: { onBack: () => void }) {
   const [editing, setEditing] = useState<Address | null>(null);
   const [creating, setCreating] = useState(false);
 
-  const upsert = (a: Address) => {
-    upsertAddress(a);
+  const upsert = async (a: Address) => {
+    const r = await upsertAddress(a);
+    if (!r.ok) { toast.error(r.error ?? "تعذر الحفظ"); return; }
     toast.success("تم الحفظ بنجاح");
     setEditing(null); setCreating(false);
   };
-  const remove = (id: string) => {
-    deleteAddress(id);
+  const remove = async (id: string) => {
+    const r = await deleteAddress(id);
+    if (!r.ok) { toast.error(r.error ?? "تعذر الحذف"); return; }
     toast.success("تم الحذف");
   };
 
@@ -259,13 +261,15 @@ function PatientsPage({ onBack }: { onBack: () => void }) {
   const [editing, setEditing] = useState<Patient | null>(null);
   const [creating, setCreating] = useState(false);
 
-  const upsert = (p: Patient) => {
-    upsertPatient(p);
+  const upsert = async (p: Patient) => {
+    const r = await upsertPatient(p);
+    if (!r.ok) { toast.error(r.error ?? "تعذر الحفظ"); return; }
     toast.success("تم الحفظ بنجاح");
     setEditing(null); setCreating(false);
   };
-  const remove = (id: string) => {
-    deletePatient(id);
+  const remove = async (id: string) => {
+    const r = await deletePatient(id);
+    if (!r.ok) { toast.error(r.error ?? "تعذر الحذف"); return; }
     toast.success("تم الحذف");
   };
 
@@ -345,8 +349,9 @@ function PaymentPage({ onBack }: { onBack: () => void }) {
   const saved = usePreferredPayment();
   const [pick, setPick] = useState<"cash" | "online">(saved ?? "cash");
 
-  const save = () => {
-    setPreferredPayment(pick);
+  const save = async () => {
+    const r = await setPreferredPayment(pick);
+    if (!r.ok) { toast.error(r.error ?? "تعذر الحفظ"); return; }
     toast.success("تم الحفظ بنجاح");
     onBack();
   };
