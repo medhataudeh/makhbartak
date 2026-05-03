@@ -146,9 +146,12 @@ export async function POST(req: NextRequest) {
 
   // 4. Insert the role-specific row.
   if (body.role === "nurse") {
+    // `nurses.city` is NOT NULL in 002_init_tables.sql — defaulting here
+    // means the create-user form can omit the field without 500s. Admin can
+    // edit the city afterwards via /api/admin/nurses/[id].
     const { error } = await sb.from("nurses").insert({
       profile_id: userId,
-      city: body.city ?? null,
+      city: (body.city?.trim() || "دمشق"),
       is_active: body.isActive ?? true,
     });
     if (error) {

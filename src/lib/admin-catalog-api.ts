@@ -1,5 +1,5 @@
 "use client";
-import type { Coupon, Package, SliderItem, Test } from "@/lib/types";
+import type { Coupon, Package, SliderItem, Test, Nurse, Lab } from "@/lib/types";
 
 // Stage F follow-up: thin client wrappers around the existing Stage F admin
 // routes. Wires the AdminDashboard sub-component setters through Supabase so
@@ -318,4 +318,121 @@ export async function apiUpsertSlider(
 
 export async function apiDeleteSlider(id: string): Promise<{ ok: boolean; error?: string }> {
   return deleteJson(`/api/admin/sliders/${encodeURIComponent(id)}`);
+}
+
+// ─── Nurses (admin) ────────────────────────────────────────────────────────
+interface RawNurseRow {
+  id: string;
+  profile_id: string;
+  city: string | null;
+  is_active: boolean;
+  profile: { full_name: string | null; phone: string | null; photo_url: string | null } | null;
+}
+
+function mapNurse(r: RawNurseRow): Nurse {
+  return {
+    id: r.id,
+    name: r.profile?.full_name ?? "—",
+    phone: r.profile?.phone ?? "",
+    city: r.city ?? "",
+    photoUrl: r.profile?.photo_url ?? undefined,
+    isActive: r.is_active,
+  };
+}
+
+export async function hydrateAdminNurses(): Promise<Nurse[] | null> {
+  const res = await fetch("/api/admin/nurses", { cache: "no-store" });
+  if (!res.ok) return null;
+  const body = await res.json().catch(() => null);
+  return Array.isArray(body?.nurses) ? (body.nurses as RawNurseRow[]).map(mapNurse) : null;
+}
+
+export async function apiPatchNurse(
+  id: string,
+  patch: { fullName?: string; phone?: string; city?: string; isActive?: boolean; photoUrl?: string },
+): Promise<{ ok: boolean; error?: string }> {
+  const res = await fetch(`/api/admin/nurses/${encodeURIComponent(id)}`, {
+    method: "PATCH",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(patch),
+  });
+  if (!res.ok) {
+    const j = await res.json().catch(() => ({}));
+    return { ok: false, error: j.error ?? `HTTP ${res.status}` };
+  }
+  return { ok: true };
+}
+
+// ─── Labs (admin) ──────────────────────────────────────────────────────────
+interface RawLabRow {
+  id: string; name_ar: string; name_en: string | null;
+  phone_main: string; phone_secondary: string | null;
+  email: string | null; whatsapp: string | null;
+  city: string | null; area: string | null; address_full: string | null;
+  lat: number | string | null; lng: number | string | null;
+  supported_cities: string[] | null;
+  working_hours: string | null;
+  accepted_sample_types: string[] | null;
+  avg_processing_hours: number | null;
+  official_name: string | null; registration_number: string | null;
+  license_number: string | null; tax_number: string | null;
+  logo_url: string | null;
+  primary_color: string | null; secondary_color: string | null; accent_color: string | null;
+  portal_display_name: string | null; header_image_url: string | null;
+  reveal_sell_price_to_lab: boolean;
+  is_active: boolean;
+}
+
+function mapLab(r: RawLabRow): Lab {
+  return {
+    id: r.id,
+    name: r.name_ar,
+    nameAr: r.name_ar,
+    nameEn: r.name_en ?? "",
+    phone: r.phone_main,
+    phoneMain: r.phone_main,
+    phoneSecondary: r.phone_secondary ?? undefined,
+    email: r.email ?? undefined,
+    whatsapp: r.whatsapp ?? undefined,
+    city: r.city ?? undefined,
+    area: r.area ?? undefined,
+    addressFull: r.address_full ?? undefined,
+    lat: r.lat == null ? undefined : Number(r.lat),
+    lng: r.lng == null ? undefined : Number(r.lng),
+    supportedCities: r.supported_cities ?? undefined,
+    workingHours: r.working_hours ?? undefined,
+    acceptedSampleTypes: r.accepted_sample_types ?? undefined,
+    avgProcessingHours: r.avg_processing_hours ?? undefined,
+    officialName: r.official_name ?? undefined,
+    registrationNumber: r.registration_number ?? undefined,
+    licenseNumber: r.license_number ?? undefined,
+    taxNumber: r.tax_number ?? undefined,
+    logo: r.logo_url ?? undefined,
+    branding: {
+      primaryColor: r.primary_color ?? "#0891B2",
+      secondaryColor: r.secondary_color ?? "#0E7490",
+      accentColor: r.accent_color ?? "#06B6D4",
+      portalDisplayName: r.portal_display_name ?? undefined,
+      headerImage: r.header_image_url ?? undefined,
+      logo: r.logo_url ?? undefined,
+    },
+    revealSellPriceToLab: r.reveal_sell_price_to_lab,
+    isActive: r.is_active,
+  };
+}
+
+export async function hydrateAdminLabs(): Promise<Lab[] | null> {
+  const res = await fetch("/api/admin/labs", { cache: "no-store" });
+  if (!res.ok) return null;
+  const body = await res.json().catch(() => null);
+  return Array.isArray(body?.labs) ? (body.labs as RawLabRow[]).map(mapLab) : null;
+}
+
+export async function apiCreateLab(input: {
+  nameAr: string; nameEn?: string; phoneMain: string;
+  city?: string; isActive?: boolean; supportedCities?: string[];
+}): Promise<{ ok: boolean; id?: string; error?: string }> {
+  const result = await postJson<{ id: string }>("/api/admin/labs", input);
+  if ("error" in result) return { ok: false, error: result.error };
+  return { ok: true, id: result.id };
 }

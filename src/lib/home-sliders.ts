@@ -1,16 +1,15 @@
 "use client";
 import { useEffect, useSyncExternalStore } from "react";
 import type { SliderItem } from "./types";
-import { MOCK_SLIDERS } from "./mock-data";
 import { USE_SUPABASE } from "./supabase/flags";
 import { hydrateAdminSliders } from "./admin-catalog-api";
 
-// Customer-facing slider list. Hydrates from Supabase via /api/admin/sliders
-// GET (no admin gate on GET — only POST/DELETE). Mock sliders seed the first
-// paint and act as the offline/empty fallback so the home hero never
-// disappears just because the DB has no rows yet.
-const MOCK_ACTIVE = MOCK_SLIDERS.filter((s) => s.isActive);
-let _sliders: SliderItem[] = [...MOCK_SLIDERS];
+// Customer-facing slider list. The home hero is now strictly DB-driven via
+// /api/admin/sliders GET. If the admin hasn't seeded the table the hero
+// renders empty (HomeScreen handles this gracefully) — that's the signal
+// for the operator to add a slider in the admin dashboard. No mock
+// fallback so production never silently shows demo content.
+let _sliders: SliderItem[] = [];
 let _hydratedOnce = false;
 const listeners = new Set<() => void>();
 function emit() { listeners.forEach((l) => l()); }
@@ -19,9 +18,6 @@ function subscribe(l: () => void) { listeners.add(l); return () => { listeners.d
 export function getSliders(): SliderItem[] { return _sliders; }
 
 export function useSliders(): SliderItem[] {
-  // Trigger a single hydrate when the consumer first mounts. Subsequent
-  // mounts re-use the cached _sliders. Admin edits land via apiUpsertSlider;
-  // a customer refresh re-runs hydrate.
   useEffect(() => {
     if (_hydratedOnce) return;
     _hydratedOnce = true;
@@ -29,13 +25,9 @@ export function useSliders(): SliderItem[] {
     void (async () => {
       const remote = await hydrateAdminSliders();
       if (!remote) return;
-      // If the admin DB has no sliders (or none active), keep the mock
-      // fallback visible — an empty home hero is worse than a default one,
-      // and admins can replace it any time.
-      const activeRemote = remote.filter((s) => s.isActive);
-      _sliders = activeRemote.length > 0 ? remote : MOCK_ACTIVE;
+      _sliders = remote.filter((s) => s.isActive);
       emit();
     })();
   }, []);
-  return useSyncExternalStore(subscribe, getSliders, () => MOCK_SLIDERS);
+  return useSyncExternalStore(subscribe, getSliders, () => []);
 }

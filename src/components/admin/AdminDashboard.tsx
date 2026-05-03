@@ -37,15 +37,16 @@ import { useCurrentAdmin } from "@/components/admin/AdminContext";
 import { useOrders, createOrder, hydrateOrdersForAdmin } from "@/lib/store";
 import { generateOrderNumber, dedupeInstructions } from "@/lib/order-utils";
 import { COMMON_INSTRUCTIONS } from "@/lib/mock-data";
-import { MOCK_LABS } from "@/lib/mock-data";
 import { useActivityLogs, hydrateActivityLogs } from "@/lib/activity-log";
 import {
   hydrateAdminTests, hydrateAdminPackages, hydrateAdminCoupons, hydrateAdminSliders,
+  hydrateAdminNurses, hydrateAdminLabs, apiPatchNurse,
   apiUpsertTest, apiDeleteTest,
   apiUpsertPackage, apiDeletePackage,
   apiUpsertCoupon, apiDeleteCoupon, apiValidateCoupon,
   apiUpsertSlider, apiDeleteSlider,
 } from "@/lib/admin-catalog-api";
+import type { Lab } from "@/lib/types";
 import { logActivity } from "@/lib/activity-log";
 import { useToast } from "@/components/ui/Toast";
 import { useSystemSettings, updateSystemSettings } from "@/lib/system-settings";
@@ -129,7 +130,12 @@ export function AdminDashboard({ user, onLogout }: AdminDashboardProps) {
   const [tests, setTests]                 = useState<Test[]>(MOCK_TESTS);
   const [packages, setPackages]           = useState<Package[]>(MOCK_PACKAGES);
   const [coupons, setCoupons]             = useState<Coupon[]>(MOCK_COUPONS);
-  const [nurses, setNurses]               = useState<Nurse[]>(MOCK_NURSES);
+  // Operational rosters that admin assigns to orders. Seed empty so the
+  // dropdown only ever shows real DB rows; hydration below replaces it. The
+  // assignment APIs reject non-existent ids, so any stale mock UUID would
+  // produce a 404 — we don't want that.
+  const [nurses, setNurses]               = useState<Nurse[]>([]);
+  const [labs, setLabs]                   = useState<Lab[]>([]);
   const [sliders, setSliders]             = useState<SliderItem[]>(MOCK_SLIDERS);
   const [icons, setIcons]                 = useState<SvgIcon[]>(MOCK_ICONS);
   const [orders, setOrders]               = useState<Order[]>(MOCK_ORDERS);
@@ -139,14 +145,22 @@ export function AdminDashboard({ user, onLogout }: AdminDashboardProps) {
 
   // Hydrate catalog from Supabase. Tests load first because packages are
   // mapped through the test list (server returns ids; we resolve to objects).
+  // Nurses + labs hydrate in parallel so the order-control dropdowns are
+  // ready by the time the admin clicks into an order.
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      const remoteTests = await hydrateAdminTests();
-      if (cancelled || !remoteTests) return;
-      setTests(remoteTests);
+      const [remoteTests, remoteNurses, remoteLabs] = await Promise.all([
+        hydrateAdminTests(),
+        hydrateAdminNurses(),
+        hydrateAdminLabs(),
+      ]);
+      if (cancelled) return;
+      if (remoteTests) setTests(remoteTests);
+      if (remoteNurses) setNurses(remoteNurses);
+      if (remoteLabs) setLabs(remoteLabs);
       const [remotePackages, remoteCoupons, remoteSliders] = await Promise.all([
-        hydrateAdminPackages(remoteTests),
+        hydrateAdminPackages(remoteTests ?? MOCK_TESTS),
         hydrateAdminCoupons(),
         hydrateAdminSliders(),
       ]);
@@ -269,7 +283,7 @@ export function AdminDashboard({ user, onLogout }: AdminDashboardProps) {
           </div>
 
           {section === "overview"      && <Overview orders={orders} />}
-          {section === "orders"        && <OrdersAdmin orders={orders} setOrders={setOrders} nurses={nurses} user={user} />}
+          {section === "orders"        && <OrdersAdmin orders={orders} setOrders={setOrders} nurses={nurses} labs={labs} user={user} />}
           {section === "users"         && <UsersAdmin orders={orders} />}
           {section === "tests"         && <TestsAdmin tests={tests} setTests={setTests} />}
           {section === "packages"      && <PackagesAdmin packages={packages} setPackages={setPackages} tests={tests} />}
@@ -531,7 +545,7 @@ function Overview({ orders }: { orders: Order[] }) {
 
 // ════════════════════════════ Orders ════════════════════════════════════════
 
-function OrdersAdmin({ nurses, user }: { orders: Order[]; setOrders: React.Dispatch<React.SetStateAction<Order[]>>; nurses: Nurse[]; user: AdminUser }) {
+function OrdersAdmin({ nurses, labs, user }: { orders: Order[]; setOrders: React.Dispatch<React.SetStateAction<Order[]>>; nurses: Nurse[]; labs: Lab[]; user: AdminUser }) {
   // Read from the live store so quick-actions in the Control Center reflect
   // back into this list immediately (and into the customer + nurse views).
   const orders = useOrders();
@@ -650,7 +664,7 @@ function OrdersAdmin({ nurses, user }: { orders: Order[]; setOrders: React.Dispa
           order={open}
           role={{ role: user.role, actor: "admin", actorName: user.name, adminId: user.id }}
           nurses={nurses}
-          labs={MOCK_LABS}
+          labs={labs}
           onClose={() => setOpenId(null)}
           onOpenUser={(uid) => setOpenUserId(uid)}
         />
@@ -717,7 +731,7 @@ function OrdersAdmin({ nurses, user }: { orders: Order[]; setOrders: React.Dispa
           <select value={labFilter} onChange={(e) => { setLabFilter(e.target.value); setPage(1); }} className="h-9 px-3 rounded-lg border border-gray-200 text-xs cursor-pointer" aria-label="المخبر">
             <option value="all">المخبر — الكل</option>
             <option value="">— غير معيّن —</option>
-            {MOCK_LABS.map((l) => <option key={l.id} value={l.id}>{l.nameAr}</option>)}
+            {labs.map((l) => <option key={l.id} value={l.id}>{l.nameAr}</option>)}
           </select>
           <input
             type="date" value={dateFrom} onChange={(e) => { setDateFrom(e.target.value); setPage(1); }}
@@ -763,6 +777,7 @@ function OrdersAdmin({ nurses, user }: { orders: Order[]; setOrders: React.Dispa
         <NewOrderDrawer
           user={user}
           nurses={nurses}
+          labs={labs}
           onCancel={() => setCreating(false)}
           onCreated={(id) => { setCreating(false); setOpenId(id); }}
         />
@@ -1535,10 +1550,22 @@ function NursesAdmin({ nurses, setNurses }: { nurses: Nurse[]; setNurses: React.
   const [creating, setCreating] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState<Nurse | null>(null);
 
-  const upsert = (n: Nurse) => {
+  // The operational nurse profile lives on `nurses` + the linked `profiles`
+  // row. Creation goes through the user-creation flow ("الموظفون") because
+  // it needs an auth.users row. Here we only edit existing operational rows.
+  const upsert = async (n: Nurse) => {
     const exists = nurses.find((x) => x.id === n.id);
-    setNurses((prev) => exists ? prev.map((x) => x.id === n.id ? n : x) : [...prev, n]);
-    logActivity({ adminId: me.id, adminName: me.name, role: me.role, action: "user_edit", entity: "nurse", entityId: n.id, details: exists ? `تعديل الممرض ${n.name}` : `إضافة الممرض ${n.name}` });
+    if (!exists) {
+      toast.error("لإضافة ممرض جديد استخدم قسم الموظفون → حسابات الممرضين");
+      return;
+    }
+    const r = await apiPatchNurse(n.id, {
+      fullName: n.name, phone: n.phone, city: n.city,
+      isActive: n.isActive, photoUrl: n.photoUrl,
+    });
+    if (!r.ok) { toast.error(r.error ?? "تعذر الحفظ"); return; }
+    setNurses((prev) => prev.map((x) => x.id === n.id ? n : x));
+    logActivity({ adminId: me.id, adminName: me.name, role: me.role, action: "user_edit", entity: "nurse", entityId: n.id, details: `تعديل الممرض ${n.name}` });
     toast.success("تم الحفظ بنجاح");
     setEditing(null); setCreating(false);
   };
@@ -1547,7 +1574,7 @@ function NursesAdmin({ nurses, setNurses }: { nurses: Nurse[]; setNurses: React.
     <div className="space-y-4">
       <div className="flex justify-between items-center">
         <p className="text-sm text-gray-500">{nurses.length} ممرض</p>
-        <Button size="sm" variant="secondary" onClick={() => setCreating(true)}><Plus size={13} aria-hidden="true" /> إضافة ممرض</Button>
+        <p className="text-[11px] text-gray-400">لإضافة ممرض جديد: قسم &quot;الموظفون&quot; ← حسابات الممرضين</p>
       </div>
       <Section title="القائمة">
         <DataTable
@@ -1561,7 +1588,12 @@ function NursesAdmin({ nurses, setNurses }: { nurses: Nurse[]; setNurses: React.
               <ActionMenu row={n} isActive={n.isActive}
                 onEdit={(r) => setEditing(r)}
                 onDelete={(r) => setConfirmDelete(r)}
-                onToggle={(r) => setNurses((prev) => prev.map((x) => x.id === r.id ? { ...x, isActive: !x.isActive } : x))}
+                onToggle={async (r) => {
+                  const next = !r.isActive;
+                  const res = await apiPatchNurse(r.id, { isActive: next });
+                  if (!res.ok) { toast.error(res.error ?? "تعذر التحديث"); return; }
+                  setNurses((prev) => prev.map((x) => x.id === r.id ? { ...x, isActive: next } : x));
+                }}
               />
             )},
           ]}
@@ -1948,7 +1980,25 @@ function SlidersAdmin({ sliders, setSliders, packages }: { sliders: SliderItem[]
     <div className="space-y-4">
       <div className="flex justify-between items-center">
         <p className="text-sm text-gray-500">{sliders.length} عنصر</p>
-        <Button size="sm" variant="secondary" onClick={() => setCreating(true)}><Plus size={13} aria-hidden="true" /> إضافة سلايدر</Button>
+        <div className="flex items-center gap-2">
+          {sliders.length === 0 && (
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={async () => {
+                const res = await fetch("/api/admin/sliders/seed-defaults", { method: "POST" });
+                const body = await res.json().catch(() => ({}));
+                if (!res.ok) { toast.error(body.error ?? "تعذر إنشاء السلايدرات الافتراضية"); return; }
+                const remote = await hydrateAdminSliders();
+                if (remote) setSliders(remote);
+                toast.success("تم إنشاء السلايدرات الافتراضية");
+              }}
+            >
+              إنشاء سلايدرات افتراضية
+            </Button>
+          )}
+          <Button size="sm" variant="secondary" onClick={() => setCreating(true)}><Plus size={13} aria-hidden="true" /> إضافة سلايدر</Button>
+        </div>
       </div>
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
         {sliders.sort((a, b) => a.displayOrder - b.displayOrder).map((s) => (
@@ -2764,9 +2814,10 @@ function SettingsAdmin() {
 }
 
 // ════════════════════════════ New order drawer ══════════════════════════════
-function NewOrderDrawer({ user, nurses, onCancel, onCreated }: {
+function NewOrderDrawer({ user, nurses, labs, onCancel, onCreated }: {
   user: AdminUser;
   nurses: Nurse[];
+  labs: Lab[];
   onCancel: () => void;
   onCreated: (orderId: string) => void;
 }) {
@@ -3039,7 +3090,7 @@ function NewOrderDrawer({ user, nurses, onCancel, onCreated }: {
               <Field label="المخبر">
                 <select value={assignLabId} onChange={(e) => setAssignLabId(e.target.value)} className="w-full h-10 px-3 rounded-xl border border-gray-200 text-sm cursor-pointer">
                   <option value="">— غير معيّن —</option>
-                  {MOCK_LABS.map((l) => <option key={l.id} value={l.id}>{l.nameAr}</option>)}
+                  {labs.map((l) => <option key={l.id} value={l.id}>{l.nameAr}</option>)}
                 </select>
               </Field>
             </div>

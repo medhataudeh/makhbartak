@@ -1,7 +1,7 @@
 "use client";
 import { useSyncExternalStore } from "react";
 import type { Test, Package, TestCategory } from "./types";
-import { MOCK_TESTS, MOCK_PACKAGES, TEST_CATEGORIES } from "./mock-data";
+import { TEST_CATEGORIES } from "./mock-data";
 import { USE_SUPABASE, supabaseEnvReady } from "./supabase/flags";
 import { getSupabaseBrowser } from "./supabase/client";
 import {
@@ -10,8 +10,16 @@ import {
   fetchCategories,
 } from "./supabase/queries/catalog";
 
-let _tests: Test[] = MOCK_TESTS;
-let _packages: Package[] = MOCK_PACKAGES;
+// Customer-facing catalog. Tests + packages are strictly DB-driven now —
+// admin manages them, customer reads them. We start the stores empty and
+// hydrate from Supabase; an offline/empty DB yields an empty browse state
+// so we never silently render demo content in production.
+//
+// Categories keep the static fallback because they're the filter chips and
+// emptying them breaks the search UX before the network round-trip lands;
+// admin editing of categories isn't wired yet.
+let _tests: Test[] = [];
+let _packages: Package[] = [];
 let _categories: TestCategory[] = TEST_CATEGORIES;
 let _hydrated = false;
 let _remoteHydrated = false;
@@ -41,11 +49,8 @@ async function hydrateFromSupabase() {
     let changed = false;
     if (t) { _tests = t; changed = true; }
     if (c) { _categories = c; changed = true; }
-    if (p) {
-      // Resolve package_items → Test[] by lookup against the freshly fetched
-      // (or fallback) test list. Falls back to MOCK_TESTS if remote tests
-      // are unavailable so package cards never render empty.
-      const lookup = new Map((t ?? MOCK_TESTS).map((x) => [x.id, x]));
+    if (p && t) {
+      const lookup = new Map(t.map((x) => [x.id, x]));
       _packages = p.packages.map((pkg) => ({
         ...pkg,
         tests: (p.itemsByPackage.get(pkg.id) ?? [])
@@ -56,7 +61,7 @@ async function hydrateFromSupabase() {
     }
     if (changed) emit();
   } catch (err) {
-    console.warn("[supabase] catalog hydrate failed; using local", err);
+    console.warn("[supabase] catalog hydrate failed", err);
   }
 }
 
@@ -65,10 +70,10 @@ export function getPackages(): Package[] { if (!_hydrated) hydrate(); return _pa
 export function getCategories(): TestCategory[] { if (!_hydrated) hydrate(); return _categories; }
 
 export function useTests(): Test[] {
-  return useSyncExternalStore(subscribe, getTests, () => MOCK_TESTS);
+  return useSyncExternalStore(subscribe, getTests, () => []);
 }
 export function usePackages(): Package[] {
-  return useSyncExternalStore(subscribe, getPackages, () => MOCK_PACKAGES);
+  return useSyncExternalStore(subscribe, getPackages, () => []);
 }
 export function useCategories(): TestCategory[] {
   return useSyncExternalStore(subscribe, getCategories, () => TEST_CATEGORIES);

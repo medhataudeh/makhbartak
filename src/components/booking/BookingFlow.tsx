@@ -53,17 +53,15 @@ export function BookingFlow({ tests, pkg, onContinue, onBack }: BookingFlowProps
   const [addingPatient, setAddingPatient] = useState(false);
   const toast = useToast();
 
-  // Always render exactly 3 day cards (today + next 2). Days that have zero
-  // available shifts stay visible but the cell is disabled so the customer
-  // can see what's full and pick something else. Logic-side guards still
-  // refuse a disabled date in submit().
+  // Always render today + next 2 (3 cards). If any of those have zero
+  // available shifts (e.g. today's notice window has elapsed), keep them
+  // visible but disabled, then append the next valid day past the window so
+  // the user always has at least one selectable card. Booking window may
+  // shrink the spillover; if no valid day exists at all, the disabled days
+  // still render with their reason.
   const candidateDays: { date: string; shifts: ReturnType<typeof getShiftConfigs>; available: boolean }[] = (() => {
     const today = new Date(); today.setHours(0, 0, 0, 0);
-    const out: typeof candidateDays = [];
-    for (let i = 0; i < 3; i++) {
-      const d = new Date(today);
-      d.setDate(today.getDate() + i);
-      const date = ymd(d);
+    const computeFor = (date: string) => {
       const ordersForDate = liveOrders
         .filter((o) => o.visitDate === date)
         .map((o) => ({ shift: o.shift, status: o.status }));
@@ -78,7 +76,28 @@ export function BookingFlow({ tests, pkg, onContinue, onBack }: BookingFlowProps
         maxOrdersPerShift: settings.maxOrdersPerShift,
         bookingWindowDays: settings.bookingWindowDays,
       });
-      out.push({ date, shifts, available: shifts.some((s) => s.available) });
+      return { date, shifts, available: shifts.some((s) => s.available) };
+    };
+    const out: typeof candidateDays = [];
+    for (let i = 0; i < 3; i++) {
+      const d = new Date(today);
+      d.setDate(today.getDate() + i);
+      out.push(computeFor(ymd(d)));
+    }
+    // Spillover: if none of the first 3 days has an available slot, look
+    // ahead until we find one (capped to 14 days to avoid infinite loops on
+    // a misconfigured window). Replace the last (least-useful, farthest)
+    // disabled day with the first valid day we find.
+    if (!out.some((d) => d.available)) {
+      for (let i = 3; i < 14; i++) {
+        const d = new Date(today);
+        d.setDate(today.getDate() + i);
+        const candidate = computeFor(ymd(d));
+        if (candidate.available) {
+          out[out.length - 1] = candidate;
+          break;
+        }
+      }
     }
     return out;
   })();
@@ -297,12 +316,11 @@ export function BookingFlow({ tests, pkg, onContinue, onBack }: BookingFlowProps
 }
 
 function AddressInlineForm({ onCancel, onSubmit }: { onCancel: () => void; onSubmit: (a: Address) => void }) {
-  const [label, setLabel] = useState("المنزل");
+  // Per spec the form asks only for: map pin, optional description, city.
+  // No label / default toggle — both were noise. We default `label` to the
+  // city under the hood so back-end constraints (label NOT NULL) still pass.
   const [description, setDescription] = useState("");
   const [city, setCity] = useState<string>("دمشق");
-  const [makeDefault, setMakeDefault] = useState(false);
-  // Coordinates start at the city center; the map records that the user
-  // actively placed a pin so we don't accept an unmoved default as "located".
   const [lat, setLat] = useState<number>(33.5138);
   const [lng, setLng] = useState<number>(36.2765);
   const [pinPlaced, setPinPlaced] = useState(false);
@@ -320,11 +338,8 @@ function AddressInlineForm({ onCancel, onSubmit }: { onCancel: () => void; onSub
           }}
         />
       </Field>
-      <Field label="التسمية">
-        <input value={label} onChange={(e) => setLabel(e.target.value)} placeholder="المنزل / العمل" className="w-full h-11 px-3 rounded-xl border border-gray-200 text-sm" />
-      </Field>
-      <Field label="تفاصيل العنوان (الحي، الشارع، رقم البناء، الطابق)">
-        <textarea value={description} onChange={(e) => setDescription(e.target.value)} rows={2} placeholder="مثال: المزة – شارع الفردوس، بناء 12، الطابق 3" className="w-full p-3 rounded-xl border border-gray-200 text-sm resize-none" />
+      <Field label="تفاصيل إضافية (اختياري)">
+        <textarea value={description} onChange={(e) => setDescription(e.target.value)} rows={2} placeholder="رقم البناء، الطابق، نقطة دالة" className="w-full p-3 rounded-xl border border-gray-200 text-sm resize-none" />
       </Field>
       <Field label="المدينة / المنطقة">
         <select value={city} onChange={(e) => setCity(e.target.value)} className="w-full h-11 px-3 rounded-xl border border-gray-200 text-sm cursor-pointer">
@@ -332,10 +347,6 @@ function AddressInlineForm({ onCancel, onSubmit }: { onCancel: () => void; onSub
           <option value="ريف دمشق">ريف دمشق</option>
         </select>
       </Field>
-      <label className="flex items-center gap-2 text-sm text-[#164E63]">
-        <input type="checkbox" checked={makeDefault} onChange={(e) => setMakeDefault(e.target.checked)} className="w-4 h-4" />
-        اجعله العنوان الافتراضي
-      </label>
       {!pinPlaced && (
         <p className="text-[11px] text-amber-600">يرجى تحديد الموقع على الخريطة قبل الحفظ.</p>
       )}
@@ -343,14 +354,15 @@ function AddressInlineForm({ onCancel, onSubmit }: { onCancel: () => void; onSub
         <Button variant="outline" className="flex-1" onClick={onCancel}>إلغاء</Button>
         <Button
           variant="primary" className="flex-1"
-          disabled={!label.trim() || !description.trim() || !pinPlaced}
+          disabled={!pinPlaced}
           onClick={() => onSubmit({
             id: `addr-${Date.now()}`,
             userId: SEED_CUSTOMER_1_ID,
-            label: label.trim(),
+            label: city,                 // back-compat: label stays NOT NULL
             description: description.trim(),
             lat, lng,
-            city, isDefault: makeDefault,
+            city,
+            isDefault: false,
           })}
         >حفظ</Button>
       </div>
@@ -361,7 +373,7 @@ function AddressInlineForm({ onCancel, onSubmit }: { onCancel: () => void; onSub
 function PatientInlineForm({ onCancel, onSubmit }: { onCancel: () => void; onSubmit: (p: Patient) => void }) {
   const [name, setName] = useState("");
   const [nationalId, setNationalId] = useState("");
-  const [makeDefault, setMakeDefault] = useState(false);
+  const [note, setNote] = useState("");
   return (
     <div className="px-4 pb-4 space-y-3">
       <p className="text-[11px] text-gray-500 leading-relaxed">
@@ -373,10 +385,9 @@ function PatientInlineForm({ onCancel, onSubmit }: { onCancel: () => void; onSub
       <Field label="الرقم الوطني (اختياري)">
         <input value={nationalId} onChange={(e) => setNationalId(e.target.value)} className="w-full h-11 px-3 rounded-xl border border-gray-200 text-sm lat" dir="ltr" />
       </Field>
-      <label className="flex items-center gap-2 text-sm text-[#164E63]">
-        <input type="checkbox" checked={makeDefault} onChange={(e) => setMakeDefault(e.target.checked)} className="w-4 h-4" />
-        اجعله المريض الافتراضي
-      </label>
+      <Field label="ملاحظة (اختياري)">
+        <input value={note} onChange={(e) => setNote(e.target.value)} placeholder="صلة القرابة، تنبيهات صحية" className="w-full h-11 px-3 rounded-xl border border-gray-200 text-sm" />
+      </Field>
       <div className="flex gap-2 pt-2">
         <Button variant="outline" className="flex-1" onClick={onCancel}>إلغاء</Button>
         <Button
@@ -387,7 +398,8 @@ function PatientInlineForm({ onCancel, onSubmit }: { onCancel: () => void; onSub
             userId: SEED_CUSTOMER_1_ID,
             name: name.trim(),
             nationalId: nationalId.trim() || undefined,
-            isDefault: makeDefault,
+            note: note.trim() || undefined,
+            isDefault: false,
           })}
         >حفظ</Button>
       </div>
