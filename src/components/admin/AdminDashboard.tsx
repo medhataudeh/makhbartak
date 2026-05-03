@@ -115,6 +115,9 @@ export function AdminDashboard({ user, onLogout }: AdminDashboardProps) {
 
   // Centralized mutable state — single source of truth so child sections can
   // CRUD without prop-drilling and changes survive across tab switches.
+  // Stage F follow-up: tests/packages/coupons/sliders are seeded from mock
+  // for the first paint and replaced by Supabase rows once the hydrators
+  // below resolve. Edits awaited via /api/admin/* before local state moves.
   const [tests, setTests]                 = useState<Test[]>(MOCK_TESTS);
   const [packages, setPackages]           = useState<Package[]>(MOCK_PACKAGES);
   const [coupons, setCoupons]             = useState<Coupon[]>(MOCK_COUPONS);
@@ -125,6 +128,27 @@ export function AdminDashboard({ user, onLogout }: AdminDashboardProps) {
   const [routes, setRoutes]               = useState<NurseRoute[]>(MOCK_NURSE_ROUTES);
   const [notifications, setNotifications] = useState<Notification[]>(MOCK_NOTIFICATIONS);
   const [config, setConfig]               = useState(GAMIFICATION_CONFIG);
+
+  // Hydrate catalog from Supabase. Tests load first because packages are
+  // mapped through the test list (server returns ids; we resolve to objects).
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const remoteTests = await hydrateAdminTests();
+      if (cancelled || !remoteTests) return;
+      setTests(remoteTests);
+      const [remotePackages, remoteCoupons, remoteSliders] = await Promise.all([
+        hydrateAdminPackages(remoteTests),
+        hydrateAdminCoupons(),
+        hydrateAdminSliders(),
+      ]);
+      if (cancelled) return;
+      if (remotePackages) setPackages(remotePackages);
+      if (remoteCoupons) setCoupons(remoteCoupons);
+      if (remoteSliders) setSliders(remoteSliders);
+    })();
+    return () => { cancelled = true; };
+  }, []);
 
   const grouped = useMemo(() => {
     const out: Record<string, SectionDef[]> = {};
