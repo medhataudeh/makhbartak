@@ -209,6 +209,7 @@ export function hasRole(session: AuthSession | null, role: Role): boolean {
 }
 
 import { MOCK_NURSES } from "./mock-data";
+import { isUuid } from "./supabase/uuid";
 import type { Nurse, LabUser, AdminUser, AuthUser } from "./types";
 import {
   fetchAdminUsers, fetchCustomerUsers, fetchNurseUsers, fetchLabUsers,
@@ -303,8 +304,11 @@ export const useLabUsers      = () => labUserStore.use();
 // payload the /api/admin/users routes expect. New rows (id missing) hit POST;
 // existing rows hit PATCH. Password is optional on PATCH; if present, callers
 // should use resetXxxPassword instead.
-export async function upsertAdmin(a: AdminUser): Promise<{ ok: boolean; error?: string }> {
-  const isCreate = !a.id;
+export async function upsertAdmin(a: AdminUser): Promise<{ ok: boolean; id?: string; error?: string }> {
+  // The admin form prefills `id` with a local slug ("ad-XYZ") for new rows;
+  // only existing accounts have a real Supabase UUID. Any non-UUID id means
+  // "create", regardless of truthiness.
+  const isCreate = !isUuid(a.id);
   const result = isCreate
     ? await apiCreateUser({
         role: "admin",
@@ -342,7 +346,7 @@ export async function resetAdminPassword(id: string, password: string): Promise<
 export async function upsertCustomerUser(
   u: AuthUser & { phone?: string },
 ): Promise<{ ok: boolean; id?: string; error?: string }> {
-  const isCreate = !u.id;
+  const isCreate = !isUuid(u.id);
   const result = isCreate
     ? await apiCreateUser({
         role: "customer",
@@ -376,7 +380,7 @@ export async function resetCustomerUserPassword(id: string, password: string): P
 export async function upsertNurseUser(
   u: AuthUser & { phone?: string; city?: string },
 ): Promise<{ ok: boolean; id?: string; error?: string }> {
-  const isCreate = !u.id;
+  const isCreate = !isUuid(u.id);
   const result = isCreate
     ? await apiCreateUser({
         role: "nurse",
@@ -411,7 +415,7 @@ export async function resetNurseUserPassword(id: string, password: string): Prom
 export async function upsertLabUser(
   u: LabUser & { phone?: string },
 ): Promise<{ ok: boolean; id?: string; error?: string }> {
-  const isCreate = !u.id;
+  const isCreate = !isUuid(u.id);
   const result = isCreate
     ? await apiCreateUser({
         role: "lab",

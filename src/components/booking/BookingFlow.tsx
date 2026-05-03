@@ -1,5 +1,5 @@
 "use client";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
 import { MapPin, User, Clock, ChevronLeft, Plus, Calendar as CalendarIcon } from "lucide-react";
 import { getShiftConfigs, SEED_CUSTOMER_1_ID } from "@/lib/mock-data";
@@ -33,19 +33,52 @@ interface BookingFlowProps {
 const ymd = (d: Date) => d.toISOString().split("T")[0];
 const WEEKDAYS_AR = ["الأحد", "الاثنين", "الثلاثاء", "الأربعاء", "الخميس", "الجمعة", "السبت"];
 
+const LAST_PATIENT_KEY = "makhbartak.booking.lastPatientId.v1";
+
+function getLastPatientId(): string | null {
+  if (typeof window === "undefined") return null;
+  try { return window.localStorage.getItem(LAST_PATIENT_KEY); } catch { return null; }
+}
+function rememberPatientId(id: string) {
+  if (typeof window === "undefined") return;
+  try { window.localStorage.setItem(LAST_PATIENT_KEY, id); } catch {}
+}
+
 export function BookingFlow({ tests, pkg, onContinue, onBack }: BookingFlowProps) {
   const allAddresses = useAddresses();
   const allPatients = usePatients();
   const settings = useSystemSettings();
   const liveOrders = useOrders();
 
-  // Patient/date stays unselected until the user explicitly chooses one — we
-  // never auto-fill the patient slot from the account name (those are two
-  // distinct entities; see PatientInlineForm copy).
+  // Patient defaults to the last patient the user explicitly picked in a
+  // prior checkout (persisted in localStorage). On first checkout it stays
+  // empty so the user makes a deliberate choice — we still never auto-fill
+  // the slot from the account name. The patient is a distinct entity.
   const [visitDate, setVisitDate] = useState<string>("");
   const [shift, setShift] = useState<Shift | null>(null);
   const [address, setAddress] = useState<Address | null>(allAddresses.find((a) => a.isDefault) ?? allAddresses[0] ?? null);
-  const [patient, setPatient] = useState<Patient | null>(null);
+  const [patient, setPatient] = useState<Patient | null>(() => {
+    const lastId = getLastPatientId();
+    if (!lastId) return null;
+    return allPatients.find((p) => p.id === lastId) ?? null;
+  });
+  // Re-resolve once the patient list arrives from Supabase (the initial
+  // useState ran before the hydrate). Only patches when we don't yet have a
+  // selection so we never overwrite an explicit user pick. setState in an
+  // effect is the right tool: external state (Supabase patient list) just
+  // changed and we mirror it into the local form selection.
+  useEffect(() => {
+    if (patient) return;
+    const lastId = getLastPatientId();
+    if (!lastId) return;
+    const match = allPatients.find((p) => p.id === lastId);
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    if (match) setPatient(match);
+  }, [allPatients, patient]);
+  const choosePatient = (p: Patient) => {
+    setPatient(p);
+    if (p.id) rememberPatientId(p.id);
+  };
   const [whenSheet, setWhenSheet] = useState(false);
   const [addressSheet, setAddressSheet] = useState(false);
   const [patientSheet, setPatientSheet] = useState(false);
@@ -53,15 +86,17 @@ export function BookingFlow({ tests, pkg, onContinue, onBack }: BookingFlowProps
   const [addingPatient, setAddingPatient] = useState(false);
   const toast = useToast();
 
-  // Always render today + next 2 (3 cards). If any of those have zero
-  // available shifts (e.g. today's notice window has elapsed), keep them
-  // visible but disabled, then append the next valid day past the window so
-  // the user always has at least one selectable card. Booking window may
-  // shrink the spillover; if no valid day exists at all, the disabled days
-  // still render with their reason.
+  // Exactly 3 day cards: today, tomorrow, day after. Days with no
+  // availability (notice window elapsed, capacity full, out of booking
+  // window) are still rendered, just disabled with their reason — no
+  // spillover replacement, so the calendar shape is predictable.
   const candidateDays: { date: string; shifts: ReturnType<typeof getShiftConfigs>; available: boolean }[] = (() => {
     const today = new Date(); today.setHours(0, 0, 0, 0);
-    const computeFor = (date: string) => {
+    const out: typeof candidateDays = [];
+    for (let i = 0; i < 3; i++) {
+      const d = new Date(today);
+      d.setDate(today.getDate() + i);
+      const date = ymd(d);
       const ordersForDate = liveOrders
         .filter((o) => o.visitDate === date)
         .map((o) => ({ shift: o.shift, status: o.status }));
@@ -76,28 +111,7 @@ export function BookingFlow({ tests, pkg, onContinue, onBack }: BookingFlowProps
         maxOrdersPerShift: settings.maxOrdersPerShift,
         bookingWindowDays: settings.bookingWindowDays,
       });
-      return { date, shifts, available: shifts.some((s) => s.available) };
-    };
-    const out: typeof candidateDays = [];
-    for (let i = 0; i < 3; i++) {
-      const d = new Date(today);
-      d.setDate(today.getDate() + i);
-      out.push(computeFor(ymd(d)));
-    }
-    // Spillover: if none of the first 3 days has an available slot, look
-    // ahead until we find one (capped to 14 days to avoid infinite loops on
-    // a misconfigured window). Replace the last (least-useful, farthest)
-    // disabled day with the first valid day we find.
-    if (!out.some((d) => d.available)) {
-      for (let i = 3; i < 14; i++) {
-        const d = new Date(today);
-        d.setDate(today.getDate() + i);
-        const candidate = computeFor(ymd(d));
-        if (candidate.available) {
-          out[out.length - 1] = candidate;
-          break;
-        }
-      }
+      out.push({ date, shifts, available: shifts.some((s) => s.available) });
     }
     return out;
   })();
@@ -261,7 +275,7 @@ export function BookingFlow({ tests, pkg, onContinue, onBack }: BookingFlowProps
             <motion.button
               key={p.id}
               whileTap={{ scale: 0.97 }}
-              onClick={() => { setPatient(p); setPatientSheet(false); }}
+              onClick={() => { choosePatient(p); setPatientSheet(false); }}
               aria-pressed={patient?.id === p.id}
               className={`w-full flex items-center gap-3 p-4 rounded-xl border-2 cursor-pointer transition-all duration-150 text-start ${patient?.id === p.id ? "border-[#0891B2] bg-[#ECFEFF]" : "border-gray-200 bg-white active:bg-gray-50"}`}
             >
@@ -305,7 +319,7 @@ export function BookingFlow({ tests, pkg, onContinue, onBack }: BookingFlowProps
           onSubmit={async (p) => {
             const r = await upsertPatient(p);
             if (!r.ok) { toast.error(r.error ?? "تعذر حفظ المريض"); return; }
-            setPatient(r.patient ?? p);
+            choosePatient(r.patient ?? p);
             setAddingPatient(false);
             toast.success("تم الحفظ بنجاح");
           }}
