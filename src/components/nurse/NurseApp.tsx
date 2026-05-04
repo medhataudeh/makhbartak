@@ -395,7 +395,7 @@ function NurseAppInner({ nurseId, onLogout }: { nurseId: string; onLogout: () =>
 
       {/* Bottom nav */}
       <nav
-        className="fixed bottom-0 inset-x-0 bg-white border-t border-gray-100 safe-bottom z-30 max-w-md mx-auto"
+        className="fixed bottom-0 inset-x-0 bg-white border-t border-gray-100 safe-bottom-sm z-30 max-w-md mx-auto"
         aria-label="التنقل"
       >
         <div className="grid grid-cols-3 h-16">
@@ -1416,7 +1416,7 @@ function NurseVisitDetail({
       {/* Actions — one dynamic primary CTA per order state, secondary "support"
          link, and a quiet "مشكلة؟" trigger that opens the failure sheet. The
          actual status APIs are unchanged. */}
-      <footer className="bg-white border-t border-gray-100 px-4 py-3 safe-bottom space-y-2">
+      <footer className="bg-white border-t border-gray-100 px-4 pt-3 safe-bottom-md space-y-2">
         <NursePrimaryAction
           status={status}
           verified={verified}

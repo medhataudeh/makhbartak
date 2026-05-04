@@ -137,7 +137,7 @@ export function CustomTestBuilder({ onContinue, onBack }: CustomTestBuilderProps
             animate={{ y: 0, opacity: 1 }}
             exit={{ y: 80, opacity: 0 }}
             transition={{ type: "spring", damping: 28, stiffness: 320 }}
-            className="fixed bottom-0 start-0 end-0 z-30 bg-white border-t border-gray-100 px-4 py-3 safe-bottom shadow-[0_-8px_24px_rgba(0,0,0,0.06)]"
+            className="fixed bottom-0 start-0 end-0 z-30 bg-white border-t border-gray-100 px-4 pt-3 safe-bottom-md shadow-[0_-8px_24px_rgba(0,0,0,0.06)]"
             style={{ maxWidth: "448px", margin: "0 auto" }}
             role="status"
             aria-live="polite"

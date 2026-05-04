@@ -134,7 +134,7 @@ export function OrderSuccess({ orderId, onViewOrder, onShare }: OrderSuccessProp
         initial={{ y: 24, opacity: 0 }}
         animate={{ y: 0, opacity: 1 }}
         transition={{ delay: 0.65, duration: 0.25 }}
-        className="fixed md:static bottom-0 inset-x-0 px-4 py-3 md:py-6 bg-white border-t md:border-0 border-gray-100 space-y-2 md:space-y-3 safe-bottom z-30"
+        className="fixed md:static bottom-0 inset-x-0 px-4 pt-3 md:pt-6 bg-white border-t md:border-0 border-gray-100 space-y-2 md:space-y-3 safe-bottom-md md:pb-6 z-30"
       >
         <div className="max-w-md mx-auto space-y-2 md:space-y-3">
           <Button onClick={onShare} variant="outline" size="lg" className="w-full">

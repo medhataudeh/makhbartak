@@ -21,6 +21,10 @@ export const viewport: Viewport = {
   themeColor: "#0891B2",
   width: "device-width",
   initialScale: 1,
+  // viewport-fit=cover lets iOS Safari resolve env(safe-area-inset-*) to
+  // the real notch/home-indicator insets. Without it, env() returns 0 and
+  // every safe-area utility collapses to its base padding.
+  viewportFit: "cover",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

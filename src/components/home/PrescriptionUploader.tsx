@@ -227,7 +227,7 @@ export function PrescriptionUploader({ onContinue, onBack }: PrescriptionUploade
         <motion.div
           initial={{ y: 40, opacity: 0 }}
           animate={{ y: 0, opacity: 1 }}
-          className="px-4 py-3 bg-white border-t border-gray-100 safe-bottom"
+          className="px-4 pt-3 bg-white border-t border-gray-100 safe-bottom-md"
         >
           <Button onClick={() => onContinue(selectedTests)} size="lg" className="w-full">
             متابعة — {formatPrice(total)}

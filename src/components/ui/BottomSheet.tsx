@@ -76,8 +76,9 @@ export function BottomSheet({ open, onClose, title, children }: BottomSheetProps
             <div className="overflow-y-auto" style={{ maxHeight: "75vh" }}>
               {children}
             </div>
-            {/* iOS safe area */}
-            <div className="safe-bottom" />
+            {/* iOS safe area — small base so non-notched still gets a tidy
+               gap below the last sheet row. */}
+            <div className="safe-bottom-sm" />
           </motion.div>
         </>
       )}

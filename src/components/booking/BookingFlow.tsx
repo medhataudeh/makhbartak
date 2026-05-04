@@ -240,7 +240,7 @@ export function BookingFlow({ tests, pkg, onContinue, onBack }: BookingFlowProps
 
       {/* CTA — fixed on mobile so it stays visible while the form scrolls.
          The scroll container above adds `pb-cta` so content isn't hidden. */}
-      <div className="fixed md:static bottom-0 inset-x-0 px-4 py-3 bg-white border-t border-gray-100 safe-bottom z-30">
+      <div className="fixed md:static bottom-0 inset-x-0 px-4 pt-3 bg-white border-t border-gray-100 safe-bottom-md z-30">
         <div className="max-w-md mx-auto">
           <Button
             onClick={submit}

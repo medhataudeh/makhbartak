@@ -421,7 +421,7 @@ function HubItem({ icon, label, onClick }: { icon: React.ReactNode; label: strin
 function SubPageShell({ title, onBack, children }: { title: string; onBack: () => void; children: React.ReactNode }) {
   return (
     <>
-      <div className="flex items-center gap-3 px-4 py-4 bg-white border-b border-gray-100 safe-top">
+      <div className="flex items-center gap-3 px-4 pb-4 bg-white border-b border-gray-100 safe-top-md">
         <BackButton onClick={onBack} />
         <h2 className="text-[15px] font-bold text-[#164E63] flex-1">{title}</h2>
       </div>

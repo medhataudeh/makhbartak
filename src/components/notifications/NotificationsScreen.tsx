@@ -138,7 +138,7 @@ function NotificationDetail({ notification: n, onClose }: { notification: Notifi
       role="dialog"
       aria-modal="true"
     >
-      <div className="flex items-center gap-3 px-4 py-4 border-b border-gray-100 safe-top">
+      <div className="flex items-center gap-3 px-4 pb-4 border-b border-gray-100 safe-top-md">
         <button
           onClick={onClose}
           className="w-10 h-10 rounded-xl bg-gray-100 flex items-center justify-center cursor-pointer"

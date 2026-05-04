@@ -52,7 +52,7 @@ export function OrderDetails({ order, onClose }: OrderDetailsProps) {
       aria-modal="true"
       aria-label="تفاصيل الطلب"
     >
-      <div className="flex items-center gap-3 px-4 py-4 border-b border-gray-100 bg-white safe-top">
+      <div className="flex items-center gap-3 px-4 pb-4 border-b border-gray-100 bg-white safe-top-md">
         <button
           onClick={onClose}
           className="w-10 h-10 rounded-xl bg-gray-100 flex items-center justify-center cursor-pointer transition-colors active:bg-gray-200"
@@ -243,7 +243,7 @@ export function OrderDetails({ order, onClose }: OrderDetailsProps) {
       </div>
 
       {/* Sticky support footer — phone + WhatsApp pulled from CMS */}
-      <div className="px-4 py-3 border-t border-gray-100 bg-white safe-bottom">
+      <div className="px-4 pt-3 border-t border-gray-100 bg-white safe-bottom-md">
         <div className="flex gap-2">
           {supportPhone && (
             <a

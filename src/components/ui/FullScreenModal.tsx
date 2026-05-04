@@ -31,7 +31,7 @@ export function FullScreenModal({ open, onClose, title, children, showBack = tru
           style={{ maxWidth: "448px", margin: "0 auto" }}
         >
           {/* Header */}
-          <div className="flex items-center gap-3 px-4 py-4 border-b border-gray-100 bg-white safe-top">
+          <div className="flex items-center gap-3 px-4 pb-4 border-b border-gray-100 bg-white safe-top-md">
             {showBack && (
               <button
                 onClick={onClose}

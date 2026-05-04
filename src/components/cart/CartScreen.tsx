@@ -283,7 +283,7 @@ export function CartScreen({ tests, pkg, shift, address, patient, onConfirm, onB
         </Section>
       </div>
 
-      <div className="md:hidden fixed bottom-0 start-0 end-0 px-4 py-3 bg-white border-t border-gray-100 safe-bottom z-20">
+      <div className="md:hidden fixed bottom-0 start-0 end-0 px-4 pt-3 bg-white border-t border-gray-100 safe-bottom-md z-20">
         <div className="max-w-md mx-auto">
           <Button onClick={handleConfirm} loading={orderLoading} size="lg" className="w-full">
             تأكيد الطلب — {formatPrice(total)}

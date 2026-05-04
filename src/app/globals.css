@@ -65,15 +65,26 @@ input[type="tel"] { direction: ltr; text-align: right; }
   }
 }
 
-.safe-bottom { padding-bottom: env(safe-area-inset-bottom, 0px); }
-.safe-top { padding-top: env(safe-area-inset-top, 0px); }
+/* ─── Safe-area utilities ───────────────────────────────────────────────────
+   Production rules:
+   - Always combine a non-zero BASE with env(...) via calc(). Raw env() alone
+     collapses to 0 on non-notched devices and removes intentional padding.
+   - Use ONLY on: fixed bottom navs, sticky CTA bars, fullscreen-layout
+     headers. Never on a normal page wrapper or plain section.
+   - Three sizes: sm = 8px, md = 16px, lg = 24px base.
+   On non-notched devices env() resolves to 0, so the utility behaves
+   exactly like a fixed pb-2 / pb-4 / pb-6 — no extra empty space. */
+.safe-bottom-sm { padding-bottom: calc( 8px + env(safe-area-inset-bottom, 0px)); }
+.safe-bottom-md { padding-bottom: calc(16px + env(safe-area-inset-bottom, 0px)); }
+.safe-bottom-lg { padding-bottom: calc(24px + env(safe-area-inset-bottom, 0px)); }
+.safe-top-sm    { padding-top:    calc( 8px + env(safe-area-inset-top,    0px)); }
+.safe-top-md    { padding-top:    calc(16px + env(safe-area-inset-top,    0px)); }
+.safe-top-lg    { padding-top:    calc(24px + env(safe-area-inset-top,    0px)); }
 
-/* Page-level padding helpers — ~20px top/bottom on mobile for consistent
-   breathing room. Pair `page-pad-bottom` with sticky bottom CTAs to avoid
-   content being hidden behind them; it also adds the iOS safe-area inset. */
-.page-pad-top { padding-top: 20px; }
-.page-pad-bottom { padding-bottom: calc(20px + env(safe-area-inset-bottom, 0px)); }
-/* Reserve space for a fixed bottom-nav (~64px) + 20px gap + safe-area. */
+/* Scroll-container reserves so content isn't hidden behind a fixed bar that
+   itself uses a safe-area utility. The base equals (bar height + breathing
+   gap); env() tracks the bar's own inset. Applied to scroll containers
+   ONLY — not to general page wrappers. */
 .pb-nav { padding-bottom: calc(84px + env(safe-area-inset-bottom, 0px)); }
 .pb-cta { padding-bottom: calc(96px + env(safe-area-inset-bottom, 0px)); }
 

@@ -26,7 +26,7 @@ export function PackageDetails({ pkg, onAddToCart, onBack }: Props) {
       style={{ maxWidth: "448px", margin: "0 auto" }}
     >
       {/* Header — title + back, single context action (not needed here) */}
-      <div className="flex items-center gap-3 px-4 py-4 bg-white/90 backdrop-blur border-b border-gray-100 safe-top">
+      <div className="flex items-center gap-3 px-4 pb-4 bg-white/90 backdrop-blur border-b border-gray-100 safe-top-md">
         <BackButton onClick={onBack} />
         <h1 className="text-[15px] font-bold text-[#164E63] flex-1 truncate">{pkg.nameAr}</h1>
       </div>
@@ -112,7 +112,7 @@ export function PackageDetails({ pkg, onAddToCart, onBack }: Props) {
       </div>
 
       {/* Sticky CTA — Add-to-cart lives ONLY on this page */}
-      <div className="fixed bottom-0 start-0 end-0 px-4 py-3 bg-white border-t border-gray-100 safe-bottom z-10" style={{ maxWidth: "448px", margin: "0 auto" }}>
+      <div className="fixed bottom-0 start-0 end-0 px-4 pt-3 bg-white border-t border-gray-100 safe-bottom-md z-10" style={{ maxWidth: "448px", margin: "0 auto" }}>
         <Button onClick={() => onAddToCart(pkg)} size="lg" className="w-full">
           <ShoppingCart size={18} aria-hidden="true" />
           أضف إلى السلة — {formatPrice(pkg.price)}
