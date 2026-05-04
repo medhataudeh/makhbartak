@@ -1,5 +1,5 @@
 "use client";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   Plus, Search, Eye, X, MapPin, Phone, Mail, Building2,
   ClipboardList, Image as ImageIcon, ChevronLeft, AlertTriangle,
@@ -8,7 +8,8 @@ import {
 import Image from "next/image";
 import type { Lab, LabBranding, Order, LabUser } from "@/lib/types";
 import { LAB_USER_ROLE_LABELS } from "@/lib/types";
-import { MOCK_LABS, LAB_ISSUE_REASONS } from "@/lib/mock-data";
+import { LAB_ISSUE_REASONS } from "@/lib/mock-data";
+import { hydrateAdminLabs } from "@/lib/admin-catalog-api";
 import { useOrders, resolveLabIssue, assignLab, updateLabIssueCustomerMessage } from "@/lib/store";
 import { logActivity } from "@/lib/activity-log";
 import {
@@ -30,7 +31,8 @@ interface Props {
 }
 
 export function LabsAdmin({ adminId, adminName, adminRole }: Props) {
-  const [labs, setLabs] = useState<Lab[]>(MOCK_LABS);
+  const [labs, setLabs] = useState<Lab[]>([]);
+  const [labsLoading, setLabsLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<"all" | "active" | "inactive">("all");
   const [editing, setEditing] = useState<Lab | null>(null);
@@ -39,6 +41,19 @@ export function LabsAdmin({ adminId, adminName, adminRole }: Props) {
   const [confirmDelete, setConfirmDelete] = useState<Lab | null>(null);
   const orders = useOrders();
   const toast = useToast();
+
+  // Hydrate labs from /api/admin/labs on mount. The MOCK seed is gone; the
+  // table is empty until the network round-trip lands.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const remote = await hydrateAdminLabs();
+      if (cancelled) return;
+      if (remote) setLabs(remote);
+      setLabsLoading(false);
+    })();
+    return () => { cancelled = true; };
+  }, []);
 
   const filtered = useMemo(() => labs.filter((l) => {
     if (statusFilter === "active" && !l.isActive) return false;
@@ -154,7 +169,11 @@ export function LabsAdmin({ adminId, adminName, adminRole }: Props) {
           </thead>
           <tbody>
             {filtered.length === 0 && (
-              <tr><td colSpan={6} className="text-center text-gray-400 py-8 text-sm">لا توجد مخابر</td></tr>
+              <tr>
+                <td colSpan={6} className="text-center text-gray-400 py-8 text-sm">
+                  {labsLoading ? "جاري تحميل قائمة المخابر…" : "لا توجد مخابر"}
+                </td>
+              </tr>
             )}
             {filtered.map((l) => {
               const ord = orders.filter((o) => o.labId === l.id);

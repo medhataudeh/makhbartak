@@ -1,7 +1,6 @@
 "use client";
 import { useSyncExternalStore } from "react";
 import type { Address, AuthSession, Patient } from "./types";
-import { MOCK_PATIENTS, MOCK_ADDRESSES } from "./mock-data";
 import { USE_SUPABASE } from "./supabase/flags";
 import { isUuid } from "./supabase/uuid";
 import {
@@ -11,65 +10,54 @@ import {
 } from "./customer-api";
 import { setHydratedPreferredPayment } from "./payment-pref";
 
-// Stage E: Supabase is the source of truth for patients + addresses.
-// localStorage stays as a write-through cache + offline preview only.
-//
-// The shape of the public API is unchanged for legacy callers (usePatients,
-// useAddresses, upsertPatient, etc.) but the upserts now return Promises that
-// resolve to the canonical row whose `id` is a real Supabase UUID. Booking
-// and order placement gate on that uuid before calling /api/orders.
-const PATIENTS_KEY  = "makhbartak.profile.patients.v1";
-const ADDRESSES_KEY = "makhbartak.profile.addresses.v1";
+// Phase 2 production hardening: Supabase is the ONLY source of truth for
+// patients + addresses. The boot state is empty (no MOCK seed, no
+// localStorage source) until hydrateProfileForCustomer resolves. UI calls
+// useProfileStatus() to render an Arabic loading state instead of an
+// empty list before the API round-trip lands.
 
-let _patients: Patient[]   = [...MOCK_PATIENTS];
-let _addresses: Address[]  = [...MOCK_ADDRESSES];
+let _patients: Patient[]   = [];
+let _addresses: Address[]  = [];
 // Mirrors customers.default_patient_id. The booking flow reads this to
 // preselect the last patient the user picked. Null until the profile
 // hydrate completes — first-time customers stay null.
 let _defaultPatientId: string | null = null;
-let _hydrated = false;
+type ProfileStatus = "idle" | "loading" | "ready" | "error";
+let _status: ProfileStatus = "idle";
 let _hydratedCustomerId: string | null = null;
 
 const listeners = new Set<() => void>();
 function emit() { listeners.forEach((l) => l()); }
 function subscribe(l: () => void) { listeners.add(l); return () => { listeners.delete(l); }; }
 
-function hydrate() {
-  if (_hydrated || typeof window === "undefined") return;
-  _hydrated = true;
-  try {
-    const p = window.localStorage.getItem(PATIENTS_KEY);
-    if (p) _patients = JSON.parse(p) as Patient[];
-    const a = window.localStorage.getItem(ADDRESSES_KEY);
-    if (a) _addresses = JSON.parse(a) as Address[];
-  } catch {}
-  emit();
-}
-
-function persistPatients() {
-  try { window.localStorage.setItem(PATIENTS_KEY, JSON.stringify(_patients)); } catch {}
-}
-function persistAddresses() {
-  try { window.localStorage.setItem(ADDRESSES_KEY, JSON.stringify(_addresses)); } catch {}
-}
-
 // Public hydration helper — call from the customer app on mount or session
 // change. Replaces the local arrays with canonical Supabase rows so order
-// placement always sees real UUIDs.
+// placement always sees real UUIDs. UI consumers can read useProfileStatus()
+// to distinguish "haven't checked yet" from "definitely empty".
 export async function hydrateProfileForCustomer(customerId: string): Promise<void> {
   if (!USE_SUPABASE) return;
   if (!isUuid(customerId)) return;
   if (_hydratedCustomerId === customerId) return;
+  _status = "loading";
+  emit();
   const snap = await apiGetCustomerProfile(customerId);
-  if (!snap) return;
+  if (!snap) {
+    _status = "error";
+    emit();
+    return;
+  }
   _patients = snap.patients;
   _addresses = snap.addresses;
   _defaultPatientId = snap.defaultPatientId;
   _hydratedCustomerId = customerId;
-  persistPatients();
-  persistAddresses();
+  _status = "ready";
   setHydratedPreferredPayment(snap.paymentPreference);
   emit();
+}
+
+export function getProfileStatus(): ProfileStatus { return _status; }
+export function useProfileStatus(): ProfileStatus {
+  return useSyncExternalStore(subscribe, getProfileStatus, () => "idle");
 }
 
 // ─── Default patient (last selected) ───────────────────────────────────────
@@ -103,12 +91,9 @@ async function getSession(): Promise<AuthSession | null> {
 }
 
 // ─── Patients ──────────────────────────────────────────────────────────────
-export function getPatients(): Patient[] {
-  if (!_hydrated) hydrate();
-  return _patients;
-}
+export function getPatients(): Patient[] { return _patients; }
 export function usePatients(): Patient[] {
-  return useSyncExternalStore(subscribe, getPatients, () => MOCK_PATIENTS);
+  return useSyncExternalStore(subscribe, getPatients, () => []);
 }
 
 /**
@@ -117,7 +102,6 @@ export function usePatients(): Patient[] {
  * to continue past the patient picker.
  */
 export async function upsertPatient(p: Patient): Promise<{ ok: boolean; patient?: Patient; error?: string }> {
-  if (!_hydrated) hydrate();
   // Optimistic local merge so the picker reflects immediately.
   applyLocalUpsertPatient(p);
   emit();
@@ -142,7 +126,6 @@ export async function upsertPatient(p: Patient): Promise<{ ok: boolean; patient?
     // place because the id was already canonical.
     if (!isUpdate) {
       _patients = _patients.filter((x) => x.id !== p.id);
-      persistPatients();
       emit();
     }
     console.warn("[customer-api] upsertPatient failed", result.error);
@@ -155,7 +138,6 @@ export async function upsertPatient(p: Patient): Promise<{ ok: boolean; patient?
     .filter((x) => x.id !== canonical.id)
     .concat([canonical])
     .map((x) => canonical.isDefault && x.id !== canonical.id ? { ...x, isDefault: false } : x);
-  persistPatients();
   emit();
   return { ok: true, patient: canonical };
 }
@@ -165,11 +147,9 @@ function applyLocalUpsertPatient(p: Patient) {
   let next = exists ? _patients.map((x) => x.id === p.id ? p : x) : [..._patients, p];
   if (p.isDefault) next = next.map((x) => x.id === p.id ? x : { ...x, isDefault: false });
   _patients = next;
-  persistPatients();
 }
 
 export async function deletePatient(id: string): Promise<{ ok: boolean; error?: string }> {
-  if (!_hydrated) hydrate();
   _patients = _patients.filter((p) => p.id !== id);
   if (_patients.length && !_patients.some((p) => p.isDefault)) {
     _patients = _patients.map((p, i) => i === 0 ? { ...p, isDefault: true } : p);
@@ -178,7 +158,6 @@ export async function deletePatient(id: string): Promise<{ ok: boolean; error?: 
   // The DB FK is `on delete set null`, so the server side is consistent
   // automatically.
   if (_defaultPatientId === id) _defaultPatientId = null;
-  persistPatients();
   emit();
   if (!USE_SUPABASE) return { ok: true };
   if (!isUuid(id)) return { ok: true };
@@ -188,16 +167,12 @@ export async function deletePatient(id: string): Promise<{ ok: boolean; error?: 
 }
 
 // ─── Addresses ─────────────────────────────────────────────────────────────
-export function getAddresses(): Address[] {
-  if (!_hydrated) hydrate();
-  return _addresses;
-}
+export function getAddresses(): Address[] { return _addresses; }
 export function useAddresses(): Address[] {
-  return useSyncExternalStore(subscribe, getAddresses, () => MOCK_ADDRESSES);
+  return useSyncExternalStore(subscribe, getAddresses, () => []);
 }
 
 export async function upsertAddress(a: Address): Promise<{ ok: boolean; address?: Address; error?: string }> {
-  if (!_hydrated) hydrate();
   applyLocalUpsertAddress(a);
   emit();
 
@@ -220,7 +195,6 @@ export async function upsertAddress(a: Address): Promise<{ ok: boolean; address?
   if ("error" in result) {
     if (!isUpdate) {
       _addresses = _addresses.filter((x) => x.id !== a.id);
-      persistAddresses();
       emit();
     }
     console.warn("[customer-api] upsertAddress failed", result.error);
@@ -232,7 +206,6 @@ export async function upsertAddress(a: Address): Promise<{ ok: boolean; address?
     .filter((x) => x.id !== canonical.id)
     .concat([canonical])
     .map((x) => canonical.isDefault && x.id !== canonical.id ? { ...x, isDefault: false } : x);
-  persistAddresses();
   emit();
   return { ok: true, address: canonical };
 }
@@ -242,16 +215,13 @@ function applyLocalUpsertAddress(a: Address) {
   let next = exists ? _addresses.map((x) => x.id === a.id ? a : x) : [..._addresses, a];
   if (a.isDefault) next = next.map((x) => x.id === a.id ? x : { ...x, isDefault: false });
   _addresses = next;
-  persistAddresses();
 }
 
 export async function deleteAddress(id: string): Promise<{ ok: boolean; error?: string }> {
-  if (!_hydrated) hydrate();
   _addresses = _addresses.filter((a) => a.id !== id);
   if (_addresses.length && !_addresses.some((a) => a.isDefault)) {
     _addresses = _addresses.map((a, i) => i === 0 ? { ...a, isDefault: true } : a);
   }
-  persistAddresses();
   emit();
   if (!USE_SUPABASE) return { ok: true };
   if (!isUuid(id)) return { ok: true };

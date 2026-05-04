@@ -6,7 +6,7 @@ import { getShiftConfigs } from "@/lib/mock-data";
 import { useSession } from "@/lib/auth";
 import { USE_SUPABASE } from "@/lib/supabase/flags";
 import { isUuid } from "@/lib/supabase/uuid";
-import { usePatients, useAddresses, upsertPatient, upsertAddress, useDefaultPatientId, setDefaultPatient } from "@/lib/profile";
+import { usePatients, useAddresses, upsertPatient, upsertAddress, useDefaultPatientId, setDefaultPatient, useProfileStatus } from "@/lib/profile";
 import { useToast } from "@/components/ui/Toast";
 import { useSystemSettings } from "@/lib/system-settings";
 import { useOrders } from "@/lib/store";
@@ -56,6 +56,7 @@ export function BookingFlow({ tests, pkg, onContinue, onBack }: BookingFlowProps
   const allAddresses = useAddresses();
   const allPatients = usePatients();
   const defaultPatientId = useDefaultPatientId();
+  const profileStatus = useProfileStatus();
   const settings = useSystemSettings();
   const liveOrders = useOrders();
 
@@ -279,6 +280,12 @@ export function BookingFlow({ tests, pkg, onContinue, onBack }: BookingFlowProps
       {/* Address Sheet */}
       <BottomSheet open={addressSheet} onClose={() => setAddressSheet(false)} title="العنوان">
         <div className="px-4 py-4 space-y-2">
+          {profileStatus === "loading" && allAddresses.length === 0 && (
+            <p className="text-xs text-gray-400 text-center py-4">جاري تحميل عناوينك…</p>
+          )}
+          {profileStatus === "ready" && allAddresses.length === 0 && (
+            <p className="text-xs text-gray-500 text-center py-4">لا توجد عناوين محفوظة. أضف عنواناً جديداً للبدء.</p>
+          )}
           {allAddresses.map((addr) => (
             <motion.button
               key={addr.id}
@@ -310,6 +317,12 @@ export function BookingFlow({ tests, pkg, onContinue, onBack }: BookingFlowProps
           <p className="text-[11px] text-gray-500 leading-relaxed mb-1">
             المريض شخص مستقل عن صاحب الحساب. اختر من القائمة أو أضف مريضاً جديداً.
           </p>
+          {profileStatus === "loading" && allPatients.length === 0 && (
+            <p className="text-xs text-gray-400 text-center py-4">جاري تحميل قائمة المرضى…</p>
+          )}
+          {profileStatus === "ready" && allPatients.length === 0 && (
+            <p className="text-xs text-gray-500 text-center py-4">لم تُسجّل مريضاً بعد. أضف مريضاً جديداً للمتابعة.</p>
+          )}
           {allPatients.map((p) => (
             <motion.button
               key={p.id}

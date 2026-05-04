@@ -11,6 +11,7 @@ import { usePreferredPayment, setPreferredPayment } from "@/lib/payment-pref";
 import {
   usePatients, upsertPatient, deletePatient,
   useAddresses, upsertAddress, deleteAddress,
+  useProfileStatus,
 } from "@/lib/profile";
 import { useSession } from "@/lib/auth";
 import { Button } from "@/components/ui/Button";
@@ -169,6 +170,7 @@ function AddressesPage({ onBack }: { onBack: () => void }) {
   // so a stale tab can't stamp rows under the wrong (or missing) user.
   const userId = session?.role === "customer" ? session.linkedEntityId : null;
   const addresses = useAddresses();
+  const profileStatus = useProfileStatus();
   const [editing, setEditing] = useState<Address | null>(null);
   const [creating, setCreating] = useState(false);
 
@@ -187,6 +189,12 @@ function AddressesPage({ onBack }: { onBack: () => void }) {
 
   return (
     <SubPageShell title="عناويني" onBack={onBack}>
+      {profileStatus === "loading" && addresses.length === 0 && (
+        <p className="text-xs text-gray-400 text-center py-6">جاري تحميل عناوينك…</p>
+      )}
+      {profileStatus === "ready" && addresses.length === 0 && (
+        <p className="text-xs text-gray-500 text-center py-6">لا توجد عناوين محفوظة بعد.</p>
+      )}
       <ul className="space-y-2">
         {addresses.map((addr) => (
           <li key={addr.id} className="bg-white rounded-xl border border-gray-100 p-3 flex items-start gap-3">
@@ -268,6 +276,7 @@ function PatientsPage({ onBack }: { onBack: () => void }) {
   const session = useSession();
   const userId = session?.role === "customer" ? session.linkedEntityId : null;
   const patients = usePatients();
+  const profileStatus = useProfileStatus();
   const [editing, setEditing] = useState<Patient | null>(null);
   const [creating, setCreating] = useState(false);
 
@@ -286,6 +295,12 @@ function PatientsPage({ onBack }: { onBack: () => void }) {
 
   return (
     <SubPageShell title="المرضى" onBack={onBack}>
+      {profileStatus === "loading" && patients.length === 0 && (
+        <p className="text-xs text-gray-400 text-center py-6">جاري تحميل قائمة المرضى…</p>
+      )}
+      {profileStatus === "ready" && patients.length === 0 && (
+        <p className="text-xs text-gray-500 text-center py-6">لم تُسجّل أي مريض بعد.</p>
+      )}
       <ul className="space-y-2">
         {patients.map((p) => (
           <li key={p.id} className="bg-white rounded-xl border border-gray-100 p-3 flex items-center gap-3">

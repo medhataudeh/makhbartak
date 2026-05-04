@@ -2,7 +2,7 @@
 import { useState, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Search, Plus, Check, X, ShoppingCart } from "lucide-react";
-import { useTests } from "@/lib/catalog";
+import { useTests, useCatalogStatus } from "@/lib/catalog";
 import { searchTests, formatPrice } from "@/lib/utils";
 import type { Test } from "@/lib/types";
 import { Button } from "@/components/ui/Button";
@@ -17,6 +17,7 @@ export function CustomTestBuilder({ onContinue, onBack }: CustomTestBuilderProps
   const [query, setQuery] = useState("");
   const [selected, setSelected] = useState<Test[]>([]);
   const tests = useTests();
+  const catalogStatus = useCatalogStatus();
 
   const results = useMemo(() => searchTests(tests, query), [tests, query]);
 
@@ -105,8 +106,19 @@ export function CustomTestBuilder({ onContinue, onBack }: CustomTestBuilderProps
         {results.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-16 text-center px-6" role="status">
             <Search size={36} className="text-gray-200 mb-3" aria-hidden="true" />
-            <p className="text-sm text-gray-400">لا توجد نتائج لـ &ldquo;{query}&rdquo;</p>
-            <p className="text-xs text-gray-300 mt-1">جرّب الإنجليزية أو الاختصار</p>
+            {catalogStatus === "ready" && tests.length === 0 ? (
+              <>
+                <p className="text-sm text-gray-500 font-semibold">لم تُضف تحاليل بعد</p>
+                <p className="text-xs text-gray-400 mt-1 leading-relaxed">على المسؤول إضافة التحاليل من لوحة الإدارة لتظهر هنا.</p>
+              </>
+            ) : catalogStatus === "loading" || catalogStatus === "idle" ? (
+              <p className="text-sm text-gray-400">جاري تحميل التحاليل…</p>
+            ) : (
+              <>
+                <p className="text-sm text-gray-400">لا توجد نتائج لـ &ldquo;{query}&rdquo;</p>
+                <p className="text-xs text-gray-300 mt-1">جرّب الإنجليزية أو الاختصار</p>
+              </>
+            )}
           </div>
         ) : (
           <>

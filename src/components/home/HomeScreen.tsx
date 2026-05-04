@@ -3,7 +3,7 @@ import Image from "next/image";
 import { motion } from "framer-motion";
 import { Camera, FlaskConical, ShoppingCart, ChevronLeft, Bell } from "lucide-react";
 import { useSliders } from "@/lib/home-sliders";
-import { usePackages } from "@/lib/catalog";
+import { usePackages, useCatalogStatus } from "@/lib/catalog";
 import type { Package, SliderItem } from "@/lib/types";
 import { HomeSlider } from "@/components/home/HomeSlider";
 
@@ -28,6 +28,8 @@ export function HomeScreen({
 }: HomeScreenProps) {
   const packages = usePackages();
   const sliders = useSliders();
+  const catalogStatus = useCatalogStatus();
+  const isCatalogEmpty = catalogStatus === "ready" && packages.length === 0 && sliders.length === 0;
   // Resolve a slider item to an action (or null if there's nothing to do).
   // A null result tells HomeSlider to render the card as visually disabled
   // — no silent navigation to an unrelated screen, so admins notice broken
@@ -111,6 +113,18 @@ export function HomeScreen({
       <div className="pt-4 md:pt-6">
         <HomeSlider items={sliders} onCta={handleSliderCta} resolveAction={resolveSliderAction} />
       </div>
+
+      {/* Empty-state banner: surfaces when the DB is reachable but has no
+         active sliders or packages yet. Avoids silently rendering an empty
+         home that looks like a network error. */}
+      {isCatalogEmpty && (
+        <div className="mx-4 md:mx-6 mt-4 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-center">
+          <p className="text-sm font-bold text-amber-800">لم تُضف باقات بعد</p>
+          <p className="text-xs text-amber-700/90 mt-1 leading-relaxed">
+            على المسؤول إضافة الباقات والتحاليل من لوحة الإدارة لتظهر هنا.
+          </p>
+        </div>
+      )}
 
       {/* Two visual action cards — Prescription + Custom builder.
          Always two columns: side-by-side on mobile, two-up on desktop. */}

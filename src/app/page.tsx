@@ -283,12 +283,9 @@ function CustomerApp() {
         return <AccountScreen
           onLogout={handleLogout}
           onDeleteAccount={() => {
-            // Soft delete (prototype): clear local profile + log out.
-            try {
-              window.localStorage.removeItem("makhbartak.profile.patients.v1");
-              window.localStorage.removeItem("makhbartak.profile.addresses.v1");
-              window.localStorage.removeItem("makhbartak.payment.preferred");
-            } catch {}
+            // Soft-delete UI is a prototype hold-over; the real account
+            // deletion endpoint is a Phase 3+ ticket. We only sign the
+            // user out here so local memory clears.
             logout();
             toast.success("تم حذف حسابك");
           }}

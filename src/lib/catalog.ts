@@ -10,17 +10,21 @@ import {
   fetchCategories,
 } from "./supabase/queries/catalog";
 
-// Customer-facing catalog. Tests + packages are strictly DB-driven now —
-// admin manages them, customer reads them. We start the stores empty and
-// hydrate from Supabase; an offline/empty DB yields an empty browse state
-// so we never silently render demo content in production.
+// Phase 2 production hardening: customer catalog is strictly DB-driven.
+// Tests + packages start empty (no MOCK_TESTS / MOCK_PACKAGES fallback
+// anywhere on the customer surface). If the DB is empty, the customer
+// shell stays empty and the UI surfaces an Arabic admin-instruction
+// banner. `useCatalogStatus()` lets consumers distinguish "loading" from
+// "DB returned empty".
 //
-// Categories keep the static fallback because they're the filter chips and
-// emptying them breaks the search UX before the network round-trip lands;
-// admin editing of categories isn't wired yet.
+// Categories continue to use a static fallback (TEST_CATEGORIES) because
+// admin CRUD for categories isn't wired yet; promotion to a proper table
+// is tracked separately.
 let _tests: Test[] = [];
 let _packages: Package[] = [];
 let _categories: TestCategory[] = TEST_CATEGORIES;
+type CatalogStatus = "idle" | "loading" | "ready" | "error";
+let _status: CatalogStatus = "idle";
 let _hydrated = false;
 let _remoteHydrated = false;
 
@@ -40,15 +44,16 @@ async function hydrateFromSupabase() {
   if (!USE_SUPABASE || !supabaseEnvReady()) return;
   const sb = getSupabaseBrowser();
   if (!sb) return;
+  _status = "loading";
+  emit();
   try {
     const [t, p, c] = await Promise.all([
       fetchTests(sb),
       fetchPackages(sb),
       fetchCategories(sb),
     ]);
-    let changed = false;
-    if (t) { _tests = t; changed = true; }
-    if (c) { _categories = c; changed = true; }
+    if (t) _tests = t;
+    if (c) _categories = c;
     if (p && t) {
       const lookup = new Map(t.map((x) => [x.id, x]));
       _packages = p.packages.map((pkg) => ({
@@ -57,17 +62,20 @@ async function hydrateFromSupabase() {
           .map((id) => lookup.get(id))
           .filter((x): x is Test => Boolean(x)),
       }));
-      changed = true;
     }
-    if (changed) emit();
+    _status = "ready";
+    emit();
   } catch (err) {
     console.warn("[supabase] catalog hydrate failed", err);
+    _status = "error";
+    emit();
   }
 }
 
 export function getTests(): Test[] { if (!_hydrated) hydrate(); return _tests; }
 export function getPackages(): Package[] { if (!_hydrated) hydrate(); return _packages; }
 export function getCategories(): TestCategory[] { if (!_hydrated) hydrate(); return _categories; }
+export function getCatalogStatus(): CatalogStatus { return _status; }
 
 export function useTests(): Test[] {
   return useSyncExternalStore(subscribe, getTests, () => []);
@@ -77,4 +85,7 @@ export function usePackages(): Package[] {
 }
 export function useCategories(): TestCategory[] {
   return useSyncExternalStore(subscribe, getCategories, () => TEST_CATEGORIES);
+}
+export function useCatalogStatus(): CatalogStatus {
+  return useSyncExternalStore(subscribe, getCatalogStatus, () => "idle");
 }

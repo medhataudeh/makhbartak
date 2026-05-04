@@ -1,10 +1,12 @@
 "use client";
 import { useSyncExternalStore } from "react";
 import type { ActivityLog, ActivityAction, AdminRole } from "./types";
-import { MOCK_ACTIVITY_LOGS } from "./mock-data";
 import { USE_SUPABASE } from "./supabase/flags";
 
-let _logs: ActivityLog[] = [...MOCK_ACTIVITY_LOGS];
+// Phase 2 production hardening: boot empty. The admin activity panel
+// hydrates via /api/admin/activity-logs (Stage G) and entries posted in
+// the current session are appended optimistically.
+let _logs: ActivityLog[] = [];
 const listeners = new Set<() => void>();
 function emit() { listeners.forEach((l) => l()); }
 function subscribe(l: () => void) { listeners.add(l); return () => { listeners.delete(l); }; }
@@ -92,5 +94,5 @@ export async function hydrateActivityLogs(): Promise<void> {
 }
 
 export function useActivityLogs(): ActivityLog[] {
-  return useSyncExternalStore(subscribe, getActivityLogs, () => MOCK_ACTIVITY_LOGS);
+  return useSyncExternalStore(subscribe, getActivityLogs, () => []);
 }

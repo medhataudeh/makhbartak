@@ -8,22 +8,20 @@ import {
   ChevronUp, ChevronDown, ChevronLeft, Route, MapPin, Wrench,
 } from "lucide-react";
 import {
-  MOCK_ORDERS, ADMIN_STATS, MOCK_TESTS, MOCK_PACKAGES,
-  ORDER_STATUS_LABELS, MOCK_INVOICES,
-  MOCK_ICONS, MOCK_SLIDERS, MOCK_PATIENTS, MOCK_ADDRESSES, MOCK_NOTIFICATIONS, SEED_CUSTOMER_1_ID,
-  MOCK_COUPONS, MOCK_NURSE_ROUTES, MOCK_GAMIFICATION,
+  // Phase 2: only constants + helpers remain mock-sourced. All MOCK_*
+  // arrays have been routed through admin APIs / catalog hooks.
+  ADMIN_STATS, ORDER_STATUS_LABELS, MOCK_GAMIFICATION,
   NURSE_LEVELS, NURSE_BADGES, GAMIFICATION_CONFIG, canAccess,
 } from "@/lib/mock-data";
 import { ROLE_LABELS, ACTIVITY_LABELS } from "@/lib/types";
 import type {
-  AdminUser, Invoice, PaymentStatus, AdminRole, Order,
+  AdminUser, AdminRole, Order,
   Test, Package, Coupon, Nurse, SliderItem, SvgIcon, Notification,
   NurseRoute,
 } from "@/lib/types";
 import { formatDate, formatPrice, relativeTime } from "@/lib/utils";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { Button } from "@/components/ui/Button";
-import { InvoiceView } from "@/components/admin/InvoiceView";
 import { OrderControlCenter } from "@/components/admin/OrderControlCenter";
 import { CredentialsShareSheet, generateTempPassword, type ShareableCredentials } from "@/components/admin/CredentialsShareSheet";
 import { MediaPicker } from "@/components/admin/MediaPicker";
@@ -35,6 +33,7 @@ import { LibrariesAdmin } from "@/components/admin/LibrariesAdmin";
 import { ShortageRequestsAdmin } from "@/components/admin/ShortageRequestsAdmin";
 import { useLibraryInstructions } from "@/lib/instruction-library";
 import { useLibraryTools } from "@/lib/tool-library";
+import { useTests, usePackages } from "@/lib/catalog";
 import { AdminUserContext } from "@/components/admin/AdminContext";
 import { useCurrentAdmin } from "@/components/admin/AdminContext";
 import { useOrders, createOrder, hydrateOrdersForAdmin } from "@/lib/store";
@@ -128,29 +127,23 @@ export function AdminDashboard({ user, onLogout }: AdminDashboardProps) {
 
   // Centralized mutable state — single source of truth so child sections can
   // CRUD without prop-drilling and changes survive across tab switches.
-  // Stage F follow-up: tests/packages/coupons/sliders are seeded from mock
-  // for the first paint and replaced by Supabase rows once the hydrators
-  // below resolve. Edits awaited via /api/admin/* before local state moves.
-  const [tests, setTests]                 = useState<Test[]>(MOCK_TESTS);
-  const [packages, setPackages]           = useState<Package[]>(MOCK_PACKAGES);
-  const [coupons, setCoupons]             = useState<Coupon[]>(MOCK_COUPONS);
-  // Operational rosters that admin assigns to orders. Seed empty so the
-  // dropdown only ever shows real DB rows; hydration below replaces it. The
-  // assignment APIs reject non-existent ids, so any stale mock UUID would
-  // produce a 404 — we don't want that.
+  // Phase 2 hardening: every list starts empty and is replaced by the
+  // canonical Supabase rows after hydrate. No MOCK seed leaks into the
+  // first paint anymore. `loading` flips to false once the parallel
+  // catalog hydrate finishes so sub-sections can render skeletons.
+  const [tests, setTests]                 = useState<Test[]>([]);
+  const [packages, setPackages]           = useState<Package[]>([]);
+  const [coupons, setCoupons]             = useState<Coupon[]>([]);
   const [nurses, setNurses]               = useState<Nurse[]>([]);
   const [labs, setLabs]                   = useState<Lab[]>([]);
-  const [sliders, setSliders]             = useState<SliderItem[]>(MOCK_SLIDERS);
-  const [icons, setIcons]                 = useState<SvgIcon[]>(MOCK_ICONS);
-  const [orders, setOrders]               = useState<Order[]>(MOCK_ORDERS);
-  const [routes, setRoutes]               = useState<NurseRoute[]>(MOCK_NURSE_ROUTES);
-  const [notifications, setNotifications] = useState<Notification[]>(MOCK_NOTIFICATIONS);
+  const [sliders, setSliders]             = useState<SliderItem[]>([]);
+  const [icons, setIcons]                 = useState<SvgIcon[]>([]);
+  const [orders, setOrders]               = useState<Order[]>([]);
+  const [routes, setRoutes]               = useState<NurseRoute[]>([]);
+  const [notifications, setNotifications] = useState<Notification[]>([]);
   const [config, setConfig]               = useState(GAMIFICATION_CONFIG);
+  const [loading, setLoading]             = useState(true);
 
-  // Hydrate catalog from Supabase. Tests load first because packages are
-  // mapped through the test list (server returns ids; we resolve to objects).
-  // Nurses + labs hydrate in parallel so the order-control dropdowns are
-  // ready by the time the admin clicks into an order.
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -164,7 +157,10 @@ export function AdminDashboard({ user, onLogout }: AdminDashboardProps) {
       if (remoteNurses) setNurses(remoteNurses);
       if (remoteLabs) setLabs(remoteLabs);
       const [remotePackages, remoteCoupons, remoteSliders] = await Promise.all([
-        hydrateAdminPackages(remoteTests ?? MOCK_TESTS),
+        // Pass the freshly-hydrated tests (or [] if hydrate failed) so admin
+        // packages can resolve test ids back to objects without falling
+        // through to mock data.
+        hydrateAdminPackages(remoteTests ?? []),
         hydrateAdminCoupons(),
         hydrateAdminSliders(),
       ]);
@@ -172,9 +168,11 @@ export function AdminDashboard({ user, onLogout }: AdminDashboardProps) {
       if (remotePackages) setPackages(remotePackages);
       if (remoteCoupons) setCoupons(remoteCoupons);
       if (remoteSliders) setSliders(remoteSliders);
+      setLoading(false);
     })();
     return () => { cancelled = true; };
   }, []);
+  void loading; // currently surfaced indirectly via empty arrays.
 
   const grouped = useMemo(() => {
     const out: Record<string, SectionDef[]> = {};
@@ -795,20 +793,38 @@ function OrdersAdmin({ nurses, labs, user }: { orders: Order[]; setOrders: React
 // ════════════════════════════ Users (with patients/addresses inside) ════════
 
 function UsersAdmin({ orders }: { orders: Order[] }) {
-  // Build users list from patients (each patient.userId → user). In a real app,
-  // users come from /users endpoint. For mock we synthesize.
-  const users = useMemo(() => {
-    const map = new Map<string, { id: string; name: string; phone: string; ordersCount: number; patientsCount: number; isActive: boolean }>();
-    MOCK_PATIENTS.forEach((p) => {
-      if (!map.has(p.userId)) map.set(p.userId, { id: p.userId, name: p.name, phone: "+963 911 000 000", ordersCount: 0, patientsCount: 0, isActive: true });
-      map.get(p.userId)!.patientsCount += 1;
-    });
-    orders.forEach((o) => {
-      if (!map.has(o.userId)) map.set(o.userId, { id: o.userId, name: o.patient.name, phone: "+963 911 000 000", ordersCount: 0, patientsCount: 0, isActive: true });
-      map.get(o.userId)!.ordersCount += 1;
-    });
-    return Array.from(map.values());
-  }, [orders]);
+  // Phase 2: customers list comes from /api/admin/users?role=customer.
+  // No more MOCK_PATIENTS synthesizer — every row is a real Supabase
+  // customers/profile join. Orders count is computed from the live store.
+  type CustomerRow = {
+    id: string;
+    profile_id: string;
+    profile: { full_name: string | null; phone: string | null; is_active: boolean };
+  };
+  const [rows, setRows] = useState<CustomerRow[]>([]);
+  const [loading, setLoading] = useState(true);
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch("/api/admin/users?role=customer", { cache: "no-store" });
+        if (!res.ok || cancelled) return;
+        const body = await res.json().catch(() => null);
+        if (!cancelled) setRows((body?.users ?? []) as CustomerRow[]);
+      } catch { /* keep empty */ }
+      finally { if (!cancelled) setLoading(false); }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  const users = useMemo(() => rows.map((r) => ({
+    id: r.id,
+    profileId: r.profile_id,
+    name: r.profile.full_name ?? "—",
+    phone: r.profile.phone ?? "—",
+    ordersCount: orders.filter((o) => o.userId === r.id).length,
+    isActive: r.profile.is_active,
+  })), [rows, orders]);
 
   const [search, setSearch] = useState("");
   const [open, setOpen] = useState<typeof users[number] | null>(null);
@@ -837,13 +853,12 @@ function UsersAdmin({ orders }: { orders: Order[] }) {
       <div className="bg-white rounded-2xl border border-gray-100 p-4">
         <DataTable
           rows={filtered}
-          empty="لا يوجد مستخدمون"
+          empty={loading ? "جاري تحميل قائمة العملاء…" : "لا يوجد مستخدمون"}
           columns={[
             { key: "id",       label: "ID",       render: (u) => <span className="lat" dir="ltr">{u.id}</span> },
             { key: "name",     label: "الاسم",     render: (u) => u.name },
             { key: "phone",    label: "الهاتف",    render: (u) => <span className="lat" dir="ltr">{u.phone}</span> },
             { key: "orders",   label: "الطلبات",   render: (u) => u.ordersCount },
-            { key: "patients", label: "المرضى",    render: (u) => u.patientsCount },
             { key: "status",   label: "الحالة",    render: (u) => u.isActive ? <Pill color="green">نشط</Pill> : <Pill color="red">موقوف</Pill> },
             { key: "actions",  label: "إجراءات",   render: (u) => (
               <button onClick={() => setOpen(u)} className="text-xs px-2 py-1 rounded-md bg-[#ECFEFF] text-[#0891B2] cursor-pointer flex items-center gap-1">
@@ -863,10 +878,37 @@ function UserProfilePanel({ user, orders, onBack }: {
   onBack: () => void;
 }) {
   const [tab, setTab] = useState<"profile" | "patients" | "addresses" | "orders" | "invoices" | "notifications">("profile");
-  const userPatients = MOCK_PATIENTS.filter((p) => p.userId === user.id);
-  const userAddresses = MOCK_ADDRESSES.filter((a) => a.userId === user.id);
-  const userInvoices = MOCK_INVOICES.filter((i) => orders.some((o) => o.id === i.orderId));
-  const userNotifs = MOCK_NOTIFICATIONS.filter((n) => orders.some((o) => o.id === n.orderId));
+  // Phase 2: every relation under this drawer comes from /api/admin/customers/[id].
+  // Orders are still passed in as a prop because the admin shell already
+  // hydrates them globally; everything else is fetched on mount.
+  type DrawerData = {
+    patients: { id: string; name: string; is_default: boolean }[];
+    addresses: { id: string; label: string; description: string; city: string; is_default: boolean }[];
+    notifications: { id: string; title_ar: string; type: string; created_at: string }[];
+  };
+  const [data, setData] = useState<DrawerData>({ patients: [], addresses: [], notifications: [] });
+  const [drawerLoading, setDrawerLoading] = useState(true);
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(`/api/admin/customers/${encodeURIComponent(user.id)}`, { cache: "no-store" });
+        if (!res.ok || cancelled) return;
+        const body = await res.json().catch(() => null);
+        if (cancelled || !body) return;
+        setData({
+          patients: (body.patients ?? []) as DrawerData["patients"],
+          addresses: (body.addresses ?? []) as DrawerData["addresses"],
+          notifications: (body.notifications ?? []) as DrawerData["notifications"],
+        });
+      } catch { /* keep empty */ }
+      finally { if (!cancelled) setDrawerLoading(false); }
+    })();
+    return () => { cancelled = true; };
+  }, [user.id]);
+  const userPatients = data.patients;
+  const userAddresses = data.addresses;
+  const userNotifs = data.notifications;
 
   return (
     <div className="space-y-4">
@@ -892,7 +934,7 @@ function UserProfilePanel({ user, orders, onBack }: {
           { v: "patients" as const,      label: `المرضى (${userPatients.length})` },
           { v: "addresses" as const,     label: `العناوين (${userAddresses.length})` },
           { v: "orders" as const,        label: `الطلبات (${orders.length})` },
-          { v: "invoices" as const,      label: `الفواتير (${userInvoices.length})` },
+          { v: "invoices" as const,      label: "الفواتير" },
           { v: "notifications" as const, label: `الإشعارات (${userNotifs.length})` },
         ]).map((t) => (
           <button
@@ -928,11 +970,10 @@ function UserProfilePanel({ user, orders, onBack }: {
       {tab === "patients" && (
         <DataTable
           rows={userPatients}
-          empty="لا يوجد مرضى مسجّلون"
+          empty={drawerLoading ? "جاري التحميل…" : "لا يوجد مرضى مسجّلون"}
           columns={[
             { key: "name",    label: "الاسم",     render: (p) => p.name },
-            { key: "default", label: "افتراضي",   render: (p) => p.isDefault ? <Pill color="green">نعم</Pill> : <Pill>لا</Pill> },
-            { key: "actions", label: "إجراءات",   render: () => <span className="text-xs text-gray-400">تعديل · حذف</span> },
+            { key: "default", label: "افتراضي",   render: (p) => p.is_default ? <Pill color="green">نعم</Pill> : <Pill>لا</Pill> },
           ]}
         />
       )}
@@ -940,12 +981,12 @@ function UserProfilePanel({ user, orders, onBack }: {
       {tab === "addresses" && (
         <DataTable
           rows={userAddresses}
-          empty="لا توجد عناوين محفوظة"
+          empty={drawerLoading ? "جاري التحميل…" : "لا توجد عناوين محفوظة"}
           columns={[
             { key: "label",       label: "العنوان",   render: (a) => <span className="font-semibold">{a.label}</span> },
             { key: "description", label: "التفاصيل",  render: (a) => a.description },
             { key: "city",        label: "المدينة",   render: (a) => a.city },
-            { key: "default",     label: "افتراضي",   render: (a) => a.isDefault ? <Pill color="green">نعم</Pill> : <Pill>لا</Pill> },
+            { key: "default",     label: "افتراضي",   render: (a) => a.is_default ? <Pill color="green">نعم</Pill> : <Pill>لا</Pill> },
           ]}
         />
       )}
@@ -964,26 +1005,19 @@ function UserProfilePanel({ user, orders, onBack }: {
       )}
 
       {tab === "invoices" && (
-        <DataTable
-          rows={userInvoices}
-          empty="لا توجد فواتير"
-          columns={[
-            { key: "n",      label: "الرقم",   render: (i) => <span className="lat" dir="ltr">{i.invoiceNumber}</span> },
-            { key: "date",   label: "التاريخ", render: (i) => formatDate(i.issuedAt) },
-            { key: "status", label: "الحالة",  render: (i) => <Pill color={i.paymentStatus === "paid" ? "green" : "amber"}>{i.paymentStatus}</Pill> },
-            { key: "total",  label: "المجموع", render: (i) => formatPrice(i.total) },
-          ]}
-        />
+        <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-center text-xs text-amber-700 leading-relaxed">
+          غير مربوط بقاعدة البيانات بعد — قسم الفواتير قيد التطوير.
+        </div>
       )}
 
       {tab === "notifications" && (
         <DataTable
           rows={userNotifs}
-          empty="لا توجد إشعارات"
+          empty={drawerLoading ? "جاري التحميل…" : "لا توجد إشعارات"}
           columns={[
-            { key: "title", label: "العنوان", render: (n) => n.titleAr },
+            { key: "title", label: "العنوان", render: (n) => n.title_ar },
             { key: "type",  label: "النوع",   render: (n) => <Pill color="cyan">{n.type}</Pill> },
-            { key: "date",  label: "التاريخ", render: (n) => relativeTime(n.createdAt) },
+            { key: "date",  label: "التاريخ", render: (n) => relativeTime(n.created_at) },
           ]}
         />
       )}
@@ -1901,105 +1935,38 @@ function GamificationAdmin({ nurses, config, setConfig }: {
 
 
 // ════════════════════════════ Invoices + Payments ═══════════════════════════
+// Phase 2: there's no real invoices schema yet. We render an Arabic
+// placeholder instead of mock data so admins don't act on fabricated rows.
+// The full DB-backed invoice/payments view lands in a later phase.
 
-function InvoicesAdmin() {
-  const [invoices, setInvoices] = useState<Invoice[]>(MOCK_INVOICES);
-  const [statusFilter, setStatusFilter] = useState<PaymentStatus | "all">("all");
-  const [methodFilter, setMethodFilter] = useState("all");
-  const [search, setSearch] = useState("");
-  const [page, setPage] = useState(1);
-  const [open, setOpen] = useState<Invoice | null>(null);
-
-  const statuses: { v: PaymentStatus | "all"; label: string }[] = [
-    { v: "all",       label: "الكل" },
-    { v: "pending",   label: "بانتظار الدفع" },
-    { v: "paid",      label: "مدفوعة" },
-    { v: "refunded",  label: "مستردّة" },
-    { v: "cancelled", label: "ملغاة" },
-  ];
-
-  const filtered = invoices.filter((inv) => {
-    if (statusFilter !== "all" && inv.paymentStatus !== statusFilter) return false;
-    if (methodFilter !== "all" && inv.paymentMethod !== methodFilter) return false;
-    if (search && !inv.invoiceNumber.toLowerCase().includes(search.toLowerCase()) && !inv.patientName.includes(search)) return false;
-    return true;
-  });
-
-  const updateStatus = (inv: Invoice, status: PaymentStatus) => {
-    setInvoices((p) => p.map((x) => x.id === inv.id ? { ...x, paymentStatus: status } : x));
-    setOpen({ ...inv, paymentStatus: status });
-  };
-
+function InvoicesPlaceholder({ titleAr, descriptionAr }: { titleAr: string; descriptionAr: string }) {
   return (
-    <div className="space-y-4">
-      <div className="flex flex-col md:flex-row md:items-center gap-3">
-        <div className="relative flex-1 max-w-md">
-          <Search size={15} className="absolute top-1/2 -translate-y-1/2 start-3 text-gray-400" aria-hidden="true" />
-          <TextInput placeholder="بحث برقم الفاتورة أو المريض" value={search} onChange={(e) => { setSearch(e.target.value); setPage(1); }} className="ps-9" />
-        </div>
-        <select value={statusFilter} onChange={(e) => { setStatusFilter(e.target.value as PaymentStatus | "all"); setPage(1); }} className="h-10 px-3 rounded-xl border border-gray-200 text-sm cursor-pointer">
-          {statuses.map((s) => <option key={s.v} value={s.v}>{s.label}</option>)}
-        </select>
-        <select value={methodFilter} onChange={(e) => { setMethodFilter(e.target.value); setPage(1); }} className="h-10 px-3 rounded-xl border border-gray-200 text-sm cursor-pointer">
-          <option value="all">كل طرق الدفع</option>
-          <option value="cash">نقداً</option>
-          <option value="online">إلكتروني</option>
-        </select>
+    <div className="bg-white rounded-2xl border border-amber-200 p-8 text-center max-w-2xl mx-auto">
+      <div className="w-12 h-12 rounded-2xl bg-amber-50 flex items-center justify-center mx-auto mb-3">
+        <FileText size={20} className="text-amber-600" aria-hidden="true" />
       </div>
-
-      <div className="bg-white rounded-2xl border border-gray-100 p-4">
-        <DataTable
-          rows={filtered}
-          page={page} pageSize={10} onPage={setPage}
-          empty="لا توجد فواتير"
-          columns={[
-            { key: "n",       label: "رقم الفاتورة", render: (i) => <span className="lat font-semibold" dir="ltr">{i.invoiceNumber}</span> },
-            { key: "p",       label: "المريض",       render: (i) => i.patientName },
-            { key: "method",  label: "الدفع",        render: (i) => i.paymentMethod === "cash" ? "نقداً" : "إلكتروني" },
-            { key: "status",  label: "الحالة",       render: (i) => <Pill color={i.paymentStatus === "paid" ? "green" : i.paymentStatus === "pending" ? "amber" : i.paymentStatus === "cancelled" ? "red" : "purple"}>{statuses.find((s) => s.v === i.paymentStatus)?.label}</Pill> },
-            { key: "date",    label: "التاريخ",      render: (i) => <span className="text-xs text-gray-500">{formatDate(i.issuedAt)}</span> },
-            { key: "total",   label: "المجموع",      render: (i) => <span className="font-bold">{formatPrice(i.total)}</span> },
-            { key: "actions", label: "إجراءات",      render: (i) => (
-              <button onClick={() => setOpen(i)} className="text-xs px-2 py-1 rounded-md bg-[#ECFEFF] text-[#0891B2] cursor-pointer flex items-center gap-1">
-                <Eye size={12} aria-hidden="true" /> عرض
-              </button>
-            )},
-          ]}
-        />
-      </div>
-
-      {open && <InvoiceView invoice={open} onClose={() => setOpen(null)} onStatusChange={(s) => updateStatus(open, s)} />}
+      <p className="text-sm font-bold text-[#164E63] mb-1">{titleAr}</p>
+      <p className="text-xs text-gray-500 leading-relaxed">{descriptionAr}</p>
+      <p className="text-[11px] text-amber-700 mt-3 font-semibold">غير مربوط بقاعدة البيانات بعد</p>
     </div>
   );
 }
 
-function PaymentsAdmin() {
-  const paid = MOCK_INVOICES.filter((i) => i.paymentStatus === "paid");
-  const pending = MOCK_INVOICES.filter((i) => i.paymentStatus === "pending");
-  const total = paid.reduce((s, i) => s + i.total, 0);
-  const pendingTotal = pending.reduce((s, i) => s + i.total, 0);
-
+function InvoicesAdmin() {
   return (
-    <div className="space-y-5">
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-        <StatCard icon={<CheckCircle size={20} />} label="مدفوعة (ل.س)" value={total.toLocaleString("ar")} color="bg-emerald-600 text-white" />
-        <StatCard icon={<Clock size={20} />} label="بانتظار الدفع" value={pendingTotal.toLocaleString("ar")} color="bg-amber-500 text-white" />
-        <StatCard icon={<CreditCard size={20} />} label="إلكتروني" value={MOCK_INVOICES.filter((i) => i.paymentMethod === "online").length} color="bg-[#0891B2] text-white" />
-        <StatCard icon={<DollarSign size={20} />} label="نقداً" value={MOCK_INVOICES.filter((i) => i.paymentMethod === "cash").length} color="bg-purple-600 text-white" />
-      </div>
-      <Section title="حركة المدفوعات">
-        <DataTable
-          rows={MOCK_INVOICES}
-          columns={[
-            { key: "n",       label: "الفاتورة",  render: (i) => <span className="lat" dir="ltr">{i.invoiceNumber}</span> },
-            { key: "patient", label: "المريض",    render: (i) => i.patientName },
-            { key: "method",  label: "الطريقة",   render: (i) => i.paymentMethod === "cash" ? "نقداً" : "إلكتروني" },
-            { key: "status",  label: "الحالة",    render: (i) => <Pill color={i.paymentStatus === "paid" ? "green" : "amber"}>{i.paymentStatus === "paid" ? "مدفوع" : "معلّق"}</Pill> },
-            { key: "total",   label: "المبلغ",    render: (i) => <span className="font-bold">{formatPrice(i.total)}</span> },
-          ]}
-        />
-      </Section>
-    </div>
+    <InvoicesPlaceholder
+      titleAr="الفواتير"
+      descriptionAr="جدول الفواتير سيُربط بطلبات قاعدة البيانات في مرحلة لاحقة. لا تُعرض بيانات وهمية حالياً."
+    />
+  );
+}
+
+function PaymentsAdmin() {
+  return (
+    <InvoicesPlaceholder
+      titleAr="المدفوعات"
+      descriptionAr="حركة المدفوعات ستُحسب من جدول الطلبات والفواتير في قاعدة البيانات لاحقاً."
+    />
   );
 }
 
@@ -2954,21 +2921,81 @@ function NewOrderDrawer({ user, nurses, labs, onCancel, onCreated }: {
   const toast = useToast();
   const me = user;
   const settings = useSystemSettings();
+  // Phase 2: catalog comes from the live customer-facing store (DB). Active
+  // tests/packages only.
+  const allTests = useTests();
+  const allPackages = usePackages();
+  const activeTests = useMemo(() => allTests.filter((t) => t.isActive), [allTests]);
+  const activePackages = useMemo(() => allPackages.filter((p) => p.isActive), [allPackages]);
 
-  const customerList = useMemo(() => {
-    const set = new Map<string, { userId: string; label: string }>();
-    MOCK_PATIENTS.forEach((p) => {
-      if (!set.has(p.userId)) set.set(p.userId, { userId: p.userId, label: p.name });
-    });
-    return Array.from(set.values());
+  // Customer dropdown — fetched from /api/admin/users?role=customer.
+  type CustomerRow = {
+    id: string;
+    profile: { full_name: string | null; phone: string | null };
+  };
+  const [customerRows, setCustomerRows] = useState<CustomerRow[]>([]);
+  const [customersLoading, setCustomersLoading] = useState(true);
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch("/api/admin/users?role=customer", { cache: "no-store" });
+        if (!res.ok || cancelled) return;
+        const body = await res.json().catch(() => null);
+        if (!cancelled) setCustomerRows((body?.users ?? []) as CustomerRow[]);
+      } catch { /* keep empty */ }
+      finally { if (!cancelled) setCustomersLoading(false); }
+    })();
+    return () => { cancelled = true; };
   }, []);
+  const customerList = useMemo(() => customerRows.map((r) => ({
+    userId: r.id,
+    label: r.profile.full_name ?? "—",
+  })), [customerRows]);
 
-  const [userId, setUserId] = useState<string>(customerList[0]?.userId ?? SEED_CUSTOMER_1_ID);
-  const userPatients  = MOCK_PATIENTS.filter((p) => p.userId === userId);
-  const userAddresses = MOCK_ADDRESSES.filter((a) => a.userId === userId);
+  const [userId, setUserId] = useState<string>("");
+  // Per-customer patients + addresses fetched on demand from the same admin
+  // detail endpoint used by UserProfilePanel.
+  type PatientRow = { id: string; name: string; national_id?: string | null; note?: string | null; is_default: boolean };
+  type AddressRow = { id: string; label: string; description: string; city: string; lat: number | null; lng: number | null; is_default: boolean };
+  const [userPatients, setUserPatients] = useState<PatientRow[]>([]);
+  const [userAddresses, setUserAddresses] = useState<AddressRow[]>([]);
+  /* eslint-disable react-hooks/set-state-in-effect -- the next four effects
+     mirror remote resources (admin customer list + per-customer patients +
+     addresses) and reset picker selections when those lists arrive. The
+     repo's house pattern (see LabPortal.tsx) suppresses the rule for this
+     network-mirror case. */
+  useEffect(() => {
+    if (!userId) { setUserPatients([]); setUserAddresses([]); return; }
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(`/api/admin/customers/${encodeURIComponent(userId)}`, { cache: "no-store" });
+        if (!res.ok || cancelled) return;
+        const body = await res.json().catch(() => null);
+        if (cancelled || !body) return;
+        setUserPatients((body.patients ?? []) as PatientRow[]);
+        setUserAddresses((body.addresses ?? []) as AddressRow[]);
+      } catch { /* keep empty */ }
+    })();
+    return () => { cancelled = true; };
+  }, [userId]);
 
-  const [patientId, setPatientId] = useState<string>(userPatients[0]?.id ?? "");
-  const [addressId, setAddressId] = useState<string>(userAddresses[0]?.id ?? "");
+  // Default the customer to the first row once the customer list arrives.
+  useEffect(() => {
+    if (!userId && customerList.length > 0) setUserId(customerList[0].userId);
+  }, [customerList, userId]);
+
+  const [patientId, setPatientId] = useState<string>("");
+  const [addressId, setAddressId] = useState<string>("");
+  // Reset patient/address picks whenever the patients/addresses list refreshes.
+  useEffect(() => {
+    setPatientId(userPatients[0]?.id ?? "");
+  }, [userPatients]);
+  useEffect(() => {
+    setAddressId(userAddresses[0]?.id ?? "");
+  }, [userAddresses]);
+  /* eslint-enable react-hooks/set-state-in-effect */
 
   const [orderType, setOrderType] = useState<"package" | "custom">("custom");
   const [packageId, setPackageId] = useState<string>("");
@@ -2990,8 +3017,8 @@ function NewOrderDrawer({ user, nurses, labs, onCancel, onCreated }: {
   // Stable idempotency key for the lifetime of this drawer mount.
   const [idempotencyKey] = useState(() => `admin-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`);
 
-  const pkg = useMemo(() => MOCK_PACKAGES.find((p) => p.id === packageId) ?? null, [packageId]);
-  const pickedTests = useMemo(() => MOCK_TESTS.filter((t) => pickedTestIds.includes(t.id)), [pickedTestIds]);
+  const pkg = useMemo(() => allPackages.find((p) => p.id === packageId) ?? null, [allPackages, packageId]);
+  const pickedTests = useMemo(() => activeTests.filter((t) => pickedTestIds.includes(t.id)), [activeTests, pickedTestIds]);
   const subtotal = orderType === "package" && pkg
     ? pkg.price
     : pickedTests.reduce((s, t) => s + t.sellPrice, 0);
@@ -3034,8 +3061,20 @@ function NewOrderDrawer({ user, nurses, labs, onCancel, onCreated }: {
     setSubmitting(true);
     await new Promise((r) => setTimeout(r, 300));
 
-    const patient = userPatients.find((p) => p.id === patientId)!;
-    const address = userAddresses.find((a) => a.id === addressId)!;
+    const patientRow = userPatients.find((p) => p.id === patientId)!;
+    const addressRow = userAddresses.find((a) => a.id === addressId)!;
+    const patient: import("@/lib/types").Patient = {
+      id: patientRow.id, userId, name: patientRow.name,
+      nationalId: patientRow.national_id ?? undefined,
+      note: patientRow.note ?? undefined,
+      isDefault: patientRow.is_default,
+    };
+    const address: import("@/lib/types").Address = {
+      id: addressRow.id, userId, label: addressRow.label,
+      description: addressRow.description, city: addressRow.city,
+      lat: addressRow.lat ?? 0, lng: addressRow.lng ?? 0,
+      isDefault: addressRow.is_default,
+    };
     const items = orderType === "package" && pkg
       ? pkg.tests.map((t, i) => ({ id: `oi-${Date.now()}-${i}`, testId: t.id, nameAr: t.nameAr, nameEn: t.nameEn, priceSnapshot: t.sellPrice }))
       : pickedTests.map((t, i) => ({ id: `oi-${Date.now()}-${i}`, testId: t.id, nameAr: t.nameAr, nameEn: t.nameEn, priceSnapshot: t.sellPrice }));
@@ -3105,15 +3144,12 @@ function NewOrderDrawer({ user, nurses, labs, onCancel, onCreated }: {
             <Field label="العميل">
               <select
                 value={userId}
-                onChange={(e) => {
-                  setUserId(e.target.value);
-                  const newPatients  = MOCK_PATIENTS.filter((p) => p.userId === e.target.value);
-                  const newAddresses = MOCK_ADDRESSES.filter((a) => a.userId === e.target.value);
-                  setPatientId(newPatients[0]?.id ?? "");
-                  setAddressId(newAddresses[0]?.id ?? "");
-                }}
+                onChange={(e) => setUserId(e.target.value)}
                 className="w-full h-10 px-3 rounded-xl border border-gray-200 text-sm cursor-pointer"
+                disabled={customersLoading || customerList.length === 0}
               >
+                {customersLoading && <option>جاري تحميل العملاء…</option>}
+                {!customersLoading && customerList.length === 0 && <option>لا يوجد عملاء بعد</option>}
                 {customerList.map((c) => <option key={c.userId} value={c.userId}>{c.label}</option>)}
               </select>
             </Field>
@@ -3147,15 +3183,21 @@ function NewOrderDrawer({ user, nurses, labs, onCancel, onCreated }: {
               <Field label="الباقة">
                 <select value={packageId} onChange={(e) => setPackageId(e.target.value)} className="w-full h-10 px-3 rounded-xl border border-gray-200 text-sm cursor-pointer">
                   <option value="">— اختر باقة —</option>
-                  {MOCK_PACKAGES.filter((p) => p.isActive).map((p) => (
+                  {activePackages.map((p) => (
                     <option key={p.id} value={p.id}>{p.nameAr} — {formatPrice(p.price)}</option>
                   ))}
                 </select>
+                {activePackages.length === 0 && (
+                  <p className="text-[11px] text-amber-600 mt-1">لا توجد باقات فعّالة. أضفها من قسم الباقات.</p>
+                )}
               </Field>
             ) : (
               <Field label="التحاليل">
                 <div className="max-h-56 overflow-y-auto rounded-xl border border-gray-200 divide-y divide-gray-50">
-                  {MOCK_TESTS.filter((t) => t.isActive).map((t) => {
+                  {activeTests.length === 0 && (
+                    <p className="text-[11px] text-gray-400 px-3 py-2 text-center">لا توجد تحاليل فعّالة بعد.</p>
+                  )}
+                  {activeTests.map((t) => {
                     const checked = pickedTestIds.includes(t.id);
                     return (
                       <label key={t.id} className="flex items-center gap-2 px-3 py-2 cursor-pointer text-xs hover:bg-gray-50">

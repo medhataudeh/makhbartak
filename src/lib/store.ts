@@ -13,10 +13,7 @@ import type {
   OrderStatus,
 } from "./types";
 import {
-  MOCK_ORDERS,
-  MOCK_NOTIFICATIONS,
   MOCK_NURSE_NOTIFICATIONS,
-  MOCK_RESULT_FILES,
 } from "./mock-data";
 import { USE_SUPABASE } from "./supabase/flags";
 // Phases 1-3 retired the direct-RPC mutator path; Stage A retired
@@ -44,67 +41,18 @@ const listeners = new Set<Listener>();
 function emit() { listeners.forEach((l) => l()); }
 function subscribe(l: Listener) { listeners.add(l); return () => { listeners.delete(l); }; }
 
-// Hydrate once from mock data. Mutations create new arrays so React detects
-// the change via useSyncExternalStore's getSnapshot identity.
-//
-// Backfill on hydrate:
-//  - publicNumber (HL-2026-XXXXXX) when seed didn't ship one
-//  - existing result_ready seeds → completed, since the new rule is that lab
-//    confirms upload and the order auto-completes (no separate customer bucket).
-let _seedCounter = 0;
-function seedPublicNumber(): string {
-  _seedCounter += 1;
-  return `HL-2026-${String(_seedCounter).padStart(6, "0")}`;
-}
-// When Supabase is on, the live admin/customer/nurse views must show ONLY
-// real DB rows. Seeding MOCK_ORDERS here was leaking mock nurseId/labId
-// values (SEED_NURSE_*) into admin assignment flows, where the OCC quick-
-// action prompt prefilled them and produced
-// "nurse 00000000-0000-4000-8000-0000000a0002 does not exist" on save.
-// Mock seed is only useful when running flag-off as a static prototype.
-let _orders: Order[] = USE_SUPABASE
-  ? []
-  : MOCK_ORDERS.map((o) => ({
-      ...o,
-      publicNumber: o.publicNumber ?? seedPublicNumber(),
-      status: o.status === "result_ready" ? "completed" : o.status,
-      events: o.events ?? seedEventsFor(o),
-      resultFiles: o.resultFiles ?? MOCK_RESULT_FILES.filter((f) => f.orderId === o.id),
-    }));
-let _notifications: Notification[] = USE_SUPABASE ? [] : [...MOCK_NOTIFICATIONS];
+// Phase 2 production hardening: orders + customer notifications boot empty
+// in every environment. The previous USE_SUPABASE-off branch was seeding
+// MOCK_ORDERS / MOCK_NOTIFICATIONS into admin/customer views, which leaked
+// SEED_NURSE_* / SEED_CUSTOMER_* identifiers into assignment flows and
+// produced cascade FK errors. Real rows arrive via the hydrate helpers.
+let _orders: Order[] = [];
+let _notifications: Notification[] = [];
 // Nurse inbox is its own mutable array. With Supabase on we start empty and
 // fill from `hydrateNotificationsForNurse` so the UI never shows demo data.
 // With the flag off we keep the prototype seed.
 let _nurseNotifications: Notification[] = USE_SUPABASE ? [] : [...MOCK_NURSE_NOTIFICATIONS];
 let _labIssues: LabIssue[] = [];
-
-function seedEventsFor(order: Order): OrderEvent[] {
-  // Derive a minimal plausible timeline so existing fixtures look real.
-  const at = (offsetMin: number) =>
-    new Date(new Date(order.createdAt).getTime() + offsetMin * 60000).toISOString();
-  const evts: OrderEvent[] = [
-    { id: `ev-${order.id}-c`, orderId: order.id, type: "created", actor: "customer", createdAt: order.createdAt },
-  ];
-  const flow: Array<{ s: OrderStatus; t: OrderEventType; offset: number; actor: OrderEvent["actor"] }> = [
-    { s: "scheduled",        t: "scheduled",        offset: 5,    actor: "system" },
-    { s: "confirmed",        t: "confirmed",        offset: 15,   actor: "admin"  },
-    { s: "nurse_assigned",   t: "nurse_assigned",   offset: 30,   actor: "admin"  },
-    { s: "on_the_way",       t: "on_the_way",       offset: 60,   actor: "nurse"  },
-    { s: "arrived",          t: "arrived",          offset: 90,   actor: "nurse"  },
-    { s: "sample_collected", t: "sample_collected", offset: 100,  actor: "nurse"  },
-    { s: "sent_to_lab",      t: "sent_to_lab",      offset: 120,  actor: "nurse"  },
-    { s: "lab_processing",   t: "lab_processing",   offset: 180,  actor: "lab"    },
-    { s: "result_ready",     t: "result_ready",     offset: 300,  actor: "lab"    },
-    { s: "completed",        t: "completed",        offset: 360,  actor: "system" },
-  ];
-  const order2idx = flow.findIndex((f) => f.s === order.status);
-  const upto = order2idx === -1 ? flow.length - 1 : order2idx;
-  for (let i = 0; i <= upto; i++) {
-    const f = flow[i];
-    evts.push({ id: `ev-${order.id}-${i}`, orderId: order.id, type: f.t, actor: f.actor, createdAt: at(f.offset) });
-  }
-  return evts;
-}
 
 // ─── Supabase hydrate (read-only; flag-gated; no-op until auth lands) ───────
 // Phase 1 superseded the legacy module-load hydrate (it relied on the anon
