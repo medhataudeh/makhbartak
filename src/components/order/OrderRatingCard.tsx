@@ -36,19 +36,22 @@ export function OrderRatingCard({ order }: Props) {
   const submit = async () => {
     if (overall === 0) { toast.error("اختر تقييمك العام"); return; }
     setSubmitting(true);
-    await new Promise((r) => setTimeout(r, 400));
-    submitOrderRating({
-      orderId: order.id,
-      userId: order.userId,
-      nurseId: order.nurseId,
-      labId: order.labId,
-      nurseRating: nurse > 0 ? nurse : undefined,
-      labRating: lab > 0 ? lab : undefined,
-      overallRating: overall,
-      comment: comment.trim() || undefined,
-    });
-    setSubmitting(false);
-    toast.success("تم إرسال تقييمك. شكراً لك");
+    try {
+      const r = await submitOrderRating({
+        orderId: order.id,
+        userId: order.userId,
+        nurseId: order.nurseId,
+        labId: order.labId,
+        nurseRating: nurse > 0 ? nurse : undefined,
+        labRating: lab > 0 ? lab : undefined,
+        overallRating: overall,
+        comment: comment.trim() || undefined,
+      });
+      if (!r.ok) { toast.error(r.error ?? "تعذر إرسال التقييم"); return; }
+      toast.success("تم إرسال تقييمك. شكراً لك");
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   return (

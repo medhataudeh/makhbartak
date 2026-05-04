@@ -1771,9 +1771,53 @@ function GamificationAdmin({ nurses, config, setConfig }: {
 }) {
   const [adjustOpen, setAdjustOpen] = useState<Nurse | null>(null);
   const [adjustment, setAdjustment] = useState(0);
+  // Phase 1: hydrate the leaderboard from `nurse_gamification`. The mock
+  // lookup stays as a fallback for nurses whose ids are still mock slugs
+  // (flag-off) so the prototype renders during local dev.
+  type GameRow = {
+    nurse_id: string; total_completed: number; total_points: number;
+    points_today: number; monthly_completed: number; monthly_points: number;
+    failed_count: number; success_rate: number; streak: number; level_id: string;
+  };
+  const [remoteRows, setRemoteRows] = useState<GameRow[]>([]);
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch("/api/admin/nurse-gamification", { cache: "no-store" });
+        if (!res.ok || cancelled) return;
+        const body = await res.json().catch(() => null);
+        const rows = (body?.rows ?? []) as GameRow[];
+        if (!cancelled) setRemoteRows(rows);
+      } catch { /* keep empty rows on failure */ }
+    })();
+    return () => { cancelled = true; };
+  }, []);
 
   const leaderboard = nurses
-    .map((n) => ({ nurse: n, game: MOCK_GAMIFICATION[n.id] }))
+    .map((n) => {
+      const remote = remoteRows.find((r) => r.nurse_id === n.id);
+      if (remote) {
+        const level = NURSE_LEVELS.find((lv) => lv.id === remote.level_id) ?? NURSE_LEVELS[0];
+        return {
+          nurse: n,
+          game: {
+            nurseId: n.id,
+            totalCompleted: remote.total_completed,
+            totalPoints: remote.total_points,
+            pointsToday: remote.points_today,
+            monthlyCompleted: remote.monthly_completed,
+            monthlyPoints: remote.monthly_points,
+            successRate: remote.success_rate,
+            failedCount: remote.failed_count,
+            streak: remote.streak,
+            level,
+            badges: [],
+          },
+        };
+      }
+      return { nurse: n, game: MOCK_GAMIFICATION[n.id] };
+    })
     .filter((x) => x.game)
     .sort((a, b) => b.game.totalPoints - a.game.totalPoints);
 

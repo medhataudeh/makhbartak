@@ -12,7 +12,7 @@ import {
   usePatients, upsertPatient, deletePatient,
   useAddresses, upsertAddress, deleteAddress,
 } from "@/lib/profile";
-import { SEED_CUSTOMER_1_ID } from "@/lib/mock-data";
+import { useSession } from "@/lib/auth";
 import { Button } from "@/components/ui/Button";
 import { BackButton } from "@/components/ui/BackButton";
 import { CmsPage } from "@/components/account/CmsPage";
@@ -162,12 +162,19 @@ function ProfilePage({ onBack }: { onBack: () => void }) {
 
 function AddressesPage({ onBack }: { onBack: () => void }) {
   const toast = useToast();
+  const session = useSession();
+  // Customer-self only: this whole subpage is reachable through the
+  // bottom-nav account tab, which is itself gated by the session in
+  // app/page.tsx. Still, refuse to write when the session vanishes mid-flow
+  // so a stale tab can't stamp rows under the wrong (or missing) user.
+  const userId = session?.role === "customer" ? session.linkedEntityId : null;
   const addresses = useAddresses();
   const [editing, setEditing] = useState<Address | null>(null);
   const [creating, setCreating] = useState(false);
 
   const upsert = async (a: Address) => {
-    const r = await upsertAddress(a);
+    if (!userId) { toast.error("يجب تسجيل الدخول قبل حفظ العنوان"); return; }
+    const r = await upsertAddress({ ...a, userId });
     if (!r.ok) { toast.error(r.error ?? "تعذر الحفظ"); return; }
     toast.success("تم الحفظ بنجاح");
     setEditing(null); setCreating(false);
@@ -210,6 +217,7 @@ function AddressesPage({ onBack }: { onBack: () => void }) {
       {(editing || creating) && (
         <AddressForm
           initial={editing ?? undefined}
+          userId={userId}
           onCancel={() => { setEditing(null); setCreating(false); }}
           onSubmit={upsert}
         />
@@ -218,11 +226,11 @@ function AddressesPage({ onBack }: { onBack: () => void }) {
   );
 }
 
-function AddressForm({ initial, onCancel, onSubmit }: {
-  initial?: Address; onCancel: () => void; onSubmit: (a: Address) => void;
+function AddressForm({ initial, userId, onCancel, onSubmit }: {
+  initial?: Address; userId: string | null; onCancel: () => void; onSubmit: (a: Address) => void;
 }) {
   const [d, setD] = useState<Address>(() => initial ?? {
-    id: `addr-${Date.now()}`, userId: SEED_CUSTOMER_1_ID, label: "", description: "",
+    id: `addr-${Date.now()}`, userId: userId ?? "", label: "", description: "",
     lat: 33.5138, lng: 36.2765, city: "دمشق", isDefault: false,
   });
   const set = <K extends keyof Address>(k: K, v: Address[K]) => setD((x) => ({ ...x, [k]: v }));
@@ -257,12 +265,15 @@ function AddressForm({ initial, onCancel, onSubmit }: {
 
 function PatientsPage({ onBack }: { onBack: () => void }) {
   const toast = useToast();
+  const session = useSession();
+  const userId = session?.role === "customer" ? session.linkedEntityId : null;
   const patients = usePatients();
   const [editing, setEditing] = useState<Patient | null>(null);
   const [creating, setCreating] = useState(false);
 
   const upsert = async (p: Patient) => {
-    const r = await upsertPatient(p);
+    if (!userId) { toast.error("يجب تسجيل الدخول قبل حفظ المريض"); return; }
+    const r = await upsertPatient({ ...p, userId });
     if (!r.ok) { toast.error(r.error ?? "تعذر الحفظ"); return; }
     toast.success("تم الحفظ بنجاح");
     setEditing(null); setCreating(false);
@@ -304,6 +315,7 @@ function PatientsPage({ onBack }: { onBack: () => void }) {
       {(editing || creating) && (
         <PatientForm
           initial={editing ?? undefined}
+          userId={userId}
           onCancel={() => { setEditing(null); setCreating(false); }}
           onSubmit={upsert}
         />
@@ -312,11 +324,11 @@ function PatientsPage({ onBack }: { onBack: () => void }) {
   );
 }
 
-function PatientForm({ initial, onCancel, onSubmit }: {
-  initial?: Patient; onCancel: () => void; onSubmit: (p: Patient) => void;
+function PatientForm({ initial, userId, onCancel, onSubmit }: {
+  initial?: Patient; userId: string | null; onCancel: () => void; onSubmit: (p: Patient) => void;
 }) {
   const [d, setD] = useState<Patient>(() => initial ?? {
-    id: `p-${Date.now()}`, userId: SEED_CUSTOMER_1_ID, name: "", isDefault: false,
+    id: `p-${Date.now()}`, userId: userId ?? "", name: "", isDefault: false,
   });
   return (
     <div role="dialog" aria-modal="true" className="fixed inset-0 z-50 bg-black/50 flex items-end md:items-center justify-center p-4">

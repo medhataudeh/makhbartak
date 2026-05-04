@@ -9,11 +9,16 @@ import {
   XCircle, Wrench, Droplets,
 } from "lucide-react";
 import {
-  MOCK_NURSES, MOCK_NURSE_NOTIFICATIONS, MOCK_GAMIFICATION,
-  buildPrepChecklist, FAILED_COLLECTION_REASONS, NURSE_BADGES, NURSE_LEVELS,
+  MOCK_NURSES,
+  buildPrepChecklist, FAILED_COLLECTION_REASONS, NURSE_BADGES,
 } from "@/lib/mock-data";
+import { useNurseGamification } from "@/lib/nurse-gamification";
 import type { Nurse, NurseRouteStop, NurseGamification, Notification, Order } from "@/lib/types";
-import { setOrderStatus, verifyPatient, setPaymentStatus, useOrders, hydrateOrdersForNurse, hydrateNotificationsForNurse } from "@/lib/store";
+import {
+  setOrderStatus, verifyPatient, setPaymentStatus, useOrders,
+  hydrateOrdersForNurse, hydrateNotificationsForNurse,
+  useNurseNotifications, markNurseNotificationRead,
+} from "@/lib/store";
 import { useEditableNurse, updateNurseProfile } from "@/lib/nurse-profile";
 import { useSystemSettings } from "@/lib/system-settings";
 import { instructionsForOrder, isStructuredInstructions } from "@/lib/order-utils";
@@ -67,26 +72,6 @@ function writeNurseManualOrder(nurseId: string, date: string, ids: string[]) {
   try { window.sessionStorage.setItem(manualOrderKey(nurseId, date), JSON.stringify(ids)); } catch {}
 }
 
-// Brand-new starter stats for nurses who don't have a gamification row yet
-// (every admin-created nurse). Level is the first tier from NURSE_LEVELS so
-// the UI never reads `.level.color` / `.level.name` from undefined.
-function createStarterGame(nurseId: string): NurseGamification {
-  const startingLevel = NURSE_LEVELS[0] ?? { id: "lv-1", name: "مبتدئ", minPoints: 0, color: "#94A3B8" };
-  return {
-    nurseId,
-    totalCompleted: 0,
-    totalPoints: 0,
-    pointsToday: 0,
-    level: startingLevel,
-    badges: [],
-    monthlyCompleted: 0,
-    monthlyPoints: 0,
-    successRate: 0,
-    failedCount: 0,
-    streak: 0,
-  };
-}
-
 export function NurseApp() {
   const session = useSession();
   const authStatus = useAuthStatus();
@@ -120,13 +105,11 @@ function NurseAppInner({ nurseId, onLogout }: { nurseId: string; onLogout: () =>
     isActive: true,
   };
   const nurse = editableNurse ?? sessionNurse;
-  // Gamification stats are mock-only today; only seeded nurse ids
-  // (SEED_NURSE_1/2/3) have a row. Admin-created nurses (fresh DB UUIDs)
-  // would resolve to undefined, and every downstream read of
-  // `game.level.color`, `game.totalPoints`, `game.badges`, etc. would crash
-  // the page. Default to a brand-new starter gamification record so the UI
-  // renders normally for first-time nurses.
-  const game = MOCK_GAMIFICATION[nurse.id] ?? createStarterGame(nurse.id);
+  // Gamification: Phase 1 hardening. The nurse row is fetched (and auto-
+  // created for new admin-created nurses) via the GET endpoint. Until the
+  // network round-trip lands, the hook returns a starter shape so the UI
+  // never reads `.level` from undefined.
+  const game = useNurseGamification(nurse.id);
   // Today (local date) — used for the prep-checklist key and the schedule
   // header. Computed from local components so it matches the date strings
   // we send to /api/orders and the visit_date column.
@@ -172,9 +155,11 @@ function NurseAppInner({ nurseId, onLogout }: { nurseId: string; onLogout: () =>
     if (!r.ok) toast.error(r.error ?? "تعذر تفعيل وضع العمل");
   };
 
-  // Notifications
+  // Notifications — DB-only. The mock seed has been removed; admin-created
+  // nurses see whatever rows the notifications table has for their
+  // profile_id (hydrated by hydrateNotificationsForNurse on mount).
   const [notifOpen, setNotifOpen] = useState(false);
-  const [notifs, setNotifs] = useState<Notification[]>(MOCK_NURSE_NOTIFICATIONS);
+  const notifs = useNurseNotifications();
   const unread = notifs.filter((n) => !n.isRead).length;
 
   // Phase 2: pull this nurse's orders from Supabase on mount when the flag
@@ -433,7 +418,7 @@ function NurseAppInner({ nurseId, onLogout }: { nurseId: string; onLogout: () =>
       <BottomSheet open={notifOpen} onClose={() => setNotifOpen(false)} title="الإشعارات">
         <NurseNotifList
           notifs={notifs}
-          onRead={(id) => setNotifs((prev) => prev.map((n) => n.id === id ? { ...n, isRead: true } : n))}
+          onRead={(id) => markNurseNotificationRead(id, nurse.id)}
         />
       </BottomSheet>
 

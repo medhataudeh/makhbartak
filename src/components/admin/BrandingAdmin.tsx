@@ -6,6 +6,7 @@ import type { BrandingConfig, AdminRole } from "@/lib/types";
 import { useBranding, setBranding, DEFAULT_BRANDING } from "@/lib/branding";
 import { logActivity } from "@/lib/activity-log";
 import { Button } from "@/components/ui/Button";
+import { useToast } from "@/components/ui/Toast";
 
 interface Props {
   adminId: string;
@@ -15,7 +16,9 @@ interface Props {
 
 export function BrandingAdmin({ adminId, adminName, adminRole }: Props) {
   const live = useBranding();
+  const toast = useToast();
   const [draft, setDraft] = useState<BrandingConfig>(live);
+  const [saving, setSaving] = useState(false);
   const dirty = JSON.stringify(draft) !== JSON.stringify(live);
 
   const setLogo = <K extends keyof BrandingConfig["logos"]>(k: K, v: string) =>
@@ -25,13 +28,20 @@ export function BrandingAdmin({ adminId, adminName, adminRole }: Props) {
   const setBg = (v: BrandingConfig["background"]) =>
     setDraft((d) => ({ ...d, background: v }));
 
-  const save = () => {
-    setBranding(draft);
-    logActivity({
-      adminId, adminName, role: adminRole,
-      action: "settings_change", entity: "branding", entityId: "global",
-      details: "تحديث الشعارات/الهوية",
-    });
+  const save = async () => {
+    setSaving(true);
+    try {
+      const r = await setBranding(draft);
+      if (!r.ok) { toast.error(r.error ?? "تعذر حفظ الهوية البصرية"); return; }
+      logActivity({
+        adminId, adminName, role: adminRole,
+        action: "settings_change", entity: "branding", entityId: "global",
+        details: "تحديث الشعارات/الهوية",
+      });
+      toast.success("تم الحفظ بنجاح");
+    } finally {
+      setSaving(false);
+    }
   };
 
   const restore = () => {
@@ -43,14 +53,14 @@ export function BrandingAdmin({ adminId, adminName, adminRole }: Props) {
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <div>
           <h2 className="text-base font-bold text-[#164E63]">الشعارات والهوية البصرية</h2>
-          <p className="text-xs text-gray-500 mt-0.5">إدارة شعارات التطبيق وألوان الهوية. التغييرات تُحفظ في المتصفح حالياً.</p>
+          <p className="text-xs text-gray-500 mt-0.5">إدارة شعارات التطبيق وألوان الهوية. تُحفظ في قاعدة البيانات وتظهر فوراً في جميع البوابات.</p>
         </div>
         <div className="flex items-center gap-2">
           <Button size="sm" variant="outline" onClick={restore} disabled={!dirty && JSON.stringify(live) === JSON.stringify(DEFAULT_BRANDING)}>
             <RotateCcw size={13} aria-hidden="true" />
             استعادة الافتراضي
           </Button>
-          <Button size="sm" variant="primary" onClick={save} disabled={!dirty}>
+          <Button size="sm" variant="primary" onClick={save} loading={saving} disabled={!dirty || saving}>
             <Save size={13} aria-hidden="true" />
             حفظ التغييرات
           </Button>

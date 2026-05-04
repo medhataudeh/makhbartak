@@ -2,7 +2,8 @@
 import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
 import { MapPin, User, Clock, ChevronLeft, Plus, Calendar as CalendarIcon } from "lucide-react";
-import { getShiftConfigs, SEED_CUSTOMER_1_ID } from "@/lib/mock-data";
+import { getShiftConfigs } from "@/lib/mock-data";
+import { useSession } from "@/lib/auth";
 import { USE_SUPABASE } from "@/lib/supabase/flags";
 import { isUuid } from "@/lib/supabase/uuid";
 import { usePatients, useAddresses, upsertPatient, upsertAddress, useDefaultPatientId, setDefaultPatient } from "@/lib/profile";
@@ -47,6 +48,11 @@ const ymd = (d: Date): string => {
 const WEEKDAYS_AR = ["الأحد", "الاثنين", "الثلاثاء", "الأربعاء", "الخميس", "الجمعة", "السبت"];
 
 export function BookingFlow({ tests, pkg, onContinue, onBack }: BookingFlowProps) {
+  const session = useSession();
+  // Booking is a transactional flow that the customer page already gates on
+  // an authenticated customer session; this is the second line of defence
+  // against an invalid session sneaking into the inline forms below.
+  const userId = session?.role === "customer" ? session.linkedEntityId : null;
   const allAddresses = useAddresses();
   const allPatients = usePatients();
   const defaultPatientId = useDefaultPatientId();
@@ -334,9 +340,11 @@ export function BookingFlow({ tests, pkg, onContinue, onBack }: BookingFlowProps
       {/* Inline add-address */}
       <BottomSheet open={addingAddress} onClose={() => setAddingAddress(false)} title="إضافة عنوان">
         <AddressInlineForm
+          userId={userId}
           onCancel={() => setAddingAddress(false)}
           onSubmit={async (a) => {
-            const r = await upsertAddress(a);
+            if (!userId) { toast.error("يجب تسجيل الدخول قبل حفظ العنوان"); return; }
+            const r = await upsertAddress({ ...a, userId });
             if (!r.ok) { toast.error(r.error ?? "تعذر حفظ العنوان"); return; }
             setAddress(r.address ?? a);
             setAddingAddress(false);
@@ -348,9 +356,11 @@ export function BookingFlow({ tests, pkg, onContinue, onBack }: BookingFlowProps
       {/* Inline add-patient */}
       <BottomSheet open={addingPatient} onClose={() => setAddingPatient(false)} title="إضافة مريض">
         <PatientInlineForm
+          userId={userId}
           onCancel={() => setAddingPatient(false)}
           onSubmit={async (p) => {
-            const r = await upsertPatient(p);
+            if (!userId) { toast.error("يجب تسجيل الدخول قبل حفظ المريض"); return; }
+            const r = await upsertPatient({ ...p, userId });
             if (!r.ok) { toast.error(r.error ?? "تعذر حفظ المريض"); return; }
             choosePatient(r.patient ?? p);
             setAddingPatient(false);
@@ -362,7 +372,7 @@ export function BookingFlow({ tests, pkg, onContinue, onBack }: BookingFlowProps
   );
 }
 
-function AddressInlineForm({ onCancel, onSubmit }: { onCancel: () => void; onSubmit: (a: Address) => void }) {
+function AddressInlineForm({ userId, onCancel, onSubmit }: { userId: string | null; onCancel: () => void; onSubmit: (a: Address) => void }) {
   // Per spec the form asks only for: map pin, optional description, city.
   // No label / default toggle — both were noise. We default `label` to the
   // city under the hood so back-end constraints (label NOT NULL) still pass.
@@ -404,7 +414,7 @@ function AddressInlineForm({ onCancel, onSubmit }: { onCancel: () => void; onSub
           disabled={!pinPlaced}
           onClick={() => onSubmit({
             id: `addr-${Date.now()}`,
-            userId: SEED_CUSTOMER_1_ID,
+            userId: userId ?? "",
             label: city,                 // back-compat: label stays NOT NULL
             description: description.trim(),
             lat, lng,
@@ -417,7 +427,7 @@ function AddressInlineForm({ onCancel, onSubmit }: { onCancel: () => void; onSub
   );
 }
 
-function PatientInlineForm({ onCancel, onSubmit }: { onCancel: () => void; onSubmit: (p: Patient) => void }) {
+function PatientInlineForm({ userId, onCancel, onSubmit }: { userId: string | null; onCancel: () => void; onSubmit: (p: Patient) => void }) {
   const [name, setName] = useState("");
   const [nationalId, setNationalId] = useState("");
   const [note, setNote] = useState("");
@@ -442,7 +452,7 @@ function PatientInlineForm({ onCancel, onSubmit }: { onCancel: () => void; onSub
           disabled={!name.trim()}
           onClick={() => onSubmit({
             id: `p-${Date.now()}`,
-            userId: SEED_CUSTOMER_1_ID,
+            userId: userId ?? "",
             name: name.trim(),
             nationalId: nationalId.trim() || undefined,
             note: note.trim() || undefined,

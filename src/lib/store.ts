@@ -72,7 +72,10 @@ let _orders: Order[] = USE_SUPABASE
       resultFiles: o.resultFiles ?? MOCK_RESULT_FILES.filter((f) => f.orderId === o.id),
     }));
 let _notifications: Notification[] = USE_SUPABASE ? [] : [...MOCK_NOTIFICATIONS];
-const _nurseNotifications: Notification[] = [...MOCK_NURSE_NOTIFICATIONS];
+// Nurse inbox is its own mutable array. With Supabase on we start empty and
+// fill from `hydrateNotificationsForNurse` so the UI never shows demo data.
+// With the flag off we keep the prototype seed.
+let _nurseNotifications: Notification[] = USE_SUPABASE ? [] : [...MOCK_NURSE_NOTIFICATIONS];
 let _labIssues: LabIssue[] = [];
 
 function seedEventsFor(order: Order): OrderEvent[] {
@@ -179,8 +182,8 @@ interface RawNotificationRow {
   created_at: string;
 }
 
-function mergeRemoteNotifications(rows: RawNotificationRow[], userId: string) {
-  const mapped: Notification[] = rows.map((r) => ({
+function mapNotificationRow(r: RawNotificationRow, userId: string): Notification {
+  return {
     id: r.id,
     userId,
     type: r.type as Notification["type"],
@@ -189,10 +192,22 @@ function mergeRemoteNotifications(rows: RawNotificationRow[], userId: string) {
     orderId: r.order_id ?? undefined,
     isRead: !!r.is_read,
     createdAt: r.created_at,
-  }));
+  };
+}
+
+function mergeRemoteNotifications(rows: RawNotificationRow[], userId: string) {
+  const mapped = rows.map((r) => mapNotificationRow(r, userId));
   const byId = new Map(_notifications.map((n) => [n.id, n]));
   for (const n of mapped) byId.set(n.id, n);
   _notifications = Array.from(byId.values()).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  emit();
+}
+
+function mergeRemoteNurseNotifications(rows: RawNotificationRow[], nurseId: string) {
+  const mapped = rows.map((r) => mapNotificationRow(r, nurseId));
+  const byId = new Map(_nurseNotifications.map((n) => [n.id, n]));
+  for (const n of mapped) byId.set(n.id, n);
+  _nurseNotifications = Array.from(byId.values()).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   emit();
 }
 
@@ -218,11 +233,10 @@ export async function hydrateNotificationsForNurse(nurseId: string): Promise<voi
     if (!res.ok) return;
     const body = await res.json().catch(() => null);
     if (!body || !Array.isArray(body.notifications)) return;
-    // Nurse notifications live in a separate inbox in the UI; we still merge
-    // into the same _notifications store and let consumers filter by type
-    // when needed. The mock _nurseNotifications array stays untouched for
-    // legacy callers in flag-off mode.
-    mergeRemoteNotifications(body.notifications as RawNotificationRow[], nurseId);
+    // Nurse inbox is its own store (`_nurseNotifications`) so the nurse UI
+    // doesn't see customer notifications. Read marks go through
+    // `markNurseNotificationRead` below.
+    mergeRemoteNurseNotifications(body.notifications as RawNotificationRow[], nurseId);
   } catch (err) {
     console.warn("[api/nurses/notifications] hydrate failed", err);
   }
@@ -627,6 +641,25 @@ export function markAllNotificationsRead() {
   if (_notifications.every((n) => n.isRead)) return;
   _notifications = _notifications.map((n) => ({ ...n, isRead: true }));
   emit();
+}
+
+// Nurse-side counterpart of markNotificationRead. Optimistic local flip,
+// then persist via the new /api/nurses/[id]/notifications/[nid]/read route.
+export function markNurseNotificationRead(id: string, nurseId: string) {
+  let changed = false;
+  _nurseNotifications = _nurseNotifications.map((n) => {
+    if (n.id !== id || n.isRead) return n;
+    changed = true;
+    return { ...n, isRead: true };
+  });
+  if (changed) {
+    emit();
+    if (USE_SUPABASE && isUuid(nurseId) && isUuid(id)) {
+      void fetch(`/api/nurses/${encodeURIComponent(nurseId)}/notifications/${encodeURIComponent(id)}/read`, {
+        method: "POST",
+      }).catch((err) => console.warn("[api/nurses/notifications/read] failed", err));
+    }
+  }
 }
 
 export function applyCoupon(orderId: string, code: string, discount: number, ref: ActorRef): Promise<{ ok: boolean; error?: string }> {
