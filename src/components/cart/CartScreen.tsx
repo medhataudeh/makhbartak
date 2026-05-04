@@ -151,7 +151,7 @@ export function CartScreen({ tests, pkg, shift, address, patient, onConfirm, onB
         <h1 className="text-[16px] font-bold text-[#164E63]">مراجعة الطلب</h1>
       </div>
 
-      <div className="flex-1 overflow-y-auto pb-28">
+      <div className="flex-1 overflow-y-auto pb-cta">
         {/* Items — package = ONE line, no test breakdown */}
         <Section title="السلة">
           {pkg ? (

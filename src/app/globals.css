@@ -53,8 +53,39 @@ body {
 input[type="number"] { direction: ltr; text-align: right; }
 input[type="tel"] { direction: ltr; text-align: right; }
 
+/* Mobile (≤640px): force ≥16px font on all form fields so iOS Safari /
+   Android Chrome don't auto-zoom on focus. Tailwind classes like text-sm
+   (14px) on inputs reliably trigger the zoom; this rule wins because of
+   the input/select/textarea selector specificity. Desktop is untouched. */
+@media (max-width: 640px) {
+  input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="color"]),
+  select,
+  textarea {
+    font-size: 16px !important;
+  }
+}
+
 .safe-bottom { padding-bottom: env(safe-area-inset-bottom, 0px); }
 .safe-top { padding-top: env(safe-area-inset-top, 0px); }
+
+/* Page-level padding helpers — ~20px top/bottom on mobile for consistent
+   breathing room. Pair `page-pad-bottom` with sticky bottom CTAs to avoid
+   content being hidden behind them; it also adds the iOS safe-area inset. */
+.page-pad-top { padding-top: 20px; }
+.page-pad-bottom { padding-bottom: calc(20px + env(safe-area-inset-bottom, 0px)); }
+/* Reserve space for a fixed bottom-nav (~64px) + 20px gap + safe-area. */
+.pb-nav { padding-bottom: calc(84px + env(safe-area-inset-bottom, 0px)); }
+.pb-cta { padding-bottom: calc(96px + env(safe-area-inset-bottom, 0px)); }
+
+/* Latin-shaped run inside an RTL line. Use for order numbers, IDs, phones,
+   times, and any compound LTR string that should not get reordered by the
+   bidi algorithm. Keeps the surrounding paragraph in RTL flow. */
+.ltr-tech {
+  direction: ltr;
+  unicode-bidi: isolate;
+  display: inline-block;
+  letter-spacing: 0;
+}
 
 .no-scrollbar::-webkit-scrollbar { display: none; }
 .no-scrollbar { scrollbar-width: none; }

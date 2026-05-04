@@ -62,12 +62,14 @@ export function OrderDetails({ order, onClose }: OrderDetailsProps) {
         </button>
         <div className="flex-1 min-w-0">
           <h2 className="text-[15px] font-bold text-[#164E63]">تفاصيل الطلب</h2>
-          <p className="text-xs text-gray-400 mt-0.5 lat" dir="ltr">{customerOrderRef(order)}</p>
+          <p className="text-xs text-gray-400 mt-0.5">
+            <span className="lat ltr-tech">{customerOrderRef(order)}</span>
+          </p>
         </div>
         <CustomerStatusBadge status={order.status} />
       </div>
 
-      <div className="flex-1 overflow-y-auto pb-24">
+      <div className="flex-1 overflow-y-auto pb-cta">
         {/* RESULT-FIRST hoist — when results exist they become the most prominent thing on screen. */}
         {hasResults && (
           <div className="mx-4 mt-4 rounded-2xl border border-emerald-200 bg-emerald-50 p-4 space-y-3">

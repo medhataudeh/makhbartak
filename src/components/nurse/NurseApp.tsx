@@ -347,7 +347,7 @@ function NurseAppInner({ nurseId, onLogout }: { nurseId: string; onLogout: () =>
 
   return (
     <div className="flex flex-col min-h-screen bg-gray-50 max-w-md mx-auto">
-      <div className="flex-1 pb-24">
+      <div className="flex-1 pb-nav">
         {tab === "home" && (
           <NurseHome
             nurse={nurse}
@@ -493,7 +493,7 @@ function NurseHome({
   const toast = useToast();
 
   return (
-    <div className="space-y-4 p-4">
+    <div className="space-y-4 px-4 pt-5 pb-2">
       {/* Top profile row */}
       <header className="flex items-center gap-3">
         <div className="relative w-12 h-12 rounded-full overflow-hidden bg-gray-200 flex-shrink-0">
@@ -1306,7 +1306,7 @@ function NurseVisitDetail({
         <h2 className="text-base font-bold text-[#164E63]">تفاصيل الزيارة</h2>
       </header>
 
-      <div className="flex-1 overflow-y-auto p-4 space-y-3 pb-32">
+      <div className="flex-1 overflow-y-auto p-4 space-y-3 pb-cta">
         {/* Patient */}
         <section className="bg-white rounded-2xl border border-gray-100 p-4">
           <p className="text-[11px] text-gray-400 mb-1 uppercase tracking-wide">المريض</p>

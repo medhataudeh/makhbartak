@@ -260,9 +260,55 @@ function LabPortalShell({ lab, labUser, onLogout }: { lab: Lab; labUser: LabUser
   ];
 
   return (
-    <div className="min-h-screen bg-app flex">
-      {/* Sidebar */}
-      <aside className="w-full md:w-72 lg:w-80 bg-white border-s border-gray-100 flex flex-col h-screen sticky top-0">
+    <div className="min-h-screen bg-app flex flex-col md:flex-row">
+      {/* Mobile top bar — brand + logout. Section nav is a horizontal scroller below. */}
+      <div className="md:hidden sticky top-0 z-30 bg-white border-b border-gray-100">
+        <div className="px-4 py-3 flex items-center gap-3" style={{ background: brand.accentColor }}>
+          {lab.branding?.logo ?? lab.logo ? (
+            <div className="w-9 h-9 rounded-xl overflow-hidden bg-white relative flex-shrink-0">
+              <Image src={(lab.branding?.logo ?? lab.logo)!} alt="" fill sizes="36px" className="object-cover" />
+            </div>
+          ) : (
+            <div className="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0" style={{ background: brand.primaryColor }}>
+              <Building2 size={16} className="text-white" aria-hidden="true" />
+            </div>
+          )}
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-bold truncate" style={{ color: brand.primaryColor }}>{portalName}</p>
+            <p className="text-[11px] truncate" style={{ color: brand.secondaryColor }}>
+              {labUser.fullName} · {LAB_USER_ROLE_LABELS[labUser.role]}
+            </p>
+          </div>
+          <button onClick={onLogout} aria-label="تسجيل الخروج" className="w-10 h-10 rounded-lg hover:bg-white/60 flex items-center justify-center cursor-pointer flex-shrink-0">
+            <LogOut size={16} className="text-gray-600" aria-hidden="true" />
+          </button>
+        </div>
+        <div className="overflow-x-auto no-scrollbar">
+          <nav className="flex gap-1.5 px-3 py-2 min-w-max" aria-label="أقسام البوابة">
+            {sections.map((s) => {
+              const active = section === s.id;
+              return (
+                <button
+                  key={s.id}
+                  onClick={() => setSection(s.id)}
+                  aria-current={active ? "page" : undefined}
+                  className="flex items-center gap-1.5 px-3 h-10 rounded-full text-[13px] font-semibold cursor-pointer whitespace-nowrap transition-colors"
+                  style={{
+                    background: active ? brand.primaryColor : "#F3F4F6",
+                    color: active ? "#fff" : "#4B5563",
+                  }}
+                >
+                  <s.Icon size={14} />
+                  {s.labelAr}
+                </button>
+              );
+            })}
+          </nav>
+        </div>
+      </div>
+
+      {/* Desktop sidebar */}
+      <aside className="hidden md:flex md:w-72 lg:w-80 bg-white border-s border-gray-100 flex-col h-screen sticky top-0">
         <div className="px-4 py-4 border-b border-gray-100 flex items-center gap-3" style={{ background: brand.accentColor }}>
           {lab.branding?.logo ?? lab.logo ? (
             <div className="w-10 h-10 rounded-xl overflow-hidden bg-white relative flex-shrink-0">
@@ -311,7 +357,7 @@ function LabPortalShell({ lab, labUser, onLogout }: { lab: Lab; labUser: LabUser
       </aside>
 
       {/* Main */}
-      <main className="flex-1 min-w-0 overflow-y-auto">
+      <main className="flex-1 min-w-0 md:overflow-y-auto">
         {section === "orders"     && <OrdersSection lab={lab} labUser={labUser} labOrders={labOrders} brand={brand} />}
         {section === "results"    && <OrdersSection lab={lab} labUser={labUser} labOrders={labOrders.filter((o) => o.status !== "lab_issue")} brand={brand} resultsFocus />}
         {section === "issues"     && <IssuesSection lab={lab} labOrders={labOrders.filter((o) => o.status === "lab_issue" || (o.issues?.length ?? 0) > 0)} brand={brand} />}
@@ -359,9 +405,11 @@ function OrdersSection({ lab, labUser, labOrders, brand, resultsFocus }: {
   const showSellPrices = !!lab.revealSellPriceToLab;
 
   return (
-    <div className="flex h-screen">
-      {/* List pane */}
-      <div className="w-full md:w-96 border-s border-gray-100 bg-white flex flex-col">
+    <div className="flex flex-col md:flex-row md:h-screen">
+      {/* List pane — on mobile, hide once an order is selected so the detail
+         pane is visible. Tapping the mobile back button in the detail clears
+         selectedId to return here. */}
+      <div className={`${selected ? "hidden md:flex" : "flex"} w-full md:w-96 border-s border-gray-100 bg-white flex-col`}>
         <div className="px-4 py-3 border-b border-gray-100 space-y-2">
           <h2 className="text-base font-bold text-[#164E63]">{resultsFocus ? "رفع النتائج" : "الطلبات"}</h2>
           <div className="relative">
@@ -434,12 +482,24 @@ function OrdersSection({ lab, labUser, labOrders, brand, resultsFocus }: {
       </div>
 
       {/* Detail pane */}
-      <div className="flex-1 min-w-0 overflow-y-auto">
+      <div className={`${selected ? "flex" : "hidden md:flex"} flex-1 min-w-0 md:overflow-y-auto flex-col`}>
         {selected ? (
-          <div className="p-6 lg:p-8 max-w-4xl">
+          <>
+            {/* Mobile-only back-to-list strip */}
+            <div className="md:hidden sticky top-0 z-20 flex items-center gap-2 px-3 py-2 bg-white border-b border-gray-100">
+              <button
+                onClick={() => setSelectedId(null)}
+                aria-label="رجوع للقائمة"
+                className="w-10 h-10 rounded-xl bg-gray-100 flex items-center justify-center cursor-pointer active:bg-gray-200"
+              >
+                <ChevronRight size={18} className="text-[#164E63]" aria-hidden="true" />
+              </button>
+              <span className="text-sm font-semibold text-[#164E63]">رجوع للقائمة</span>
+            </div>
+          <div className="p-4 md:p-6 lg:p-8 max-w-4xl">
             <header className="flex items-start justify-between gap-4 mb-6 flex-wrap">
               <div>
-                <p className="text-xs text-gray-500 mb-1 lat" dir="ltr">{selected.id}</p>
+                <p className="text-xs text-gray-500 mb-1"><span className="lat ltr-tech">{selected.id}</span></p>
                 <h1 className="text-xl lg:text-2xl font-bold text-[#164E63]">{selected.patient.name}</h1>
                 <div className="flex items-center gap-2 mt-2">
                   <StatusBadge status={selected.status} />
@@ -705,6 +765,7 @@ function OrdersSection({ lab, labUser, labOrders, brand, resultsFocus }: {
               />
             )}
           </div>
+          </>
         ) : (
           <div className="h-full flex items-center justify-center text-sm text-gray-400 p-8 text-center">
             {labOrders.length === 0 ? "لم يتم إسناد أي طلب لهذا المخبر بعد" : "اختر طلباً من القائمة"}

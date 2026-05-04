@@ -39,9 +39,9 @@ export function OrderSuccess({ orderId, onViewOrder, onShare }: OrderSuccessProp
   }, []);
 
   return (
-    <div className="flex flex-col min-h-screen bg-white" role="main" aria-label="تأكيد الطلب">
+    <div className="flex flex-col min-h-screen bg-white pb-cta" role="main" aria-label="تأكيد الطلب">
       {/* Success mark — restrained: single circle, no pulsing rings */}
-      <div className="flex flex-col items-center pt-14 pb-8 px-6">
+      <div className="flex flex-col items-center pt-12 pb-6 px-6">
         <motion.div
           initial={{ scale: 0.5, opacity: 0 }}
           animate={{ scale: 1, opacity: 1 }}
@@ -71,7 +71,7 @@ export function OrderSuccess({ orderId, onViewOrder, onShare }: OrderSuccessProp
           className="text-sm text-gray-400 text-center"
         >
           رقم الطلب:{" "}
-          <span className="font-bold text-[#0891B2] lat" dir="ltr">{orderId}</span>
+          <span className="font-bold text-[#0891B2] lat ltr-tech">{orderId}</span>
         </motion.p>
         <motion.p
           initial={{ y: 8, opacity: 0 }}
@@ -128,21 +128,24 @@ export function OrderSuccess({ orderId, onViewOrder, onShare }: OrderSuccessProp
         </div>
       </div>
 
-      {/* Actions */}
+      {/* Actions — sticky on mobile so the CTAs stay reachable while the
+         instructions list scrolls. On desktop the static layout is fine. */}
       <motion.div
         initial={{ y: 24, opacity: 0 }}
         animate={{ y: 0, opacity: 1 }}
         transition={{ delay: 0.65, duration: 0.25 }}
-        className="px-4 pb-6 space-y-3 safe-bottom"
+        className="fixed md:static bottom-0 inset-x-0 px-4 py-3 md:py-6 bg-white border-t md:border-0 border-gray-100 space-y-2 md:space-y-3 safe-bottom z-30"
       >
-        <Button onClick={onShare} variant="outline" size="lg" className="w-full">
-          <Share2 size={17} aria-hidden="true" />
-          مشاركة التعليمات
-        </Button>
-        <Button onClick={onViewOrder} size="lg" className="w-full">
-          <ClipboardList size={17} aria-hidden="true" />
-          عرض الطلب
-        </Button>
+        <div className="max-w-md mx-auto space-y-2 md:space-y-3">
+          <Button onClick={onShare} variant="outline" size="lg" className="w-full">
+            <Share2 size={17} aria-hidden="true" />
+            مشاركة التعليمات
+          </Button>
+          <Button onClick={onViewOrder} size="lg" className="w-full">
+            <ClipboardList size={17} aria-hidden="true" />
+            عرض الطلب
+          </Button>
+        </div>
       </motion.div>
     </div>
   );

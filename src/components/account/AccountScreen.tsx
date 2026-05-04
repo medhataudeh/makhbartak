@@ -32,7 +32,7 @@ export function AccountScreen({ onLogout, onDeleteAccount }: AccountScreenProps)
   const headlineName = patients.find((p) => p.isDefault)?.name ?? patients[0]?.name ?? "—";
 
   return (
-    <div className="flex flex-col pb-24 bg-gray-50/40 min-h-screen">
+    <div className="flex flex-col pb-nav bg-gray-50/40 min-h-screen">
       <div className="px-4 pt-5 pb-4 bg-white border-b border-gray-100">
         <h1 className="text-xl font-bold text-[#164E63]">حسابي</h1>
       </div>

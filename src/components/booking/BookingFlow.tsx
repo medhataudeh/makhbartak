@@ -184,7 +184,7 @@ export function BookingFlow({ tests, pkg, onContinue, onBack }: BookingFlowProps
         <h1 className="text-[16px] font-bold text-[#164E63]">تفاصيل الزيارة</h1>
       </div>
 
-      <div className="flex-1 overflow-y-auto px-4 py-4 space-y-3 pb-28">
+      <div className="flex-1 overflow-y-auto px-4 pt-5 pb-cta space-y-3">
         {/* Summary chip */}
         <div className="bg-[#ECFEFF] rounded-xl px-4 py-3 flex items-center gap-2">
           <Clock size={14} className="text-[#0891B2] flex-shrink-0" aria-hidden="true" />
@@ -238,17 +238,20 @@ export function BookingFlow({ tests, pkg, onContinue, onBack }: BookingFlowProps
         </p>
       </div>
 
-      {/* CTA */}
-      <div className="px-4 py-3 bg-white border-t border-gray-100 safe-bottom">
-        <Button
-          onClick={submit}
-          size="lg"
-          className="w-full"
-          disabled={!canContinue}
-          aria-disabled={!canContinue}
-        >
-          مراجعة السلة
-        </Button>
+      {/* CTA — fixed on mobile so it stays visible while the form scrolls.
+         The scroll container above adds `pb-cta` so content isn't hidden. */}
+      <div className="fixed md:static bottom-0 inset-x-0 px-4 py-3 bg-white border-t border-gray-100 safe-bottom z-30">
+        <div className="max-w-md mx-auto">
+          <Button
+            onClick={submit}
+            size="lg"
+            className="w-full"
+            disabled={!canContinue}
+            aria-disabled={!canContinue}
+          >
+            مراجعة السلة
+          </Button>
+        </div>
       </div>
 
       {/* Combined day + slot picker — single step */}

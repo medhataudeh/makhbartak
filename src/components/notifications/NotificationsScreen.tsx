@@ -36,7 +36,7 @@ export function NotificationsScreen() {
   };
 
   return (
-    <div className="flex flex-col pb-24">
+    <div className="flex flex-col pb-nav">
       <div className="px-4 pt-5 pb-3 flex items-center justify-between">
         <div>
           <h1 className="text-xl font-bold text-[#164E63]">الإشعارات</h1>

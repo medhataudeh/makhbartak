@@ -31,8 +31,8 @@ export function OrdersList({ onOpenNotifications, unreadNotifications = 0 }: Ord
 
   return (
     <>
-      <div className="flex flex-col pb-24">
-        <div className="px-4 pt-5 pb-3 flex items-start justify-between gap-3">
+      <div className="flex flex-col pb-nav">
+        <div className="px-4 pt-5 pb-3 flex items-center justify-between gap-3">
           <div>
             <h1 className="text-xl font-bold text-[#164E63]">طلباتي</h1>
             <p className="text-sm text-gray-400 mt-0.5">{orders.length} طلبات</p>
@@ -109,10 +109,12 @@ function OrderCard({ order, index, onClick }: { order: Order; index: number; onC
           <span className="text-xs font-semibold text-amber-700">يحتاج متابعة — تواصل مع الدعم</span>
         </div>
       )}
-      <div className="p-5">
-        <div className="flex items-start justify-between gap-3 mb-4">
+      <div className="p-4 md:p-5">
+        <div className="flex items-start justify-between gap-3 mb-3">
           <div className="min-w-0">
-            <p className="text-[11px] text-gray-400 lat" dir="ltr">{customerOrderRef(order)}</p>
+            <p className="text-[11px] text-gray-400">
+              <span className="lat ltr-tech">{customerOrderRef(order)}</span>
+            </p>
             <p className="text-[15px] font-bold text-[#164E63] mt-1 leading-tight truncate">{titleAr}</p>
           </div>
           <CustomerStatusBadge status={order.status} />
@@ -133,7 +135,7 @@ function OrderCard({ order, index, onClick }: { order: Order; index: number; onC
           <span className="text-xs text-gray-400">
             {order.shift === "morning" ? "صباحي" : "مسائي"}
             {order.shiftStartTime && order.shiftEndTime && (
-              <span className="lat ms-1" dir="ltr"> ({order.shiftStartTime} – {order.shiftEndTime})</span>
+              <span className="lat ltr-tech ms-1">({order.shiftStartTime} – {order.shiftEndTime})</span>
             )}
           </span>
           <span className="inline-flex items-center gap-1 text-[#0891B2] text-xs font-semibold">

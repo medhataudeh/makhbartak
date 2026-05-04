@@ -61,7 +61,7 @@ export function HomeScreen({
   };
 
   return (
-    <div className="flex flex-col pb-24 md:pb-12 bg-app min-h-screen">
+    <div className="flex flex-col pb-nav md:pb-12 bg-app min-h-screen">
       {/* HIG-style header — logo + notifications + cart on home */}
       <div className="flex items-center justify-between px-5 md:px-8 pt-5 pb-4 bg-white/80 backdrop-blur border-b border-gray-100">
         <div className="flex items-center gap-2.5">
@@ -112,12 +112,13 @@ export function HomeScreen({
         <HomeSlider items={sliders} onCta={handleSliderCta} resolveAction={resolveSliderAction} />
       </div>
 
-      {/* Two visual action cards — Prescription + Custom builder */}
+      {/* Two visual action cards — Prescription + Custom builder.
+         Always two columns: side-by-side on mobile, two-up on desktop. */}
       <div className="px-4 md:px-6 mt-6">
         <h2 className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-3">
           أو ابدأ بطريقتك
         </h2>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-3 md:gap-4">
+        <div className="grid grid-cols-2 gap-3 md:gap-4">
           <ActionCard
             index={0}
             onClick={onPrescription}
@@ -167,23 +168,23 @@ function ActionCard({ index, onClick, image, badge, badgeBg, titleAr, descriptio
       whileTap={{ scale: 0.98 }}
       onClick={onClick}
       aria-label={titleAr}
-      className="relative w-full overflow-hidden rounded-2xl border border-gray-100 bg-white text-start cursor-pointer h-[180px] md:h-[200px] group"
+      className="relative w-full overflow-hidden rounded-2xl border border-gray-100 bg-white text-start cursor-pointer h-[200px] md:h-[200px] group"
     >
       <Image
         src={image}
         alt=""
         fill
-        sizes="(min-width: 768px) 50vw, 100vw"
+        sizes="(min-width: 768px) 50vw, 50vw"
         className="object-cover transition-transform duration-500 group-hover:scale-[1.04]"
       />
       <div className={`absolute inset-0 bg-gradient-to-t ${tint}`} aria-hidden="true" />
       <span className={`absolute top-3 start-3 inline-flex items-center justify-center w-8 h-8 rounded-lg ${badgeBg} text-white shadow-sm`} aria-hidden="true">
         {badge}
       </span>
-      <div className="absolute inset-x-0 bottom-0 p-4">
-        <p className="text-base font-bold text-white leading-tight">{titleAr}</p>
-        <p className="text-xs text-white/85 mt-1 leading-relaxed line-clamp-2">{descriptionAr}</p>
-        <span className="inline-flex items-center gap-1 mt-2 text-xs font-semibold text-white">
+      <div className="absolute inset-x-0 bottom-0 p-3 md:p-4">
+        <p className="text-[15px] md:text-base font-bold text-white leading-tight">{titleAr}</p>
+        <p className="text-[11px] md:text-xs text-white/85 mt-1 leading-relaxed line-clamp-2">{descriptionAr}</p>
+        <span className="inline-flex items-center gap-1 mt-2 text-[11px] md:text-xs font-semibold text-white">
           {ctaAr}
           <ChevronLeft size={13} aria-hidden="true" />
         </span>
