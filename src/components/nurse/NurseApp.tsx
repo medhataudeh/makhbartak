@@ -984,11 +984,24 @@ function NurseSettings({ nurse, game, onLogout, isOnline, onToggleOnline }: {
   };
 
   const dirty = name !== nurse.name || city !== nurse.city || (photoUrl || undefined) !== nurse.photoUrl;
-  const save = () => {
+  const [saving, setSaving] = useState(false);
+  const save = async () => {
     if (!name.trim() || !city.trim()) { toast.error("الاسم والمدينة مطلوبان"); return; }
-    updateNurseProfile(nurse.id, { name: name.trim(), city: city.trim(), photoUrl: photoUrl.trim() || undefined });
-    toast.success("تم الحفظ بنجاح");
-    setEditing(false);
+    setSaving(true);
+    try {
+      // Phase 3.8 P1: real await + error toast. Previous version fired the
+      // success toast regardless of whether the API call failed.
+      const r = await updateNurseProfile(nurse.id, {
+        name: name.trim(),
+        city: city.trim(),
+        photoUrl: photoUrl.trim() || undefined,
+      });
+      if (!r.ok) { toast.error(r.error ?? "تعذر حفظ الملف الشخصي"); return; }
+      toast.success("تم الحفظ بنجاح");
+      setEditing(false);
+    } finally {
+      setSaving(false);
+    }
   };
 
   return (
@@ -1085,10 +1098,10 @@ function NurseSettings({ nurse, game, onLogout, isOnline, onToggleOnline }: {
               className="flex-1 py-2.5 rounded-xl border border-gray-200 text-sm font-semibold text-[#164E63] cursor-pointer"
             >إلغاء</button>
             <button
-              disabled={!dirty}
+              disabled={!dirty || saving}
               onClick={save}
               className="flex-1 py-2.5 rounded-xl bg-[#0891B2] text-white text-sm font-semibold cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-            >حفظ</button>
+            >{saving ? "جاري الحفظ…" : "حفظ"}</button>
           </div>
         </section>
       )}

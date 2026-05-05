@@ -36,12 +36,11 @@ import { useLibraryInstructions } from "@/lib/instruction-library";
 import { useLibraryTools } from "@/lib/tool-library";
 import { useTests, usePackages } from "@/lib/catalog";
 import { useBranding } from "@/lib/branding";
+import { apiPatchUser } from "@/lib/admin-users-api";
 import Image from "next/image";
 import { AdminUserContext } from "@/components/admin/AdminContext";
 import { useCurrentAdmin } from "@/components/admin/AdminContext";
-import { useOrders, createOrder, hydrateOrdersForAdmin } from "@/lib/store";
-import { generateOrderNumber, dedupeInstructions } from "@/lib/order-utils";
-import { COMMON_INSTRUCTIONS } from "@/lib/mock-data";
+import { useOrders, hydrateOrdersForAdmin } from "@/lib/store";
 import { useActivityLogs, hydrateActivityLogs } from "@/lib/activity-log";
 import {
   hydrateAdminTests, hydrateAdminPackages, hydrateAdminCoupons, hydrateAdminSliders,
@@ -642,9 +641,12 @@ function OrdersAdmin({ nurses, labs, user }: { orders: Order[]; setOrders: React
   if (open && openUserId) {
     const userOrders = orders.filter((o) => o.userId === openUserId);
     const userOf = userOrders[0];
+    // profileId is unknown from this entry point (we only have customer.id);
+    // UserProfileForm guards on missing profileId and surfaces an Arabic
+    // error rather than firing a half-formed PATCH.
     const userObj = userOf
-      ? { id: openUserId, name: userOf.patient.name, phone: "+963 911 000 000", isActive: true }
-      : { id: openUserId, name: "—", phone: "—", isActive: true };
+      ? { id: openUserId, profileId: "", name: userOf.patient.name, phone: "+963 911 000 000", isActive: true }
+      : { id: openUserId, profileId: "", name: "—", phone: "—", isActive: true };
     return (
       <UserProfilePanel
         user={userObj}
@@ -883,7 +885,7 @@ function UsersAdmin({ orders }: { orders: Order[] }) {
 }
 
 function UserProfilePanel({ user, orders, onBack }: {
-  user: { id: string; name: string; phone: string; isActive: boolean };
+  user: { id: string; profileId: string; name: string; phone: string; isActive: boolean };
   orders: Order[];
   onBack: () => void;
 }) {
@@ -961,20 +963,7 @@ function UserProfilePanel({ user, orders, onBack }: {
       </div>
 
       {tab === "profile" && (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-          <Field label="ID"><TextInput defaultValue={user.id} disabled /></Field>
-          <Field label="الاسم"><TextInput defaultValue={user.name} /></Field>
-          <Field label="الهاتف"><TextInput type="tel" defaultValue={user.phone} /></Field>
-          <Field label="حالة الحساب">
-            <select defaultValue={user.isActive ? "active" : "blocked"} className="w-full h-10 px-3 rounded-xl border border-gray-200 text-sm cursor-pointer">
-              <option value="active">نشط</option>
-              <option value="blocked">موقوف</option>
-            </select>
-          </Field>
-          <div className="md:col-span-2 flex justify-end">
-            <Button size="md">حفظ</Button>
-          </div>
-        </div>
+        <UserProfileForm user={user} />
       )}
 
       {tab === "patients" && (
@@ -1037,6 +1026,55 @@ function UserProfilePanel({ user, orders, onBack }: {
 }
 
 // ════════════════════════════ Tests CRUD ═══════════════════════════════════
+
+// Phase 3.8 P1: real user-drawer profile save. Targets the customer's
+// profile_id (not the customer.id) and calls apiPatchUser. Disables the
+// save button while in flight.
+function UserProfileForm({ user }: { user: { id: string; profileId: string; name: string; phone: string; isActive: boolean } }) {
+  const toast = useToast();
+  const [name, setName] = useState(user.name);
+  const [phone, setPhone] = useState(user.phone);
+  const [isActive, setIsActive] = useState(user.isActive);
+  const [saving, setSaving] = useState(false);
+  const dirty = name !== user.name || phone !== user.phone || isActive !== user.isActive;
+
+  const save = async () => {
+    if (!user.profileId) { toast.error("لا يوجد ملف لحساب هذا المستخدم"); return; }
+    setSaving(true);
+    try {
+      const r = await apiPatchUser(user.profileId, {
+        fullName: name.trim() || undefined,
+        phone: phone.trim() || undefined,
+        isActive,
+      });
+      if (!r.ok) { toast.error(r.error ?? "تعذر حفظ البيانات"); return; }
+      toast.success("تم الحفظ بنجاح");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+      <Field label="ID"><TextInput value={user.id} disabled /></Field>
+      <Field label="الاسم"><TextInput value={name} onChange={(e) => setName(e.target.value)} /></Field>
+      <Field label="الهاتف"><TextInput type="tel" value={phone} onChange={(e) => setPhone(e.target.value)} /></Field>
+      <Field label="حالة الحساب">
+        <select
+          value={isActive ? "active" : "blocked"}
+          onChange={(e) => setIsActive(e.target.value === "active")}
+          className="w-full h-10 px-3 rounded-xl border border-gray-200 text-sm cursor-pointer"
+        >
+          <option value="active">نشط</option>
+          <option value="blocked">موقوف</option>
+        </select>
+      </Field>
+      <div className="md:col-span-2 flex justify-end">
+        <Button size="md" loading={saving} disabled={!dirty || saving} onClick={save}>حفظ</Button>
+      </div>
+    </div>
+  );
+}
 
 function TestsAdmin({ tests, setTests }: { tests: Test[]; setTests: React.Dispatch<React.SetStateAction<Test[]>> }) {
   const me = useCurrentAdmin();
@@ -1650,9 +1688,27 @@ function NursesAdmin({ nurses, setNurses }: { nurses: Nurse[]; setNurses: React.
       </Section>
       {(editing || creating) && <NurseForm initial={editing ?? undefined} onCancel={() => { setEditing(null); setCreating(false); }} onSubmit={upsert} />}
       {confirmDelete && (
-        <ConfirmModal title="حذف الممرّض" message={`حذف "${confirmDelete.name}"؟`} danger
+        <ConfirmModal title="حذف الممرّض" message={`سيتم إيقاف "${confirmDelete.name}" (حذف ناعم).`} danger
           onCancel={() => setConfirmDelete(null)}
-          onConfirm={() => { setNurses((prev) => prev.filter((x) => x.id !== confirmDelete.id)); toast.success("تم الحذف"); setConfirmDelete(null); }}
+          onConfirm={async () => {
+            // Phase 3.8 P0: real soft delete via /api/admin/nurses/[id]
+            // (sets nurses.is_active=false). The local-only filter that
+            // used to fire here lied to admins — refreshing the page
+            // restored the row.
+            const previous = nurses;
+            const target = confirmDelete;
+            setNurses((prev) => prev.filter((x) => x.id !== target.id));
+            const res = await fetch(`/api/admin/nurses/${encodeURIComponent(target.id)}`, { method: "DELETE" });
+            if (!res.ok) {
+              const body = await res.json().catch(() => ({}));
+              setNurses(previous);
+              toast.error((body as { error?: string }).error ?? "تعذر إيقاف الممرض");
+              return;
+            }
+            logActivity({ adminId: me.id, adminName: me.name, role: me.role, action: "user_edit", entity: "nurse", entityId: target.id, details: `إيقاف الممرض ${target.name}` });
+            toast.success("تم الإيقاف");
+            setConfirmDelete(null);
+          }}
         />
       )}
     </div>
@@ -2198,67 +2254,22 @@ function SliderForm({ initial, packages, onCancel, onSubmit }: { initial?: Slide
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-function IconsAdmin({ icons, setIcons }: { icons: SvgIcon[]; setIcons: React.Dispatch<React.SetStateAction<SvgIcon[]>> }) {
-  const me = useCurrentAdmin();
-  const toast = useToast();
-  const [creating, setCreating] = useState(false);
+// Phase 3.8 P1: IconsAdmin had local-only state with no API or storage.
+// Replaced with a placeholder so admins don't believe a fake save took
+// effect. The real icon library will land alongside the design-system
+// pass; meanwhile the customer app uses lucide-react icons directly.
+function IconsAdmin(_props: { icons: SvgIcon[]; setIcons: React.Dispatch<React.SetStateAction<SvgIcon[]>> }) {
+  void _props;
   return (
-    <Section title="مكتبة الأيقونات" action={<Button size="sm" variant="secondary" onClick={() => setCreating(true)}><Plus size={13} aria-hidden="true" /> رفع أيقونة SVG</Button>}>
-      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3">
-        {icons.map((i) => (
-          <div key={i.id} className="border border-gray-100 rounded-xl p-3 flex flex-col items-center text-center">
-            <div className="w-10 h-10 rounded-xl bg-[#ECFEFF] flex items-center justify-center mb-2 text-[#0891B2] text-[10px] lat" dir="ltr">
-              {i.svg.replace("lucide:", "")}
-            </div>
-            <p className="text-xs font-semibold text-[#164E63]">{i.nameAr}</p>
-            <p className="text-[10px] text-gray-400 mb-2">{i.category}</p>
-            <div className="flex items-center gap-1">
-              <Toggle
-                checked={i.isActive}
-                onChange={() => {
-                  setIcons((prev) => prev.map((x) => x.id === i.id ? { ...x, isActive: !x.isActive } : x));
-                  logActivity({ adminId: me.id, adminName: me.name, role: me.role, action: "icon_edit", entity: "icon", entityId: i.id, details: i.isActive ? `إيقاف ${i.nameAr}` : `تفعيل ${i.nameAr}` });
-                  toast.success(i.isActive ? "تم الإيقاف" : "تم التفعيل");
-                }}
-                label={`${i.isActive ? "إيقاف" : "تفعيل"} ${i.nameAr}`}
-              />
-              <button
-                aria-label={`حذف ${i.nameAr}`}
-                onClick={() => {
-                  setIcons((prev) => prev.filter((x) => x.id !== i.id));
-                  logActivity({ adminId: me.id, adminName: me.name, role: me.role, action: "icon_edit", entity: "icon", entityId: i.id, details: `حذف ${i.nameAr}` });
-                  toast.success("تم الحذف");
-                }}
-                className="w-7 h-7 rounded-md hover:bg-red-50 flex items-center justify-center cursor-pointer"
-              >
-                <Trash2 size={12} className="text-red-400" aria-hidden="true" />
-              </button>
-            </div>
-          </div>
-        ))}
+    <Section title="مكتبة الأيقونات">
+      <div className="bg-amber-50 border border-amber-200 rounded-xl p-6 text-center">
+        <p className="text-sm font-bold text-amber-900 mb-1">غير مربوط بقاعدة البيانات بعد</p>
+        <p className="text-xs text-amber-800/90 leading-relaxed max-w-xl mx-auto">
+          مكتبة الأيقونات قيد التطوير. حالياً يستخدم التطبيق أيقونات lucide-react الافتراضية.
+          عند جاهزية مخزن أيقونات SVG ستُربط هذه الصفحة بـ Supabase Storage مع جدول
+          <span className="lat" dir="ltr"> svg_icons </span>.
+        </p>
       </div>
-      {creating && (
-        <Modal title="رفع أيقونة" onClose={() => setCreating(false)}>
-          <div className="space-y-3">
-            <Field label="الاسم العربي"><TextInput placeholder="مثلاً: حقنة" /></Field>
-            <Field label="الفئة">
-              <select className="w-full h-10 px-3 rounded-xl border border-gray-200 text-sm cursor-pointer">
-                <option value="instruction">تعليمات</option>
-                <option value="package">باقات</option>
-                <option value="slider">سلايدر</option>
-                <option value="general">عام</option>
-              </select>
-            </Field>
-            <Field label="ملف SVG">
-              <input type="file" accept=".svg" className="block w-full text-sm file:me-3 file:py-2 file:px-3 file:rounded-lg file:border-0 file:bg-[#ECFEFF] file:text-[#0891B2] file:cursor-pointer" />
-            </Field>
-            <div className="flex justify-end gap-2">
-              <Button variant="outline" onClick={() => setCreating(false)}>إلغاء</Button>
-              <Button variant="primary" onClick={() => setCreating(false)}>رفع</Button>
-            </div>
-          </div>
-        </Modal>
-      )}
     </Section>
   );
 }
@@ -2848,6 +2859,21 @@ function SettingsAdmin() {
   const [newCity, setNewCity] = useState("");
   const [savedAt, setSavedAt] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  // Phase 3.8 P1: each inline toggle/field disables itself while its PATCH
+  // is in flight so admins can't double-click and overwrite their own
+  // half-saved values.
+  const [pendingPatch, setPendingPatch] = useState<string | null>(null);
+  const writeSetting = async (key: string, patch: Partial<import("@/lib/types").SystemSettings>, successMsg = "تم تحديث الإعداد") => {
+    setPendingPatch(key);
+    try {
+      const r = await updateSystemSettings(patch);
+      if (!r.ok) { toast.error(r.error ?? "تعذر تحديث الإعداد"); return false; }
+      toast.success(successMsg);
+      return true;
+    } finally {
+      setPendingPatch(null);
+    }
+  };
 
   const set = <K extends keyof typeof draft>(k: K, v: typeof draft[K]) => setDraft((d) => ({ ...d, [k]: v }));
   const dirty =
@@ -2877,16 +2903,21 @@ function SettingsAdmin() {
     const err = validate();
     if (err) { toast.error(err); return; }
     setSaving(true);
-    await new Promise((r) => setTimeout(r, 300));
-    updateSystemSettings(draft);
-    logActivity({
-      adminId: me.id, adminName: me.name, role: me.role,
-      action: "settings_change", entity: "settings", entityId: "global",
-      details: "حفظ إعدادات النظام",
-    });
-    setSaving(false);
-    setSavedAt(new Date().toLocaleTimeString("ar-SY"));
-    toast.success("تم الحفظ بنجاح");
+    try {
+      // Phase 3.8 P1: real await + error toast. The previous setTimeout
+      // path showed success even when the PATCH returned an error.
+      const r = await updateSystemSettings(draft);
+      if (!r.ok) { toast.error(r.error ?? "تعذر حفظ الإعدادات"); return; }
+      logActivity({
+        adminId: me.id, adminName: me.name, role: me.role,
+        action: "settings_change", entity: "settings", entityId: "global",
+        details: "حفظ إعدادات النظام",
+      });
+      setSavedAt(new Date().toLocaleTimeString("ar-SY"));
+      toast.success("تم الحفظ بنجاح");
+    } finally {
+      setSaving(false);
+    }
   };
 
   const addCity = () => {
@@ -2957,14 +2988,15 @@ function SettingsAdmin() {
           </div>
           <Toggle
             checked={live.allowCashOrders}
-            onChange={(v) => {
-              updateSystemSettings({ allowCashOrders: v });
+            onChange={async (v) => {
+              if (pendingPatch) return;
+              const ok = await writeSetting("allowCashOrders", { allowCashOrders: v });
+              if (!ok) return;
               logActivity({
                 adminId: me.id, adminName: me.name, role: me.role,
                 action: "settings_change", entity: "settings", entityId: "allowCashOrders",
                 details: v ? "السماح بطلبات الدفع نقداً" : "إيقاف طلبات الدفع نقداً",
               });
-              toast.success("تم تحديث الإعداد");
             }}
             label="السماح بالطلبات نقداً"
           />
@@ -2983,34 +3015,54 @@ function SettingsAdmin() {
             </div>
             <Toggle
               checked={live.enableStripe ?? false}
-              onChange={(v) => {
-                updateSystemSettings({ enableStripe: v });
+              onChange={async (v) => {
+                if (pendingPatch) return;
+                const ok = await writeSetting("enableStripe", { enableStripe: v });
+                if (!ok) return;
                 logActivity({
                   adminId: me.id, adminName: me.name, role: me.role,
                   action: "settings_change", entity: "settings", entityId: "enableStripe",
                   details: v ? "تفعيل Stripe" : "إيقاف Stripe",
                 });
-                toast.success("تم تحديث الإعداد");
               }}
               label="تفعيل Stripe"
             />
           </div>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             <Field label="مفتاح Stripe العام (publishable)">
-              <TextInput
+              <StripeKeyField
                 value={live.stripePublicKey ?? ""}
-                onChange={(e) => updateSystemSettings({ stripePublicKey: e.target.value })}
-                placeholder="pk_test_..."
+                disabled={pendingPatch === "stripePublicKey"}
+                onSave={async (next) => {
+                  if (pendingPatch) return;
+                  const ok = await writeSetting("stripePublicKey", { stripePublicKey: next }, "تم حفظ المفتاح");
+                  if (ok) {
+                    logActivity({
+                      adminId: me.id, adminName: me.name, role: me.role,
+                      action: "settings_change", entity: "settings", entityId: "stripePublicKey",
+                      details: "تحديث مفتاح Stripe العام",
+                    });
+                  }
+                }}
               />
             </Field>
             <Field label="بيئة Stripe">
               <select
                 value={live.stripeMode ?? "test"}
-                onChange={(e) => {
-                  updateSystemSettings({ stripeMode: e.target.value as "test" | "live" });
-                  toast.success("تم تحديث البيئة");
+                disabled={pendingPatch === "stripeMode"}
+                onChange={async (e) => {
+                  if (pendingPatch) return;
+                  const next = e.target.value as "test" | "live";
+                  const ok = await writeSetting("stripeMode", { stripeMode: next }, "تم تحديث البيئة");
+                  if (ok) {
+                    logActivity({
+                      adminId: me.id, adminName: me.name, role: me.role,
+                      action: "settings_change", entity: "settings", entityId: "stripeMode",
+                      details: `بيئة Stripe → ${next}`,
+                    });
+                  }
                 }}
-                className="w-full h-10 px-3 rounded-xl border border-gray-200 text-sm cursor-pointer"
+                className="w-full h-10 px-3 rounded-xl border border-gray-200 text-sm cursor-pointer disabled:opacity-50"
               >
                 <option value="test">اختبار (test)</option>
                 <option value="live">إنتاج (live)</option>
@@ -3074,6 +3126,29 @@ function SettingsAdmin() {
         </Button>
       </div>
     </div>
+  );
+}
+
+// Local-draft + onBlur save for the Stripe publishable key. Avoids firing
+// a PATCH on every keystroke while still routing through writeSetting.
+function StripeKeyField({ value, disabled, onSave }: { value: string; disabled: boolean; onSave: (next: string) => Promise<void> | void }) {
+  // Render-time sync: when the canonical value changes (e.g. another admin
+  // saved on a different device), the field re-keys and the local draft
+  // resets without an effect. Avoids the cascading-render lint trap.
+  const [draft, setDraft] = useState(value);
+  const [base, setBase] = useState(value);
+  if (base !== value) {
+    setBase(value);
+    setDraft(value);
+  }
+  return (
+    <TextInput
+      value={draft}
+      disabled={disabled}
+      onChange={(e) => setDraft(e.target.value)}
+      onBlur={() => { if (draft !== value) void onSave(draft); }}
+      placeholder="pk_test_..."
+    />
   );
 }
 
@@ -3226,73 +3301,68 @@ function NewOrderDrawer({ user, nurses, labs, onCancel, onCreated }: {
     const err = validate();
     if (err) { toast.error(err); return; }
     setSubmitting(true);
-    await new Promise((r) => setTimeout(r, 300));
+    try {
+      const items = orderType === "package" && pkg
+        ? pkg.tests.map((t) => ({ testId: t.id, nameAr: t.nameAr, nameEn: t.nameEn, priceSnapshot: t.sellPrice }))
+        : pickedTests.map((t) => ({ testId: t.id, nameAr: t.nameAr, nameEn: t.nameEn, priceSnapshot: t.sellPrice }));
 
-    const patientRow = userPatients.find((p) => p.id === patientId)!;
-    const addressRow = userAddresses.find((a) => a.id === addressId)!;
-    const patient: import("@/lib/types").Patient = {
-      id: patientRow.id, userId, name: patientRow.name,
-      nationalId: patientRow.national_id ?? undefined,
-      note: patientRow.note ?? undefined,
-      isDefault: patientRow.is_default,
-    };
-    const address: import("@/lib/types").Address = {
-      id: addressRow.id, userId, label: addressRow.label,
-      description: addressRow.description, city: addressRow.city,
-      lat: addressRow.lat ?? 0, lng: addressRow.lng ?? 0,
-      isDefault: addressRow.is_default,
-    };
-    const items = orderType === "package" && pkg
-      ? pkg.tests.map((t, i) => ({ id: `oi-${Date.now()}-${i}`, testId: t.id, nameAr: t.nameAr, nameEn: t.nameEn, priceSnapshot: t.sellPrice }))
-      : pickedTests.map((t, i) => ({ id: `oi-${Date.now()}-${i}`, testId: t.id, nameAr: t.nameAr, nameEn: t.nameEn, priceSnapshot: t.sellPrice }));
+      const initialStatus: import("@/lib/types").OrderStatus =
+        paymentMethod === "cash" && settings.allowCashOrders ? "confirmed" : "created";
 
-    const initialStatus =
-      paymentMethod === "cash" && settings.allowCashOrders
-        ? "confirmed"
-        : "created";
+      // Phase 3.8 P0: route through /api/admin/orders so place_order_admin
+      // actually persists the row. The previous client-side createOrder()
+      // short-circuited remote write because session.role !== "customer".
+      const res = await fetch("/api/admin/orders", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          idempotencyKey,
+          customerId: userId,
+          assignNurseId: assignNurseId || undefined,
+          assignLabId: assignLabId || undefined,
+          order: {
+            type: orderType,
+            packageId: pkg?.id,
+            packageSnapshot: pkg ? {
+              packageId: pkg.id, nameAr: pkg.nameAr, nameEn: pkg.nameEn,
+              image: pkg.mainImage, testsCount: pkg.tests.length, price: pkg.price,
+            } : undefined,
+            items,
+            subtotal,
+            couponCode: couponDiscount > 0 ? couponCode : undefined,
+            couponDiscount,
+            total,
+            shift,
+            visitDate,
+            patientId,
+            addressId,
+            paymentMethod,
+            paymentStatus: "pending",
+            initialStatus,
+          },
+        }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok || !body?.order) {
+        toast.error((body as { error?: string }).error ?? "تعذر إنشاء الطلب");
+        return;
+      }
+      const order = body.order as import("@/lib/types").Order;
 
-    const order = createOrder({
-      idempotencyKey,
-      userId,
-      type: orderType,
-      packageSnapshot: pkg ? {
-        packageId: pkg.id, nameAr: pkg.nameAr, nameEn: pkg.nameEn,
-        image: pkg.mainImage, testsCount: pkg.tests.length, price: pkg.price,
-      } : undefined,
-      packageNameAr: pkg?.nameAr,
-      items,
-      subtotal,
-      couponCode: couponDiscount > 0 ? couponCode : undefined,
-      couponDiscount,
-      total,
-      shift,
-      visitDate,
-      address,
-      patient,
-      paymentMethod,
-      paymentStatus: "pending",
-      instructions: dedupeInstructions(COMMON_INSTRUCTIONS),
-      publicNumber: generateOrderNumber(),
-      initialStatus,
-    });
-
-    if (assignNurseId) {
-      const { assignNurse } = await import("@/lib/store");
-      assignNurse(order.id, assignNurseId, { actor: "admin", actorName: me.name });
+      logActivity({
+        adminId: me.id, adminName: me.name, role: me.role,
+        action: "order_update", entity: "order", entityId: order.id,
+        details: `إنشاء طلب جديد ${order.publicNumber ?? order.id}`,
+      });
+      // Trigger a global hydrate so the OCC list reflects the new row
+      // without a manual reload.
+      const { hydrateOrdersForAdmin } = await import("@/lib/store");
+      void hydrateOrdersForAdmin();
+      toast.success(`تم إنشاء الطلب ${order.publicNumber ?? ""}`);
+      onCreated(order.id);
+    } finally {
+      setSubmitting(false);
     }
-    if (assignLabId) {
-      const { assignLab } = await import("@/lib/store");
-      assignLab(order.id, assignLabId, { actor: "admin", actorName: me.name });
-    }
-
-    logActivity({
-      adminId: me.id, adminName: me.name, role: me.role,
-      action: "order_update", entity: "order", entityId: order.id,
-      details: `إنشاء طلب جديد ${order.publicNumber}`,
-    });
-    setSubmitting(false);
-    toast.success(`تم إنشاء الطلب ${order.publicNumber}`);
-    onCreated(order.id);
   };
 
   return (

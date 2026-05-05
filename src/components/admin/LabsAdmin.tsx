@@ -67,26 +67,111 @@ export function LabsAdmin({ adminId, adminName, adminRole }: Props) {
 
   const open = openId ? labs.find((l) => l.id === openId) ?? null : null;
 
-  const upsert = (next: Lab) => {
-    setLabs((prev) => {
-      const idx = prev.findIndex((l) => l.id === next.id);
-      if (idx === -1) return [...prev, next];
-      const copy = prev.slice();
-      copy[idx] = next;
-      return copy;
-    });
-    logActivity({
-      adminId, adminName, role: adminRole,
-      action: "settings_change",
-      entity: "lab", entityId: next.id,
-      details: editing ? `تعديل بيانات المخبر ${next.nameAr}` : `إضافة مخبر ${next.nameAr}`,
-    });
+  // Phase 3.8 P0: every LabsAdmin mutation goes through real APIs.
+  //   * Create → POST /api/admin/labs
+  //   * Edit / branding → PATCH /api/labs/[id] (admin gets p_full_patch=true)
+  //   * Soft delete → PATCH is_active=false (the GET filter removes it from
+  //     the dropdown immediately, and admin can still see it under
+  //     "موقوفة"). A hard delete column is reserved for a future migration.
+  // All four await the server, surface Arabic errors, and re-hydrate the
+  // canonical row instead of trusting the optimistic patch.
+  const refresh = async () => {
+    const remote = await hydrateAdminLabs();
+    if (remote) setLabs(remote);
+  };
+
+  const camelToSnakePatch = (next: Partial<Lab>): Record<string, unknown> => {
+    const map: Record<string, string> = {
+      nameAr: "name_ar", nameEn: "name_en", logo: "logo_url", logoUrl: "logo_url",
+      phone: "phone_main", phoneMain: "phone_main", phoneSecondary: "phone_secondary",
+      email: "email", whatsapp: "whatsapp", city: "city", area: "area",
+      addressFull: "address_full", lat: "lat", lng: "lng",
+      supportedCities: "supported_cities", workingHours: "working_hours",
+      acceptedSampleTypes: "accepted_sample_types", avgProcessingHours: "avg_processing_hours",
+      officialName: "official_name", registrationNumber: "registration_number",
+      licenseNumber: "license_number", taxNumber: "tax_number",
+      portalDisplayName: "portal_display_name", headerImageUrl: "header_image_url",
+      revealSellPriceToLab: "reveal_sell_price_to_lab", isActive: "is_active",
+    };
+    const wire: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(next)) {
+      const snake = map[k];
+      if (snake) wire[snake] = v;
+    }
+    if (next.branding) {
+      const b = next.branding;
+      if (b.primaryColor !== undefined) wire.primary_color = b.primaryColor;
+      if (b.secondaryColor !== undefined) wire.secondary_color = b.secondaryColor;
+      if (b.accentColor !== undefined) wire.accent_color = b.accentColor;
+      if (b.portalDisplayName !== undefined) wire.portal_display_name = b.portalDisplayName;
+      if (b.logo !== undefined) wire.logo_url = b.logo;
+    }
+    return wire;
+  };
+
+  const upsert = async (next: Lab) => {
+    const exists = labs.some((l) => l.id === next.id);
+    if (!exists) {
+      // Create — minimal POST then a follow-up PATCH for the rich fields.
+      const res = await fetch("/api/admin/labs", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          nameAr: next.nameAr, nameEn: next.nameEn, phoneMain: next.phone || next.phoneMain || "—",
+          city: next.city, isActive: next.isActive ?? true,
+          supportedCities: next.supportedCities,
+        }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok || !body?.id) {
+        toast.error((body as { error?: string }).error ?? "تعذر إنشاء المخبر");
+        return;
+      }
+      // Apply the rest of the form fields via PATCH so the new lab matches
+      // the draft the admin filled in.
+      const wire = camelToSnakePatch({ ...next, isActive: next.isActive ?? true });
+      delete wire.name_ar; delete wire.phone_main; delete wire.city; delete wire.is_active; delete wire.supported_cities;
+      if (Object.keys(wire).length > 0) {
+        await fetch(`/api/labs/${encodeURIComponent(body.id)}`, {
+          method: "PATCH",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ patch: wire }),
+        });
+      }
+      logActivity({ adminId, adminName, role: adminRole, action: "settings_change", entity: "lab", entityId: body.id, details: `إضافة مخبر ${next.nameAr}` });
+    } else {
+      const wire = camelToSnakePatch(next);
+      const res = await fetch(`/api/labs/${encodeURIComponent(next.id)}`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ patch: wire }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        toast.error((body as { error?: string }).error ?? "تعذر تعديل المخبر");
+        return;
+      }
+      logActivity({ adminId, adminName, role: adminRole, action: "settings_change", entity: "lab", entityId: next.id, details: `تعديل بيانات المخبر ${next.nameAr}` });
+    }
+    await refresh();
     toast.success("تم الحفظ بنجاح");
     setEditing(null); setCreating(false);
   };
 
-  const toggleActive = (lab: Lab) => {
+  const toggleActive = async (lab: Lab) => {
+    const previous = labs;
     setLabs((p) => p.map((l) => l.id === lab.id ? { ...l, isActive: !l.isActive } : l));
+    const res = await fetch(`/api/labs/${encodeURIComponent(lab.id)}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ patch: { is_active: !lab.isActive } }),
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      setLabs(previous);
+      toast.error((body as { error?: string }).error ?? "تعذر تحديث الحالة");
+      return;
+    }
     logActivity({
       adminId, adminName, role: adminRole, action: "settings_change",
       entity: "lab", entityId: lab.id,
@@ -95,22 +180,58 @@ export function LabsAdmin({ adminId, adminName, adminRole }: Props) {
     toast.success(lab.isActive ? "تم الإيقاف" : "تم التفعيل");
   };
 
-  const remove = (lab: Lab) => {
+  const remove = async (lab: Lab) => {
+    // Soft delete via PATCH is_active=false. A hard-delete endpoint is a
+    // future migration; in finance scope we never want to lose an inactive
+    // lab's historical rows.
+    const previous = labs;
     setLabs((p) => p.filter((l) => l.id !== lab.id));
+    const res = await fetch(`/api/labs/${encodeURIComponent(lab.id)}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ patch: { is_active: false } }),
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      setLabs(previous);
+      toast.error((body as { error?: string }).error ?? "تعذر إيقاف المخبر");
+      setConfirmDelete(null);
+      return;
+    }
     logActivity({
       adminId, adminName, role: adminRole, action: "settings_change",
-      entity: "lab", entityId: lab.id, details: `حذف المخبر ${lab.nameAr}`,
+      entity: "lab", entityId: lab.id, details: `إيقاف (حذف ناعم) المخبر ${lab.nameAr}`,
     });
-    toast.success("تم الحذف");
+    toast.success("تم الإيقاف");
     setConfirmDelete(null);
   };
 
-  const updateBranding = (labId: string, branding: LabBranding) => {
+  const updateBranding = async (labId: string, branding: LabBranding) => {
+    const previous = labs;
     setLabs((p) => p.map((l) => l.id === labId ? { ...l, branding } : l));
+    const wire = {
+      primary_color: branding.primaryColor,
+      secondary_color: branding.secondaryColor,
+      accent_color: branding.accentColor,
+      portal_display_name: branding.portalDisplayName ?? null,
+      logo_url: branding.logo ?? null,
+    };
+    const res = await fetch(`/api/labs/${encodeURIComponent(labId)}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ patch: wire }),
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      setLabs(previous);
+      toast.error((body as { error?: string }).error ?? "تعذر حفظ التصميم");
+      return;
+    }
     logActivity({
       adminId, adminName, role: adminRole, action: "settings_change",
       entity: "lab", entityId: labId, details: "تعديل تصميم بوابة المخبر",
     });
+    await refresh();
     toast.success("تم حفظ التصميم");
   };
 

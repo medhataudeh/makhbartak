@@ -78,23 +78,27 @@ function PageEditor({ page, adminId, adminName, adminRole }: { page: ContentPage
 
   const save = async () => {
     setSaving(true);
-    await new Promise((r) => setTimeout(r, 300));
-    updateContentPage(page.slug, {
-      titleAr: title,
-      bodyAr: body,
-      isActive,
-      ...(isSupport ? {
-        supportPhone: supportPhone.trim() || undefined,
-        supportWhatsapp: supportWhatsapp.trim() || undefined,
-      } : {}),
-    });
-    logActivity({
-      adminId, adminName, role: adminRole,
-      action: "settings_change", entity: "content_page", entityId: page.slug,
-      details: `تعديل محتوى صفحة "${SLUG_META[page.slug].label}"`,
-    });
-    setSaving(false);
-    toast.success("تم الحفظ بنجاح");
+    try {
+      // Phase 3.8 P1: real await + Arabic error toast on failure.
+      const r = await updateContentPage(page.slug, {
+        titleAr: title,
+        bodyAr: body,
+        isActive,
+        ...(isSupport ? {
+          supportPhone: supportPhone.trim() || undefined,
+          supportWhatsapp: supportWhatsapp.trim() || undefined,
+        } : {}),
+      });
+      if (!r.ok) { toast.error(r.error ?? "تعذر حفظ المحتوى"); return; }
+      logActivity({
+        adminId, adminName, role: adminRole,
+        action: "settings_change", entity: "content_page", entityId: page.slug,
+        details: `تعديل محتوى صفحة "${SLUG_META[page.slug].label}"`,
+      });
+      toast.success("تم الحفظ بنجاح");
+    } finally {
+      setSaving(false);
+    }
   };
 
   return (
@@ -149,15 +153,18 @@ function FaqEditor({ page, adminId, adminName, adminRole }: { page: ContentPage;
 
   const save = async () => {
     setSaving(true);
-    await new Promise((r) => setTimeout(r, 300));
-    updateContentPage("faq", { faqItems: items, isActive });
-    logActivity({
-      adminId, adminName, role: adminRole,
-      action: "settings_change", entity: "content_page", entityId: "faq",
-      details: "تعديل الأسئلة الشائعة",
-    });
-    setSaving(false);
-    toast.success("تم الحفظ بنجاح");
+    try {
+      const r = await updateContentPage("faq", { faqItems: items, isActive });
+      if (!r.ok) { toast.error(r.error ?? "تعذر حفظ الأسئلة"); return; }
+      logActivity({
+        adminId, adminName, role: adminRole,
+        action: "settings_change", entity: "content_page", entityId: "faq",
+        details: "تعديل الأسئلة الشائعة",
+      });
+      toast.success("تم الحفظ بنجاح");
+    } finally {
+      setSaving(false);
+    }
   };
 
   return (
