@@ -657,6 +657,11 @@ export interface SystemSettings {
   stripePublicKey?: string;
   /** "test" or "live" — guards the cart from using a test key in production. */
   stripeMode?: "test" | "live";
+  // ─── Phase 4.1 commission ───────────────────────────────────────────────
+  /** Percentage (0–100) of order.total accrued as platform commission when an
+   *  order completes. 0 disables the accrual. Persisted as
+   *  app_settings.nurse_commission_percentage. */
+  nurseCommissionPercentage?: number;
 }
 
 export interface AdminStats {
@@ -726,6 +731,7 @@ export interface AuthSession {
   userId: string;          // auth.users.id == profiles.id
   username: string;        // email (kept under the legacy field name)
   name: string;            // profiles.full_name
+  phone?: string;          // profiles.phone (set during signup; editable via admin)
   role: Role;
   linkedEntityId: string;  // role-specific id: customers.id / nurses.id /
                            // lab_users.id / profiles.id (admin)
@@ -777,7 +783,7 @@ export const ROLE_PERMISSIONS: Record<AdminRole, string[]> = {
   // must not touch the tests catalog.
   lab_admin: ["overview", "orders", "labs"],
   customer_support: ["overview", "orders", "users", "notifications"],
-  finance_admin: ["overview", "invoices", "payments", "coupons"],
+  finance_admin: ["overview", "finance", "invoices", "payments", "coupons"],
   content_admin: ["overview", "tests", "packages", "sliders", "icons", "branding", "content", "libraries", "media", "settings"],
 };
 

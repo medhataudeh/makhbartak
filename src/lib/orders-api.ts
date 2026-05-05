@@ -201,6 +201,22 @@ export async function apiSetPaymentStatus(
   return res.json();
 }
 
+// Phase 4.1 — atomic cash collection for the nurse. Hits the new
+// /cash-collected route which writes the canonical paid payment row, flips
+// orders.payment_status, and credits the nurse wallet in a single RPC.
+export async function apiCollectCash(
+  orderId: string,
+): Promise<{ order: Order | null } | { error: string }> {
+  const res = await fetch(`/api/orders/${encodeURIComponent(orderId)}/cash-collected`, {
+    method: "POST",
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    return { error: body.error ?? `HTTP ${res.status}` };
+  }
+  return res.json();
+}
+
 export async function apiCancelOrder(
   orderId: string,
   reason?: string,

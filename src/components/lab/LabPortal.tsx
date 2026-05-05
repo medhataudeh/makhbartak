@@ -405,7 +405,11 @@ function OrdersSection({ lab, labUser, labOrders, brand, resultsFocus }: {
 
   const filtered = useMemo(() => labOrders.filter((o) => {
     if (statusFilter !== "all" && o.status !== statusFilter) return false;
-    if (search && !o.id.includes(search) && !o.patient.name.includes(search)) return false;
+    if (search) {
+      const q = search.trim().toLowerCase();
+      const haystacks = [o.id, o.publicNumber ?? "", o.patient.name].map((s) => s.toLowerCase());
+      if (!haystacks.some((h) => h.includes(q))) return false;
+    }
     return true;
   }), [labOrders, search, statusFilter]);
 
@@ -432,9 +436,11 @@ function OrdersSection({ lab, labUser, labOrders, brand, resultsFocus }: {
           <div className="flex gap-1.5 overflow-x-auto no-scrollbar">
             {[
               { v: "all",              label: "الكل" },
+              { v: "sample_collected", label: "بانتظار الاستلام" },
               { v: "sent_to_lab",      label: "وصلت" },
               { v: "lab_processing",   label: "قيد المعالجة" },
               { v: "result_ready",     label: "جاهزة" },
+              { v: "lab_issue",        label: "بمشكلة" },
             ].map((s) => (
               <button
                 key={s.v}

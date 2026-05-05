@@ -25,6 +25,7 @@ const KEY_MAP: Partial<Record<keyof SystemSettings, string>> = {
   enableStripe: "enable_stripe",
   stripePublicKey: "stripe_public_key",
   stripeMode: "stripe_mode",
+  nurseCommissionPercentage: "nurse_commission_percentage",
 };
 
 export async function PATCH(req: NextRequest) {

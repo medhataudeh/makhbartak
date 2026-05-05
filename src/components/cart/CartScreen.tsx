@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/Button";
 import { BottomSheet } from "@/components/ui/BottomSheet";
 import { BackButton } from "@/components/ui/BackButton";
 import { usePreferredPayment, setPreferredPayment } from "@/lib/payment-pref";
+import { useToast } from "@/components/ui/Toast";
 
 export interface CartConfirmSnapshot {
   paymentMethod: PaymentMethod;
@@ -39,6 +40,7 @@ interface CartScreenProps {
 
 export function CartScreen({ tests, pkg, shift, address, patient, onConfirm, onBack }: CartScreenProps) {
   const savedMethod = usePreferredPayment();
+  const toast = useToast();
   // Idempotency key: stable for this CartScreen mount. Duplicate confirm
   // clicks reuse the same key; createOrder dedupes server-side.
   const [idempotencyKey] = useState(() => `idem-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`);
@@ -99,8 +101,16 @@ export function CartScreen({ tests, pkg, shift, address, patient, onConfirm, onB
   const handleConfirm = async () => {
     if (orderLoading) return; // double-click guard
     setOrderLoading(true);
-    setPreferredPayment(paymentMethod);
-    await new Promise((r) => setTimeout(r, 800));
+    // Phase 3.9 P1: await the preference write so a server failure surfaces
+    // an Arabic toast instead of leaving DB and UI out of sync. The cosmetic
+    // 800ms setTimeout has been removed — order placement itself shows
+    // loading state via Button.loading.
+    const prefResult = await setPreferredPayment(paymentMethod);
+    if (!prefResult.ok) {
+      setOrderLoading(false);
+      toast.error(prefResult.error ?? "تعذر حفظ طريقة الدفع المفضلة");
+      return;
+    }
     // Build line items for the snapshot. Package orders carry the package
     // tests so admin/nurse/lab see operational details (parent/child).
     const items = pkg

@@ -19,6 +19,7 @@ export interface RouteSession {
   userId: string;             // auth.users.id == profiles.id
   email: string | null;
   fullName: string | null;
+  phone: string | null;
   role: Role;                 // customer | nurse | lab | admin
   isActive: boolean;
   customerId?: string;        // when role === "customer"
@@ -52,7 +53,7 @@ export async function requireAuthedUser(): Promise<RouteAuthResult> {
   const admin = getSupabaseAdmin();
   const { data: profile, error: profErr } = await admin
     .from("profiles")
-    .select("id, role, admin_role, full_name, is_active, photo_url")
+    .select("id, role, admin_role, full_name, phone, is_active, photo_url")
     .eq("id", userId)
     .maybeSingle();
   if (profErr) {
@@ -76,6 +77,7 @@ export async function requireAuthedUser(): Promise<RouteAuthResult> {
     userId,
     email,
     fullName: (profile.full_name as string | null) ?? null,
+    phone: (profile.phone as string | null) ?? null,
     role: profile.role as Role,
     isActive: true,
   };

@@ -28,6 +28,7 @@ import { CredentialsShareSheet, generateTempPassword, type ShareableCredentials 
 import { MediaPicker } from "@/components/admin/MediaPicker";
 import { MediaLibraryAdmin } from "@/components/admin/MediaLibraryAdmin";
 import { LabsAdmin } from "@/components/admin/LabsAdmin";
+import { FinanceAdmin } from "@/components/admin/FinanceAdmin";
 import { BrandingAdmin } from "@/components/admin/BrandingAdmin";
 import { ContentAdmin } from "@/components/admin/ContentAdmin";
 import { LibrariesAdmin } from "@/components/admin/LibrariesAdmin";
@@ -69,7 +70,7 @@ interface AdminDashboardProps {
 type AdminSection =
   | "overview" | "orders" | "users" | "tests" | "packages" | "coupons"
   | "nurses" | "scheduling" | "gamification" | "labs" | "shortages"
-  | "payments" | "invoices" | "sliders" | "icons" | "branding" | "content"
+  | "finance" | "payments" | "invoices" | "sliders" | "icons" | "branding" | "content"
   | "libraries" | "media"
   | "notifications" | "admins" | "activity" | "settings";
 
@@ -99,6 +100,7 @@ const SECTIONS: SectionDef[] = [
   { id: "labs",          label: "المخابر",          Icon: Building2,     group: "operations" },
   { id: "shortages",     label: "طلبات الأدوات",    Icon: Wrench,        group: "operations" },
 
+  { id: "finance",       label: "المالية",          Icon: DollarSign,    group: "finance"    },
   { id: "invoices",      label: "الفواتير",         Icon: FileText,      group: "finance"    },
   { id: "payments",      label: "المدفوعات",        Icon: CreditCard,    group: "finance"    },
 
@@ -304,6 +306,7 @@ export function AdminDashboard({ user, onLogout }: AdminDashboardProps) {
           {section === "gamification"  && <GamificationAdmin nurses={nurses} config={config} setConfig={setConfig} />}
           {section === "labs"          && <LabsAdmin adminId={user.id} adminName={user.name} adminRole={user.role} />}
           {section === "shortages"     && <ShortageRequestsAdmin adminId={user.id} adminName={user.name} adminRole={user.role} />}
+          {section === "finance"       && <FinanceAdmin adminId={user.id} adminName={user.name} adminRole={user.role} />}
           {section === "payments"      && <PaymentsAdmin />}
           {section === "invoices"      && <InvoicesAdmin />}
           {section === "media"         && <MediaLibraryAdmin />}
@@ -644,9 +647,11 @@ function OrdersAdmin({ nurses, labs, user }: { orders: Order[]; setOrders: React
     // profileId is unknown from this entry point (we only have customer.id);
     // UserProfileForm guards on missing profileId and surfaces an Arabic
     // error rather than firing a half-formed PATCH.
+    // Phone is intentionally empty here — UserProfilePanel will hydrate it
+    // from /api/admin/customers/[id]; we only have order.userId at this point.
     const userObj = userOf
-      ? { id: openUserId, profileId: "", name: userOf.patient.name, phone: "+963 911 000 000", isActive: true }
-      : { id: openUserId, profileId: "", name: "—", phone: "—", isActive: true };
+      ? { id: openUserId, profileId: "", name: userOf.patient.name, phone: "", isActive: true }
+      : { id: openUserId, profileId: "", name: "—", phone: "", isActive: true };
     return (
       <UserProfilePanel
         user={userObj}
@@ -900,6 +905,10 @@ function UserProfilePanel({ user, orders, onBack }: {
   };
   const [data, setData] = useState<DrawerData>({ patients: [], addresses: [], notifications: [] });
   const [drawerLoading, setDrawerLoading] = useState(true);
+  // Canonical profile pulled from /api/admin/customers/[id]. Used to fill in
+  // the profileId + phone the parent could not supply when opening the drawer
+  // from an order context (only `customer.id` is in scope there).
+  const [canonical, setCanonical] = useState<{ profileId: string; name: string; phone: string; isActive: boolean } | null>(null);
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -913,11 +922,26 @@ function UserProfilePanel({ user, orders, onBack }: {
           addresses: (body.addresses ?? []) as DrawerData["addresses"],
           notifications: (body.notifications ?? []) as DrawerData["notifications"],
         });
+        const c = body.customer as
+          | { profile_id?: string; profile?: { full_name?: string | null; phone?: string | null; is_active?: boolean | null } }
+          | null
+          | undefined;
+        if (c) {
+          setCanonical({
+            profileId: c.profile_id ?? "",
+            name: c.profile?.full_name ?? user.name,
+            phone: c.profile?.phone ?? "",
+            isActive: c.profile?.is_active !== false,
+          });
+        }
       } catch { /* keep empty */ }
       finally { if (!cancelled) setDrawerLoading(false); }
     })();
     return () => { cancelled = true; };
-  }, [user.id]);
+  }, [user.id, user.name]);
+  const effectiveUser = canonical
+    ? { id: user.id, profileId: canonical.profileId, name: canonical.name, phone: canonical.phone, isActive: canonical.isActive }
+    : user;
   const userPatients = data.patients;
   const userAddresses = data.addresses;
   const userNotifs = data.notifications;
@@ -963,7 +987,7 @@ function UserProfilePanel({ user, orders, onBack }: {
       </div>
 
       {tab === "profile" && (
-        <UserProfileForm user={user} />
+        <UserProfileForm key={`${effectiveUser.profileId}|${effectiveUser.phone}`} user={effectiveUser} />
       )}
 
       {tab === "patients" && (
@@ -3001,6 +3025,30 @@ function SettingsAdmin() {
             label="السماح بالطلبات نقداً"
           />
         </div>
+
+        <div className="border-t border-gray-100 pt-4 mt-4">
+          <p className="text-sm font-semibold text-[#164E63]">نسبة عمولة المنصة من الممرض</p>
+          <p className="text-xs text-gray-500 mt-0.5">تُحسب تلقائياً عند اكتمال الطلب وتُسجَّل في محفظة الممرض. القيمة بالنسبة المئوية (0–100). صفر يوقف الاحتساب.</p>
+          <div className="flex items-end gap-2 mt-3 max-w-xs">
+            <Field label="النسبة (%)">
+              <CommissionField
+                value={Number(live.nurseCommissionPercentage ?? 0)}
+                disabled={pendingPatch === "nurseCommissionPercentage"}
+                onSave={async (next) => {
+                  if (pendingPatch) return;
+                  const ok = await writeSetting("nurseCommissionPercentage", { nurseCommissionPercentage: next }, "تم تحديث نسبة العمولة");
+                  if (ok) {
+                    logActivity({
+                      adminId: me.id, adminName: me.name, role: me.role,
+                      action: "settings_change", entity: "settings", entityId: "nurseCommissionPercentage",
+                      details: `نسبة العمولة → ${next}%`,
+                    });
+                  }
+                }}
+              />
+            </Field>
+          </div>
+        </div>
       </Section>
 
       {/* Phase 3.6 — Stripe / online payments. Read-only flag today; the
@@ -3126,6 +3174,37 @@ function SettingsAdmin() {
         </Button>
       </div>
     </div>
+  );
+}
+
+// Phase 4.1 — local-draft + onBlur save for the commission percentage field.
+// Same pattern as StripeKeyField. Refuses non-finite or out-of-range values
+// inline; the RPC also clamps via the column check constraint.
+function CommissionField({ value, disabled, onSave }: { value: number; disabled: boolean; onSave: (next: number) => Promise<void> | void }) {
+  const [draft, setDraft] = useState(String(value));
+  const [base, setBase] = useState(value);
+  if (base !== value) {
+    setBase(value);
+    setDraft(String(value));
+  }
+  const commit = () => {
+    const n = Number(draft);
+    if (!Number.isFinite(n) || n < 0 || n > 100) {
+      setDraft(String(value));
+      return;
+    }
+    if (n !== value) void onSave(n);
+  };
+  return (
+    <TextInput
+      type="number"
+      inputMode="decimal"
+      value={draft}
+      disabled={disabled}
+      onChange={(e) => setDraft(e.target.value)}
+      onBlur={commit}
+      placeholder="0"
+    />
   );
 }
 

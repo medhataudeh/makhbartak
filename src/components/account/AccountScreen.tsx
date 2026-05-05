@@ -30,7 +30,10 @@ export function AccountScreen({ onLogout, onDeleteAccount }: AccountScreenProps)
   const [page, setPage] = useState<SubPage | null>(null);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const patients = usePatients();
-  const headlineName = patients.find((p) => p.isDefault)?.name ?? patients[0]?.name ?? "—";
+  const session = useSession();
+  const headlineName =
+    session?.name?.trim() || patients.find((p) => p.isDefault)?.name || patients[0]?.name || "—";
+  const headlinePhone = session?.phone?.trim() || null;
 
   return (
     <div className="flex flex-col pb-nav bg-gray-50/40 min-h-screen">
@@ -49,7 +52,11 @@ export function AccountScreen({ onLogout, onDeleteAccount }: AccountScreenProps)
               <p className="text-base font-bold truncate">{headlineName}</p>
               <div className="flex items-center gap-1.5 mt-1">
                 <Phone size={12} className="text-cyan-200 flex-shrink-0" aria-hidden="true" />
-                <p className="text-sm text-cyan-200 lat" dir="ltr">+963 911 000 000</p>
+                {headlinePhone ? (
+                  <p className="text-sm text-cyan-200 lat" dir="ltr">{headlinePhone}</p>
+                ) : (
+                  <p className="text-sm text-cyan-200/80">لا يوجد رقم هاتف</p>
+                )}
               </div>
             </div>
           </div>
@@ -128,10 +135,11 @@ function SubPageHost({ page, onBack }: { page: SubPage; onBack: () => void }) {
 // ─── Sub-pages ───────────────────────────────────────────────────────────────
 function ProfilePage({ onBack }: { onBack: () => void }) {
   const toast = useToast();
+  const session = useSession();
   const patients = usePatients();
   const me = patients.find((p) => p.isDefault) ?? patients[0];
-  const [name, setName] = useState(me?.name ?? "");
-  const [phone] = useState("+963 911 000 000");
+  const [name, setName] = useState(session?.name ?? me?.name ?? "");
+  const phone = session?.phone?.trim() || "";
   const [saving, setSaving] = useState(false);
 
   const save = async () => {
@@ -151,7 +159,13 @@ function ProfilePage({ onBack }: { onBack: () => void }) {
         <input value={name} onChange={(e) => setName(e.target.value)} className="w-full h-11 px-3 rounded-xl border border-gray-200 text-sm focus:border-[#0891B2] outline-none" />
       </Field>
       <Field label="الهاتف">
-        <input value={phone} disabled className="w-full h-11 px-3 rounded-xl border border-gray-200 text-sm text-gray-400 bg-gray-50 lat" dir="ltr" />
+        <input
+          value={phone}
+          disabled
+          placeholder="لا يوجد رقم هاتف"
+          className="w-full h-11 px-3 rounded-xl border border-gray-200 text-sm text-gray-400 bg-gray-50 lat"
+          dir={phone ? "ltr" : "rtl"}
+        />
         <p className="text-[11px] text-gray-400 mt-1">رقم الهاتف غير قابل للتعديل بعد التسجيل.</p>
       </Field>
       <Button variant="primary" size="lg" className="w-full mt-4" onClick={save} loading={saving}>

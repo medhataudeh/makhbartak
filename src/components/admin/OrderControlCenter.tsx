@@ -359,6 +359,22 @@ function OverviewTab({ order, onOpenUser }: { order: Order; onOpenUser?: (userId
   const allOrders = useOrders();
   const previousOrdersCount = allOrders.filter((o) => o.userId === order.userId && o.id !== order.id).length;
   const showRating = order.status === "completed";
+  // Phase 3.9 P1: real customer phone from /api/admin/customers/[id]. The
+  // OCC mini-card previously printed a hard-coded +963 placeholder.
+  const [customerPhone, setCustomerPhone] = useState<string | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(`/api/admin/customers/${encodeURIComponent(order.userId)}`, { cache: "no-store" });
+        if (!res.ok || cancelled) return;
+        const body = await res.json().catch(() => null);
+        const phone = body?.customer?.profile?.phone ?? null;
+        if (!cancelled) setCustomerPhone(typeof phone === "string" ? phone : null);
+      } catch { /* keep null */ }
+    })();
+    return () => { cancelled = true; };
+  }, [order.userId]);
 
   return (
     <div className="space-y-3">
@@ -422,7 +438,11 @@ function OverviewTab({ order, onOpenUser }: { order: Order; onOpenUser?: (userId
         <div className="p-4 flex items-center gap-3 flex-wrap">
           <div className="flex-1 min-w-0">
             <p className="text-sm font-semibold text-[#164E63]">{order.patient.name}</p>
-            <p className="text-[11px] text-gray-500 mt-0.5 lat" dir="ltr">+963 911 000 000</p>
+            {customerPhone ? (
+              <p className="text-[11px] text-gray-500 mt-0.5 lat ltr-tech">{customerPhone}</p>
+            ) : (
+              <p className="text-[11px] text-gray-400 mt-0.5">لا يوجد رقم هاتف</p>
+            )}
             <p className="text-[11px] text-gray-400 mt-1">
               {previousOrdersCount === 0 ? "لا توجد طلبات سابقة" : `${previousOrdersCount} طلب سابق`}
             </p>

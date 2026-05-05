@@ -22,7 +22,7 @@ import {
   apiCreateOrder, apiListOrdersForAdmin, apiListOrdersForCustomer, apiListOrdersForNurse,
   apiSetOrderStatus, apiUploadLabResultFile, apiArchiveLabResultFile, apiConfirmLabResults,
   apiAssignNurse, apiAssignLab,
-  apiAddOrderNote, apiApplyCoupon, apiSetPaymentStatus, apiCancelOrder,
+  apiAddOrderNote, apiApplyCoupon, apiSetPaymentStatus, apiCollectCash, apiCancelOrder,
   apiRescheduleOrder, apiVerifyPatient, apiForceCompleteOrder,
 } from "./orders-api";
 import { isUuid } from "./supabase/uuid";
@@ -678,6 +678,31 @@ export function setPaymentStatus(orderId: string, status: Order["paymentStatus"]
   return persistOrderActionViaApi(orderId, async () =>
     apiSetPaymentStatus(orderId, status as "pending" | "paid" | "failed" | "refunded"),
   );
+}
+
+// Phase 4.1 — nurse confirms they have cash in hand. Distinct from
+// setPaymentStatus because the cash-collected route is the only path that
+// writes the canonical paid payment row + nurse wallet credit. The nurse UI
+// previously called setPaymentStatus(orderId, "paid"); that path is kept for
+// admin overrides but no longer fires from the nurse button.
+export function collectCash(orderId: string, ref: ActorRef): Promise<{ ok: boolean; error?: string }> {
+  // Optimistic flip so the UI unlocks "أرسل العينة للمخبر" immediately.
+  mutateOrder(orderId, (o) =>
+    o.paymentMethod === "cash" && o.paymentStatus !== "paid"
+      ? { ...o, paymentStatus: "paid", updatedAt: new Date().toISOString() }
+      : o,
+  );
+  appendEvent(orderId, "payment_status_changed", ref, "paid");
+  const order = getOrder(orderId);
+  if (order) {
+    void notifyAdminsViaApi({
+      type: "admin_note",
+      titleAr: "تم تحصيل الدفع",
+      bodyAr: `${order.publicNumber ?? "—"} — ${order.patient.name}`,
+      orderId: isUuid(order.id) ? order.id : undefined,
+    });
+  }
+  return persistOrderActionViaApi(orderId, async () => apiCollectCash(orderId));
 }
 
 export function addNote(orderId: string, note: Omit<OrderNote, "id" | "orderId" | "createdAt">): Promise<{ ok: boolean; error?: string }> {

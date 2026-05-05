@@ -37,6 +37,7 @@ async function fetchEnrichedSession(): Promise<AuthSession | null> {
       userId: r.userId,
       username: r.email ?? "",
       name: r.fullName ?? "",
+      phone: r.phone ?? undefined,
       role: r.role as Role,
       linkedEntityId:
         r.role === "customer" ? (r.customerId ?? r.userId) :

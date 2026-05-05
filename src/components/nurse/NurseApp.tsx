@@ -14,7 +14,7 @@ import {
 import { useNurseGamification } from "@/lib/nurse-gamification";
 import type { Nurse, NurseRouteStop, NurseGamification, Notification, Order } from "@/lib/types";
 import {
-  setOrderStatus, verifyPatient, setPaymentStatus, useOrders,
+  setOrderStatus, verifyPatient, collectCash, useOrders,
   hydrateOrdersForNurse, hydrateNotificationsForNurse,
   useNurseNotifications, markNurseNotificationRead,
 } from "@/lib/store";
@@ -434,7 +434,7 @@ function NurseAppInner({ nurseId, onLogout }: { nurseId: string; onLogout: () =>
             onFail={(reason) => failStop(activeStop.orderId, reason)}
             onDeliveredToLab={() => setOrderStatus(activeStop.orderId, "sent_to_lab", ref)}
             onVerifyPatient={(officialName, nationalId, note) => verifyPatient(activeStop.orderId, { officialName, nationalId, note }, ref)}
-            onConfirmCash={() => setPaymentStatus(activeStop.orderId, "paid", ref)}
+            onConfirmCash={() => collectCash(activeStop.orderId, ref)}
           />
         )}
       </AnimatePresence>
