@@ -18,9 +18,11 @@ export function supabaseEnvReady(): boolean {
 /**
  * Dev-only fallback for phone OTP. When true, the verify step accepts the
  * fixed code "123456" so local development doesn't need a real SMS provider.
- * Production MUST leave this off.
+ * Phase 4 cleanup: hard-gated by `NODE_ENV !== "production"` so a misset
+ * env var on the production build can never enable the bypass.
  */
 export const USE_DEV_OTP: boolean =
+  process.env.NODE_ENV !== "production" &&
   (process.env.NEXT_PUBLIC_USE_SUPABASE_DEV_OTP ?? "").toLowerCase() === "true";
 
 export const DEV_OTP_CODE = "123456";

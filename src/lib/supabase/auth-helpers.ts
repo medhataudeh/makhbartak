@@ -6,28 +6,10 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { isUuid } from "./uuid";
 export { isUuid, assertUuid } from "./uuid";
 
-// ─── Dev session UUID (development-only) ───────────────────────────────────
-// FINAL HARDENING: hard-gated behind NODE_ENV !== "production". Production
-// builds always return null and the dev-OTP code path is unreachable. The
-// localStorage key here is a development convenience only; the value never
-// leaves the browser and is never sent to Supabase (the gate in
-// getCurrentCustomerId enforces that).
-const DEV_UUID_KEY = "makhbartak.dev.user.uuid";
-
-export function getDevCustomerId(): string | null {
-  if (process.env.NODE_ENV === "production") return null;
-  if (typeof window === "undefined") return null;
-  try {
-    let id = window.localStorage.getItem(DEV_UUID_KEY);
-    if (!id || !isUuid(id)) {
-      id = crypto.randomUUID();
-      window.localStorage.setItem(DEV_UUID_KEY, id);
-    }
-    return id;
-  } catch {
-    return null;
-  }
-}
+// FINAL CLEANUP: the legacy dev-OTP `getDevCustomerId` helper has been
+// removed. It had no remaining callers and its localStorage key
+// (`makhbartak.dev.user.uuid`) is no longer touched. Real Supabase Auth
+// always supplies the user id; nothing else may invent one.
 
 // ─── customer_id resolution (real Supabase session only) ──────────────────
 // Returns the customers.id row that belongs to the currently signed-in user,

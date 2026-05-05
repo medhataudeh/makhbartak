@@ -2,15 +2,12 @@
 import { useSyncExternalStore } from "react";
 import type { BrandingConfig } from "./types";
 
-// STORAGE POLICY (final hardening):
+// STORAGE POLICY (Phase 4 cleanup):
 //   * SOURCE OF TRUTH: public.app_branding (Supabase singleton).
-//   * localStorage `makhbartak.branding.v1` is a READ-THROUGH first-paint
-//     cache only. It is overwritten on every successful API hydrate, and
-//     rolled back on PUT failure. Never used as a fallback when the API
-//     reports an error — admins always see the canonical row after an
-//     online refresh.
-
-const KEY = "makhbartak.branding.v1";
+//   * No localStorage. The shell paints with DEFAULT_BRANDING for the few
+//     ms before /api/admin/branding lands; the canonical row then replaces
+//     it. On a PUT failure we roll the in-memory state back to the
+//     previous canonical config and re-emit, so admins always see DB state.
 
 const ph = (seed: string, size: number) =>
   `https://picsum.photos/seed/${seed}/${size}/${size}`;
@@ -53,35 +50,9 @@ function applyToDOM(c: BrandingConfig) {
   root.dataset.bg = c.background;
 }
 
-function readCache(): BrandingConfig | null {
-  if (typeof window === "undefined") return null;
-  try {
-    const raw = window.localStorage.getItem(KEY);
-    if (!raw) return null;
-    const parsed = JSON.parse(raw) as Partial<BrandingConfig>;
-    return {
-      ...DEFAULT_BRANDING,
-      ...parsed,
-      logos: { ...DEFAULT_BRANDING.logos, ...(parsed.logos ?? {}) },
-      theme: { ...DEFAULT_BRANDING.theme, ...(parsed.theme ?? {}) },
-    };
-  } catch { return null; }
-}
-
-function writeCache(c: BrandingConfig) {
-  if (typeof window === "undefined") return;
-  try { window.localStorage.setItem(KEY, JSON.stringify(c)); } catch {}
-}
-
-function firstPaint() {
+function ensureHydrated() {
   if (_hydrated || typeof window === "undefined") return;
   _hydrated = true;
-  const cached = readCache();
-  if (cached) {
-    _config = cached;
-    applyToDOM(_config);
-    emit();
-  }
   void hydrateFromSupabase();
 }
 
@@ -101,26 +72,24 @@ async function hydrateFromSupabase() {
       theme: { ...DEFAULT_BRANDING.theme, ...(remote.theme ?? {}) },
     };
     _config = merged;
-    writeCache(merged);
     applyToDOM(merged);
     emit();
   } catch {
-    // Keep whatever we already painted from cache on network failure.
+    // Network failure: keep DEFAULT_BRANDING this render; next mount retries.
   }
 }
 
 export function getBranding(): BrandingConfig {
-  if (!_hydrated) firstPaint();
+  if (!_hydrated) ensureHydrated();
   return _config;
 }
 
 // Admin-side mutator. Optimistic local apply, then persist via the Supabase
-// route. On failure we roll back the in-memory + cache state so the admin
-// sees their unsaved draft instead of a half-applied state.
+// route. On failure we roll back the in-memory state so the admin sees the
+// canonical row, not their unsaved draft.
 export async function setBranding(next: BrandingConfig): Promise<{ ok: boolean; error?: string }> {
   const previous = _config;
   _config = next;
-  writeCache(next);
   applyToDOM(next);
   emit();
   try {
@@ -132,7 +101,6 @@ export async function setBranding(next: BrandingConfig): Promise<{ ok: boolean; 
     if (!res.ok) {
       const j = await res.json().catch(() => ({}));
       _config = previous;
-      writeCache(previous);
       applyToDOM(previous);
       emit();
       return { ok: false, error: (j as { error?: string }).error ?? `HTTP ${res.status}` };
@@ -140,7 +108,6 @@ export async function setBranding(next: BrandingConfig): Promise<{ ok: boolean; 
     return { ok: true };
   } catch (err) {
     _config = previous;
-    writeCache(previous);
     applyToDOM(previous);
     emit();
     return { ok: false, error: (err as Error).message };
