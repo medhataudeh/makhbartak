@@ -9,73 +9,45 @@ import {
   apiSubmitShortageRequest, apiSetShortageRequestStatus, apiListShortageRequests,
 } from "./nurse-api";
 
-// Stage C: nurse shortage requests persist via /api/nurses/[id]/shortage-requests
-// when the flag is on. localStorage stays as a write-through cache + offline
-// fallback. Per-nurse hydration is opt-in via hydrateShortageRequestsForNurse().
-
-const REQ_KEY   = "makhbartak.shortage.requests.v1";
-const ITEMS_KEY = "makhbartak.shortage.items.v1";
+// Phase 3: nurse shortage requests live in Supabase. The local store is a
+// per-tab cache populated by hydrateShortageRequestsForNurse; localStorage
+// has been removed as a source of truth so a stale device can't keep
+// pretending a request was filed.
 
 let _requests: NurseToolShortageRequest[] = [];
 let _items: NurseToolShortageItem[] = [];
-let _hydrated = false;
 
 const listeners = new Set<() => void>();
 function emit() {
-  // Cached snapshots are invalidated on every change so useSyncExternalStore
-  // sees a new identity (same pattern as nurse-profile, library stores).
   _reqSnapshot = null;
   _itemsByReqCache.clear();
   listeners.forEach((l) => l());
 }
 function subscribe(l: () => void) { listeners.add(l); return () => { listeners.delete(l); }; }
 
-function hydrate() {
-  if (_hydrated || typeof window === "undefined") return;
-  _hydrated = true;
-  try {
-    const r = window.localStorage.getItem(REQ_KEY);
-    if (r) _requests = JSON.parse(r) as NurseToolShortageRequest[];
-    const i = window.localStorage.getItem(ITEMS_KEY);
-    if (i) _items = JSON.parse(i) as NurseToolShortageItem[];
-  } catch {}
-  emit();
-}
-
-function persist() {
-  try {
-    window.localStorage.setItem(REQ_KEY, JSON.stringify(_requests));
-    window.localStorage.setItem(ITEMS_KEY, JSON.stringify(_items));
-  } catch {}
-}
-
 let _reqSnapshot: NurseToolShortageRequest[] | null = null;
 function getRequests(): NurseToolShortageRequest[] {
-  if (!_hydrated) hydrate();
   if (_reqSnapshot) return _reqSnapshot;
   _reqSnapshot = _requests;
   return _reqSnapshot;
 }
-const _serverRequests: NurseToolShortageRequest[] = [];
 
 export function useShortageRequests(): NurseToolShortageRequest[] {
-  return useSyncExternalStore(subscribe, getRequests, () => _serverRequests);
+  return useSyncExternalStore(subscribe, getRequests, () => []);
 }
 
 const _itemsByReqCache = new Map<string, NurseToolShortageItem[]>();
 function itemsByReq(requestId: string): NurseToolShortageItem[] {
-  if (!_hydrated) hydrate();
   if (_itemsByReqCache.has(requestId)) return _itemsByReqCache.get(requestId)!;
   const list = _items.filter((i) => i.requestId === requestId);
   _itemsByReqCache.set(requestId, list);
   return list;
 }
-const _serverItems: NurseToolShortageItem[] = [];
 export function useShortageItems(requestId: string): NurseToolShortageItem[] {
   return useSyncExternalStore(
     subscribe,
     () => itemsByReq(requestId),
-    () => _serverItems,
+    () => [],
   );
 }
 
@@ -92,7 +64,6 @@ function nextId(prefix: string) {
 }
 
 export function submitShortageRequest(input: SubmitInput): NurseToolShortageRequest {
-  if (!_hydrated) hydrate();
   const now = new Date().toISOString();
   const id = nextId("nsr");
   const req: NurseToolShortageRequest = {
@@ -116,7 +87,6 @@ export function submitShortageRequest(input: SubmitInput): NurseToolShortageRequ
     }));
   _requests = [req, ..._requests];
   _items = [..._items, ...items];
-  persist();
   emit();
   // Background persist via API. The local placeholder id (nsr-...) is kept
   // for the optimistic UI; the server's canonical row will land on the next
@@ -148,11 +118,9 @@ export function setShortageRequestStatus(
   status: NurseToolShortageStatus,
   adminNote?: string,
 ): Promise<{ ok: boolean; error?: string }> {
-  if (!_hydrated) hydrate();
   _requests = _requests.map((r) => r.id === id
     ? { ...r, status, updatedAt: new Date().toISOString(), adminNote: adminNote ?? r.adminNote }
     : r);
-  persist();
   emit();
   return persistShortageStatusViaApi(id, status);
 }
@@ -213,15 +181,12 @@ export async function hydrateShortageRequestsForNurse(nurseId: string): Promise<
   for (const it of mappedItems) itemById.set(it.id, it);
   _items = Array.from(itemById.values());
 
-  persist();
   emit();
 }
 
 export function updateShortageAdminNote(id: string, adminNote: string): void {
-  if (!_hydrated) hydrate();
   _requests = _requests.map((r) => r.id === id
     ? { ...r, adminNote, updatedAt: new Date().toISOString() }
     : r);
-  persist();
   emit();
 }

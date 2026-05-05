@@ -3,9 +3,7 @@ import { useSyncExternalStore } from "react";
 import type {
   LabSettlement, LabSettlementItem, LabSettlementStatus, Order,
 } from "./types";
-import {
-  MOCK_LAB_SETTLEMENTS, MOCK_LAB_SETTLEMENT_ITEMS, computeOrderLabAmount,
-} from "./mock-data";
+import { computeOrderLabAmount } from "./mock-data";
 import { getOrders } from "./store";
 import { USE_SUPABASE } from "./supabase/flags";
 import { isUuid } from "./supabase/uuid";
@@ -13,8 +11,10 @@ import {
   apiListSettlements, apiGenerateSettlement, apiSetSettlementStatus,
 } from "./lab-api";
 
-let _settlements: LabSettlement[] = [...MOCK_LAB_SETTLEMENTS];
-let _items: LabSettlementItem[] = [...MOCK_LAB_SETTLEMENT_ITEMS];
+// Phase 3: settlements hydrate from Supabase. The MOCK seed has been
+// removed; the local store is empty until hydrateSettlementsForLab runs.
+let _settlements: LabSettlement[] = [];
+let _items: LabSettlementItem[] = [];
 const listeners = new Set<() => void>();
 function emit() { listeners.forEach((l) => l()); }
 function subscribe(l: () => void) { listeners.add(l); return () => { listeners.delete(l); }; }
@@ -32,19 +32,19 @@ export function useSettlementsForLab(labId: string): LabSettlement[] {
   return useSyncExternalStore(
     subscribe,
     () => _settlements.filter((s) => s.labId === labId),
-    () => MOCK_LAB_SETTLEMENTS.filter((s) => s.labId === labId),
+    () => [],
   );
 }
 
 export function useAllSettlements(): LabSettlement[] {
-  return useSyncExternalStore(subscribe, getSettlements, () => MOCK_LAB_SETTLEMENTS);
+  return useSyncExternalStore(subscribe, getSettlements, () => []);
 }
 
 export function useSettlementItems(settlementId: string): LabSettlementItem[] {
   return useSyncExternalStore(
     subscribe,
     () => getSettlementItems(settlementId),
-    () => MOCK_LAB_SETTLEMENT_ITEMS.filter((i) => i.settlementId === settlementId),
+    () => [],
   );
 }
 

@@ -1803,6 +1803,7 @@ function GamificationAdmin({ nurses, config, setConfig }: {
   config: typeof GAMIFICATION_CONFIG;
   setConfig: React.Dispatch<React.SetStateAction<typeof GAMIFICATION_CONFIG>>;
 }) {
+  const toast = useToast();
   const [adjustOpen, setAdjustOpen] = useState<Nurse | null>(null);
   const [adjustment, setAdjustment] = useState(0);
   // Phase 1: hydrate the leaderboard from `nurse_gamification`. The mock
@@ -1921,10 +1922,34 @@ function GamificationAdmin({ nurses, config, setConfig }: {
           </Field>
           <div className="flex justify-end gap-2 mt-4">
             <Button variant="outline" onClick={() => setAdjustOpen(null)}>إلغاء</Button>
-            <Button variant="primary" onClick={() => {
-              const game = MOCK_GAMIFICATION[adjustOpen.id];
-              if (game) game.totalPoints = Math.max(0, game.totalPoints + adjustment);
+            <Button variant="primary" onClick={async () => {
+              const target = adjustOpen;
+              const delta = adjustment;
               setAdjustOpen(null);
+              try {
+                const res = await fetch("/api/admin/gamification/update", {
+                  method: "POST",
+                  headers: { "content-type": "application/json" },
+                  body: JSON.stringify({ nurseId: target.id, delta }),
+                });
+                const body = await res.json().catch(() => ({}));
+                if (!res.ok) {
+                  toast.error((body as { error?: string }).error ?? "تعذر تعديل النقاط");
+                  return;
+                }
+                // Mirror the canonical row back into the leaderboard so
+                // the UI reflects the new total without a full reload.
+                const row = (body as { gamification?: GameRow }).gamification;
+                if (row) {
+                  setRemoteRows((prev) => {
+                    const without = prev.filter((r) => r.nurse_id !== row.nurse_id);
+                    return [...without, row];
+                  });
+                }
+                toast.success("تم تطبيق التعديل");
+              } catch (err) {
+                toast.error((err as Error).message);
+              }
             }}>تطبيق</Button>
           </div>
         </Modal>
@@ -2216,18 +2241,51 @@ function NotificationsAdmin({ notifications, setNotifications }: { notifications
   const [body, setBody] = useState("");
   const [sending, setSending] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
+  const [historyLoading, setHistoryLoading] = useState(true);
 
+  // Phase 3: hydrate notifications history from /api/admin/notifications
+  // (no-cache GET) so admins see the live audit trail rather than just
+  // what they sent in this session.
+  type RawNotificationRow = {
+    id: string; recipient_id: string; type: Notification["type"];
+    title_ar: string; body_ar: string; order_id: string | null;
+    is_read: boolean; created_at: string;
+  };
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch("/api/admin/notifications?limit=200", { cache: "no-store" });
+        if (!res.ok || cancelled) return;
+        const json = await res.json().catch(() => null);
+        const rows = (json?.notifications ?? []) as RawNotificationRow[];
+        if (cancelled) return;
+        setNotifications(rows.map((r): Notification => ({
+          id: r.id,
+          userId: r.recipient_id,
+          type: r.type,
+          titleAr: r.title_ar,
+          bodyAr: r.body_ar,
+          orderId: r.order_id ?? undefined,
+          isRead: r.is_read,
+          createdAt: r.created_at,
+        })));
+      } catch { /* keep empty */ }
+      finally { if (!cancelled) setHistoryLoading(false); }
+    })();
+    return () => { cancelled = true; };
+  }, [setNotifications]);
+
+  // Send is intentionally a no-op until a broadcast endpoint exists; the
+  // existing admin POST is per-recipient. We surface the placeholder so
+  // admins know the broadcast path isn't wired yet.
   const send = () => {
     setSending(true);
     setTimeout(() => {
-      const id = `n-${Date.now()}`;
-      setNotifications((p) => [{
-        id, userId: "broadcast", titleAr: title, bodyAr: body,
-        type: "admin_note", isRead: false, createdAt: new Date().toISOString(),
-      }, ...p]);
       setTitle(""); setBody(""); setSending(false); setConfirmOpen(false);
-    }, 600);
+    }, 300);
   };
+  void send;
 
   return (
     <div className="space-y-4">
@@ -2236,6 +2294,7 @@ function NotificationsAdmin({ notifications, setNotifications }: { notifications
           <Field label="عنوان الإشعار"><TextInput value={title} onChange={(e) => setTitle(e.target.value)} placeholder="عرض جديد" /></Field>
           <Field label="نص الإشعار"><TextInput value={body} onChange={(e) => setBody(e.target.value)} placeholder="..." /></Field>
         </div>
+        <p className="text-[11px] text-amber-700 mt-2">البث الجماعي للجميع غير مربوط بقاعدة البيانات بعد. الإشعارات الفردية تُرسَل عبر الإجراءات داخل الطلبات.</p>
         <div className="flex justify-end mt-4">
           <Button size="md" disabled={!title.trim() || !body.trim()} loading={sending} onClick={() => setConfirmOpen(true)}>إرسال للجميع</Button>
         </div>
@@ -2243,6 +2302,7 @@ function NotificationsAdmin({ notifications, setNotifications }: { notifications
       <Section title="آخر الإشعارات">
         <DataTable
           rows={notifications}
+          empty={historyLoading ? "جاري تحميل سجل الإشعارات…" : "لا توجد إشعارات"}
           columns={[
             { key: "title",   label: "العنوان",  render: (n) => n.titleAr },
             { key: "body",    label: "النص",     render: (n) => <span className="text-xs text-gray-500">{n.bodyAr}</span> },

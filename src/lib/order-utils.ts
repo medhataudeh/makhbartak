@@ -3,51 +3,29 @@ import type { Order, Instruction, SystemSettings, TestInstruction, Test } from "
 import { COMMON_INSTRUCTIONS } from "./mock-data";
 import { getTests } from "./catalog";
 
-const COUNTER_KEY = "makhbartak.order-number.counter.v1";
+// Phase 3 production hardening: public order numbers are generated
+// server-side only. The Supabase RPC `place_order_admin` calls the
+// `order_public_number_seq` sequence and returns the canonical
+// `HL-YYYY-XXXXXX` value, which the store swaps in for the optimistic
+// placeholder. This helper produces a transient placeholder (NOT a real
+// number) so the UI can render "creating order…" before the round-trip
+// lands. The localStorage counter and any client-side sequence logic
+// have been removed — the only authoritative number is the DB sequence.
 const NUMBER_PREFIX = "HL";
 
-/**
- * Public-facing order number — `HL-YYYY-XXXXXX`. Counter is persisted in
- * localStorage (server-side counter in production). Initial value is the
- * highest number already in use across seeded orders so issued numbers are
- * monotonic across reloads.
- */
-export function generateOrderNumber(seedExistingNumbers: string[] = []): string {
-  if (typeof window === "undefined") {
-    return `${NUMBER_PREFIX}-${new Date().getFullYear()}-000000`;
-  }
-  let counter = 0;
-  try {
-    const raw = window.localStorage.getItem(COUNTER_KEY);
-    counter = raw ? parseInt(raw, 10) : 0;
-    if (Number.isNaN(counter) || counter < 0) counter = 0;
-  } catch { /* localStorage blocked */ }
-
-  // Bootstrap from existing seeds the first time we ever generate.
-  if (counter === 0 && seedExistingNumbers.length > 0) {
-    const max = seedExistingNumbers
-      .map(parseSequence)
-      .reduce<number>((m, n) => (n != null && n > m ? n : m), 0);
-    counter = max;
-  }
-
-  counter += 1;
-  try { window.localStorage.setItem(COUNTER_KEY, String(counter)); } catch {}
-  const year = new Date().getFullYear();
-  return `${NUMBER_PREFIX}-${year}-${String(counter).padStart(6, "0")}`;
-}
-
-/** Extract the numeric counter from a public number, or null if it's not ours. */
-export function parseSequence(publicNumber: string | undefined | null): number | null {
-  if (!publicNumber) return null;
-  const m = publicNumber.match(/^[A-Z]+-\d{4}-(\d+)$/);
-  if (!m) return null;
-  return parseInt(m[1], 10);
+export function generateOrderNumber(): string {
+  // Random 6-character suffix marks this as a non-canonical placeholder.
+  // The store replaces the order's publicNumber with the server-issued
+  // value as soon as `place_order_admin` returns. Customers never see
+  // this placeholder once awaitOrderRemote resolves.
+  const rand = Math.random().toString(36).slice(2, 8).toUpperCase();
+  return `${NUMBER_PREFIX}-pending-${rand}`;
 }
 
 /**
  * Customer-friendly order reference. Falls back to the internal id when no
- * `publicNumber` was generated yet (older fixtures).
+ * `publicNumber` was generated yet (older fixtures or a still-pending
+ * placeholder mid-creation).
  */
 export function customerOrderRef(order: Order): string {
   return order.publicNumber ?? `#${order.id}`;

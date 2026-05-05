@@ -4,8 +4,6 @@ import { motion, AnimatePresence } from "framer-motion";
 import Image from "next/image";
 import { Tag, CreditCard, Banknote, MapPin, User, Clock, Trash2, Pencil } from "lucide-react";
 import type { Test, Package, Shift, Address, Patient, PaymentMethod } from "@/lib/types";
-import { validateCoupon } from "@/lib/mock-data";
-import { USE_SUPABASE } from "@/lib/supabase/flags";
 import { formatPrice, getShiftLabel } from "@/lib/utils";
 import { Button } from "@/components/ui/Button";
 import { BottomSheet } from "@/components/ui/BottomSheet";
@@ -71,22 +69,16 @@ export function CartScreen({ tests, pkg, shift, address, patient, onConfirm, onB
     let valid = false;
     let discount = 0;
     let message = "";
-    if (USE_SUPABASE) {
-      try {
-        const res = await fetch(`/api/coupons/validate?code=${encodeURIComponent(code)}&total=${encodeURIComponent(subtotal)}`, { cache: "no-store" });
-        const body = await res.json().catch(() => ({}));
-        valid = !!body.valid;
-        discount = Number(body.discount ?? 0);
-        message = body.message ?? "الكوبون غير صالح";
-      } catch {
-        message = "تعذر التحقق من الكوبون";
-      }
-    } else {
-      await new Promise((r) => setTimeout(r, 700));
-      const result = validateCoupon(code, subtotal);
-      valid = !!result.valid;
-      discount = result.discount ?? 0;
-      message = result.message;
+    // Phase 3: coupons are validated server-side only. The flag-off mock
+    // fallback (validateCoupon from mock-data) has been removed.
+    try {
+      const res = await fetch(`/api/coupons/validate?code=${encodeURIComponent(code)}&total=${encodeURIComponent(subtotal)}`, { cache: "no-store" });
+      const body = await res.json().catch(() => ({}));
+      valid = !!body.valid;
+      discount = Number(body.discount ?? 0);
+      message = body.message ?? "الكوبون غير صالح";
+    } catch {
+      message = "تعذر التحقق من الكوبون";
     }
     setCouponLoading(false);
     if (valid && discount > 0) {

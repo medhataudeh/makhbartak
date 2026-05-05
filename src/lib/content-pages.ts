@@ -1,33 +1,26 @@
 "use client";
 import { useSyncExternalStore } from "react";
 import type { ContentPage, ContentPageSlug } from "./types";
-import { MOCK_CONTENT_PAGES } from "./mock-data";
 import { USE_SUPABASE, supabaseEnvReady } from "./supabase/flags";
 import { getSupabaseBrowser } from "./supabase/client";
 import { fetchContentPages } from "./supabase/queries/content-pages";
 
-const KEY = "makhbartak.content-pages.v1";
+// Phase 3 production hardening: content_pages in Supabase is the only
+// source of truth. Store boots empty; hydrate runs on first access. The
+// MOCK_CONTENT_PAGES seed and localStorage cache are gone — admin edits
+// land in the DB and customers read directly from there.
 
-let _pages: ContentPage[] = [...MOCK_CONTENT_PAGES];
+let _pages: ContentPage[] = [];
 let _hydrated = false;
 let _remoteHydrated = false;
 const listeners = new Set<() => void>();
 function emit() { listeners.forEach((l) => l()); }
 function subscribe(l: () => void) { listeners.add(l); return () => { listeners.delete(l); }; }
 
-function hydrate() {
+function ensureHydrated() {
   if (_hydrated || typeof window === "undefined") return;
   _hydrated = true;
-  try {
-    const raw = window.localStorage.getItem(KEY);
-    if (raw) {
-      const overrides = JSON.parse(raw) as ContentPage[];
-      const bySlug = new Map(overrides.map((p) => [p.slug, p]));
-      _pages = MOCK_CONTENT_PAGES.map((p) => bySlug.get(p.slug) ?? p);
-    }
-  } catch {}
-  emit();
-  hydrateFromSupabase();
+  void hydrateFromSupabase();
 }
 
 async function hydrateFromSupabase() {
@@ -38,22 +31,17 @@ async function hydrateFromSupabase() {
   if (!sb) return;
   try {
     const remote = await fetchContentPages(sb);
-    if (remote && remote.length) {
-      const bySlug = new Map(remote.map((p) => [p.slug, p]));
-      _pages = MOCK_CONTENT_PAGES.map((p) => bySlug.get(p.slug) ?? p);
+    if (remote) {
+      _pages = remote;
       emit();
     }
   } catch (err) {
-    console.warn("[supabase] content_pages hydrate failed; using local", err);
+    console.warn("[supabase] content_pages hydrate failed", err);
   }
 }
 
-function persist() {
-  try { window.localStorage.setItem(KEY, JSON.stringify(_pages)); } catch {}
-}
-
 export function getContentPages(): ContentPage[] {
-  if (!_hydrated) hydrate();
+  if (!_hydrated) ensureHydrated();
   return _pages;
 }
 
@@ -61,54 +49,69 @@ export function getContentPage(slug: ContentPageSlug): ContentPage | null {
   return getContentPages().find((p) => p.slug === slug) ?? null;
 }
 
-export function updateContentPage(slug: ContentPageSlug, patch: Partial<ContentPage>): Promise<{ ok: boolean; error?: string }> {
-  _pages = _pages.map((p) => p.slug === slug
-    ? { ...p, ...patch, updatedAt: new Date().toISOString() }
-    : p);
-  persist();
-  emit();
-  return persistContentPageViaApi(slug, patch);
-}
-
-async function persistContentPageViaApi(
+export async function updateContentPage(
   slug: ContentPageSlug,
   patch: Partial<ContentPage>,
 ): Promise<{ ok: boolean; error?: string }> {
-  if (!USE_SUPABASE) return { ok: true };
-  const session = (await import("./auth")).getStoredSession();
-  if (!session || session.role !== "admin") return { ok: true };
-  // Look up the canonical row to fill required fields the patch may have
-  // omitted (titleAr is required at the RPC level).
   const current = _pages.find((p) => p.slug === slug);
-  if (!current) return { ok: false, error: "page not found" };
-  const res = await fetch("/api/admin/content-pages", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({
-      slug: slug,
-      titleAr: patch.titleAr ?? current.titleAr,
-      bodyAr: patch.bodyAr ?? current.bodyAr,
-      faqItems: patch.faqItems ?? current.faqItems ?? null,
-      supportPhone: patch.supportPhone ?? current.supportPhone,
-      supportWhatsapp: patch.supportWhatsapp ?? current.supportWhatsapp,
-      isActive: patch.isActive ?? current.isActive,
-    }),
-  });
-  if (!res.ok) {
-    const body = await res.json().catch(() => ({}));
-    return { ok: false, error: body.error ?? `HTTP ${res.status}` };
+  if (!current) {
+    // Allow creation through the admin RPC even if the local cache is empty.
+    if (!patch.titleAr) {
+      return { ok: false, error: "page not found locally" };
+    }
   }
-  return { ok: true };
+  const titleAr = patch.titleAr ?? current?.titleAr ?? "";
+  const bodyAr = patch.bodyAr ?? current?.bodyAr ?? null;
+  const faqItems = patch.faqItems ?? current?.faqItems ?? null;
+  const supportPhone = patch.supportPhone ?? current?.supportPhone ?? null;
+  const supportWhatsapp = patch.supportWhatsapp ?? current?.supportWhatsapp ?? null;
+  const isActive = patch.isActive ?? current?.isActive ?? true;
+
+  // Optimistic local apply. The local placeholder id is replaced by the
+  // canonical row id on the next hydrate; the initial render only needs a
+  // stable string.
+  const optimistic: ContentPage = {
+    id: current?.id ?? `cp-${slug}`,
+    slug,
+    titleAr,
+    bodyAr: bodyAr ?? "",
+    faqItems: faqItems ?? undefined,
+    supportPhone: supportPhone ?? undefined,
+    supportWhatsapp: supportWhatsapp ?? undefined,
+    isActive,
+    updatedAt: new Date().toISOString(),
+  };
+  _pages = current
+    ? _pages.map((p) => (p.slug === slug ? optimistic : p))
+    : [..._pages, optimistic];
+  emit();
+
+  try {
+    const res = await fetch("/api/admin/content-pages", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        slug, titleAr, bodyAr, faqItems, supportPhone, supportWhatsapp, isActive,
+      }),
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      return { ok: false, error: (body as { error?: string }).error ?? `HTTP ${res.status}` };
+    }
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: (err as Error).message };
+  }
 }
 
 export function useContentPages(): ContentPage[] {
-  return useSyncExternalStore(subscribe, getContentPages, () => MOCK_CONTENT_PAGES);
+  return useSyncExternalStore(subscribe, getContentPages, () => []);
 }
 
 export function useContentPage(slug: ContentPageSlug): ContentPage | null {
   return useSyncExternalStore(
     subscribe,
     () => getContentPage(slug),
-    () => MOCK_CONTENT_PAGES.find((p) => p.slug === slug) ?? null,
+    () => null,
   );
 }

@@ -12,9 +12,6 @@ import type {
   OrderFileEvent,
   OrderStatus,
 } from "./types";
-import {
-  MOCK_NURSE_NOTIFICATIONS,
-} from "./mock-data";
 import { USE_SUPABASE } from "./supabase/flags";
 // Phases 1-3 retired the direct-RPC mutator path; Stage A retired
 // assignNurseRemote (see persistAssignNurseViaApi). Every persist call
@@ -48,10 +45,9 @@ function subscribe(l: Listener) { listeners.add(l); return () => { listeners.del
 // produced cascade FK errors. Real rows arrive via the hydrate helpers.
 let _orders: Order[] = [];
 let _notifications: Notification[] = [];
-// Nurse inbox is its own mutable array. With Supabase on we start empty and
-// fill from `hydrateNotificationsForNurse` so the UI never shows demo data.
-// With the flag off we keep the prototype seed.
-let _nurseNotifications: Notification[] = USE_SUPABASE ? [] : [...MOCK_NURSE_NOTIFICATIONS];
+// Phase 3: nurse inbox always boots empty. Notifications hydrate via
+// `hydrateNotificationsForNurse`; demo data is no longer seeded.
+let _nurseNotifications: Notification[] = [];
 let _labIssues: LabIssue[] = [];
 
 // ─── Supabase hydrate (read-only; flag-gated; no-op until auth lands) ───────

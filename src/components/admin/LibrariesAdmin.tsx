@@ -378,14 +378,14 @@ function DefaultsTab({ adminId, adminName, adminRole }: Props) {
 
   const save = async () => {
     setSaving(true);
-    await new Promise((r) => setTimeout(r, 300));
-    updateChecklistDefaults(draft);
+    const r = updateChecklistDefaults(draft);
+    setSaving(false);
+    if (!r.ok) { toast.error(r.error ?? "تعذر الحفظ"); return; }
     logActivity({
       adminId, adminName, role: adminRole,
       action: "settings_change", entity: "checklist_defaults", entityId: "global",
       details: `تحديث إعدادات قائمة التحضير (هامش ${draft.bufferPct}% · ${draft.defaultToolIds.length} أداة افتراضية)`,
     });
-    setSaving(false);
     toast.success("تم الحفظ بنجاح");
   };
 

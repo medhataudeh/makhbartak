@@ -5,9 +5,18 @@ import { USE_SUPABASE } from "./supabase/flags";
 import { isUuid } from "./supabase/uuid";
 import { apiSetPaymentPreference } from "./customer-api";
 
-// Stage E: Supabase is the source of truth (customers.preferred_payment_method).
-// localStorage stays as a write-through cache for the first paint.
-const KEY = "makhbartak.payment.preferred";
+// Phase 3 production hardening: customers.preferred_payment_method is the
+// only source of truth. hydrateProfileForCustomer (lib/profile.ts) calls
+// setHydratedPreferredPayment with the canonical value at startup; every
+// in-app change flows through setPreferredPayment which writes to the
+// API first and then mirrors locally on success.
+//
+// localStorage is allowed only as a read-through UX cache so the cart
+// pre-selects yesterday's choice during the round-trip. The cache is
+// rewritten on every API confirmation; it is never read as a fallback
+// when the API call fails.
+
+const CACHE_KEY = "makhbartak.payment.preferred";
 
 let _pref: PaymentMethod | null = null;
 let _hydrated = false;
@@ -15,41 +24,56 @@ const listeners = new Set<() => void>();
 function emit() { listeners.forEach((l) => l()); }
 function subscribe(l: () => void) { listeners.add(l); return () => { listeners.delete(l); }; }
 
-function hydrate() {
+function ensureHydrated() {
   if (_hydrated || typeof window === "undefined") return;
   _hydrated = true;
+  // Optional first-paint cache only. The canonical value lands via
+  // setHydratedPreferredPayment from hydrateProfileForCustomer.
   try {
-    const raw = window.localStorage.getItem(KEY);
+    const raw = window.localStorage.getItem(CACHE_KEY);
     if (raw === "cash" || raw === "online") _pref = raw;
   } catch {}
   emit();
 }
 
-// Public hydration helper. Caller passes the Supabase customer UUID.
-// hydrateProfileForCustomer in lib/profile.ts already pulls the same field
-// alongside patients/addresses; this function is exposed for direct use too.
+function writeCache(p: PaymentMethod | null) {
+  if (typeof window === "undefined") return;
+  try {
+    if (p) window.localStorage.setItem(CACHE_KEY, p);
+    else window.localStorage.removeItem(CACHE_KEY);
+  } catch {}
+}
+
+// Called by hydrateProfileForCustomer once the canonical value lands.
 export function setHydratedPreferredPayment(p: PaymentMethod | null) {
   _pref = p;
-  try {
-    if (p) window.localStorage.setItem(KEY, p);
-    else window.localStorage.removeItem(KEY);
-  } catch {}
+  writeCache(p);
   emit();
 }
 
 export function getPreferredPayment(): PaymentMethod | null {
-  if (!_hydrated) hydrate();
+  if (!_hydrated) ensureHydrated();
   return _pref;
 }
 
 export async function setPreferredPayment(p: PaymentMethod): Promise<{ ok: boolean; error?: string }> {
-  _pref = p;
-  try { window.localStorage.setItem(KEY, p); } catch {}
-  emit();
-  if (!USE_SUPABASE) return { ok: true };
+  if (!USE_SUPABASE) {
+    _pref = p;
+    writeCache(p);
+    emit();
+    return { ok: true };
+  }
   const session: AuthSession | null = (await import("./auth")).getStoredSession();
-  if (!session || session.role !== "customer" || !isUuid(session.linkedEntityId)) return { ok: true };
-  return apiSetPaymentPreference(session.linkedEntityId, p);
+  if (!session || session.role !== "customer" || !isUuid(session.linkedEntityId)) {
+    return { ok: false, error: "session not authenticated" };
+  }
+  const r = await apiSetPaymentPreference(session.linkedEntityId, p);
+  if (!r.ok) return r;
+  // Mirror locally only after the server confirms — DB is the source of truth.
+  _pref = p;
+  writeCache(p);
+  emit();
+  return { ok: true };
 }
 
 export function usePreferredPayment() {

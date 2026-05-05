@@ -1,7 +1,25 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabase/server-admin";
 import { isUuid } from "@/lib/supabase/uuid";
-import { requireAuthedUser } from "@/lib/route-auth";
+import { requireAdmin, requireAuthedUser } from "@/lib/route-auth";
+
+// Phase 3: admin browses the full notification history through this GET.
+// Previously the admin tab was a memory-only "send" surface; the list is
+// now hydrated from the notifications table.
+export async function GET(req: NextRequest) {
+  const auth = await requireAdmin();
+  if (!auth.ok) return NextResponse.json({ error: auth.error }, { status: auth.status });
+  const limit = Math.min(500, Math.max(1, Number(new URL(req.url).searchParams.get("limit") ?? "200")));
+
+  const sb = getSupabaseAdmin();
+  const { data, error } = await sb
+    .from("notifications")
+    .select("id, recipient_id, type, title_ar, body_ar, order_id, is_read, created_at")
+    .order("created_at", { ascending: false })
+    .limit(limit);
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  return NextResponse.json({ notifications: data ?? [] });
+}
 
 interface InsertBody {
   /** One of these must be set; the route resolves to profiles.id. */
