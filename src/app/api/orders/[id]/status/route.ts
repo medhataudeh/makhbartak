@@ -84,6 +84,15 @@ export async function POST(
     console.error("[api/orders/status] set_order_status_admin failed", {
       orderId: id, status, sqlStatus, code: rpcErr.code, message: rpcErr.message, details: rpcErr.details,
     });
+    // The strict payment-gate raise (migration 029) has the Arabic error
+    // baked in. Surface it verbatim with a 409 so the nurse UI can show
+    // it without translation. Other errors stay 500.
+    const isPaymentGate =
+      typeof rpcErr.message === "string" &&
+      rpcErr.message.includes("يجب تأكيد استلام المبلغ");
+    if (isPaymentGate) {
+      return NextResponse.json({ error: rpcErr.message }, { status: 409 });
+    }
     return NextResponse.json({ error: `تعذر تحديث حالة الطلب: ${rpcErr.message}` }, { status: 500 });
   }
 

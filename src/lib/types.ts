@@ -647,6 +647,13 @@ export interface SystemSettings {
   bookingWindowDays: number;
   /** Hard cap on confirmed orders per shift per date. 0 = unlimited. */
   maxOrdersPerShift: number;
+  // ─── Phase 3.5 finance preparation (Stripe) ─────────────────────────────
+  /** When true, the customer cart will route online payments through Stripe. */
+  enableStripe?: boolean;
+  /** Publishable key — safe to ship to the browser. */
+  stripePublicKey?: string;
+  /** "test" or "live" — guards the cart from using a test key in production. */
+  stripeMode?: "test" | "live";
 }
 
 export interface AdminStats {

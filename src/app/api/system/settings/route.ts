@@ -10,7 +10,7 @@ export async function GET() {
   const { data, error } = await sb
     .from("app_settings")
     .select(
-      "min_booking_notice_minutes, morning_shift_start, morning_shift_end, evening_shift_start, evening_shift_end, supported_cities, whatsapp_number, allow_cash_orders, booking_horizon_days, max_orders_per_shift"
+      "min_booking_notice_minutes, morning_shift_start, morning_shift_end, evening_shift_start, evening_shift_end, supported_cities, whatsapp_number, allow_cash_orders, booking_horizon_days, max_orders_per_shift, enable_stripe, stripe_public_key, stripe_mode"
     )
     .eq("id", 1)
     .maybeSingle();
@@ -27,6 +27,9 @@ export async function GET() {
     allowCashOrders: data.allow_cash_orders,
     bookingWindowDays: data.booking_horizon_days,
     maxOrdersPerShift: data.max_orders_per_shift,
+    enableStripe: data.enable_stripe ?? false,
+    stripePublicKey: data.stripe_public_key ?? "",
+    stripeMode: (data.stripe_mode as "test" | "live") ?? "test",
   };
   return NextResponse.json({ settings });
 }

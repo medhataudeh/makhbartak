@@ -27,9 +27,12 @@ export async function POST(
   }
 
   const sb = getSupabaseAdmin();
+  // Phase 3.5 controlled auto-assign: null labId triggers DB-only auto pick.
   if (labId == null) {
-    const { error: autoErr } = await sb.rpc("auto_assign_order", { p_order_id: orderId });
+    const { data: assigned, error: autoErr } = await sb.rpc("auto_assign_order", { p_order_id: orderId });
     if (autoErr) return NextResponse.json({ error: autoErr.message }, { status: 500 });
+    const row = Array.isArray(assigned) ? assigned[0] : assigned;
+    console.log("[auto-assign:lab]", { orderId, labId: row?.lab_id ?? null });
   } else {
     const { error: rpcErr } = await sb.rpc("assign_lab_admin", {
       p_order_id: orderId,

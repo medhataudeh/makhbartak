@@ -112,10 +112,29 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: rpcErr?.message ?? "place_order_admin returned no id" }, { status: 500 });
   }
 
-  // Auto-assignment intentionally disabled: orders enter the queue as
-  // pending and an admin (or a future ops automation) is responsible for
-  // assigning a nurse + lab once the order has been reviewed/confirmed.
-  // Re-enable by calling `auto_assign_order` here when policy changes.
+  // Phase 3.5 — controlled auto-assignment (Fix 2). The
+  // `auto_assign_order` RPC (migration 014) picks a nurse + lab from the
+  // real DB only:
+  //   * Nurse  : same-city active nurse with the lightest load on the
+  //              order's (visit_date, shift); falls back to any active
+  //              nurse, ranked the same way. Pure DB read; no MOCK ids.
+  //   * Lab    : active lab whose `supported_cities` covers the order's
+  //              city; falls back to active lab in the same city; final
+  //              fallback to any active lab.
+  // Both arms validate ids exist via assign_*_admin internally. If neither
+  // a nurse nor a lab can be picked the row stays unassigned and admin
+  // can still set it manually — order creation is not blocked.
+  const { data: assigned, error: autoErr } = await sb.rpc("auto_assign_order", { p_order_id: orderId });
+  if (autoErr) {
+    console.error("[auto-assign] failed", { orderId, code: autoErr.code, message: autoErr.message });
+  } else {
+    const row = Array.isArray(assigned) ? assigned[0] : assigned;
+    console.log("[auto-assign]", {
+      orderId,
+      nurseId: row?.nurse_id ?? null,
+      labId: row?.lab_id ?? null,
+    });
+  }
 
   // Fetch the just-created order by its UUID via service role. fetchOrderById
   // already retries with a bare select if the embedded select errors, so a

@@ -353,6 +353,13 @@ export function createOrder(input: CreateOrderInput): Order {
     titleAr: "تم استلام طلبك",
     bodyAr: initialNotifBody,
   });
+  // Phase 3.5: notify all admins of the new order so ops can pick it up.
+  void notifyAdminsViaApi({
+    type: "admin_note",
+    titleAr: "طلب جديد",
+    bodyAr: `${order.publicNumber ?? "—"} — ${order.patient.name}`,
+    orderId: isUuid(order.id) ? order.id : undefined,
+  });
   // Background remote write — Phase 1 routes through /api/orders (server-side
   // service-role). The Promise is tracked by idempotencyKey so the caller
   // (cart confirm) can await full hydration before navigating to the success
@@ -430,6 +437,29 @@ async function persistNotificationViaApi(payload: {
     });
   } catch (err) {
     console.warn("[api/admin/notifications] failed", err);
+  }
+}
+
+// Phase 3.5: broadcast a notification to all active admins. Used for the
+// four critical operational events (new order, payment collected, lab
+// result uploaded, lab issue). Best-effort like the per-recipient mirror.
+async function notifyAdminsViaApi(payload: {
+  type: string;
+  titleAr: string;
+  bodyAr: string;
+  orderId?: string;
+}): Promise<void> {
+  if (!USE_SUPABASE) return;
+  const session = (await import("./auth")).getStoredSession();
+  if (!session) return;
+  try {
+    await fetch("/api/admin/notifications/broadcast", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+  } catch (err) {
+    console.warn("[api/admin/notifications/broadcast] failed", err);
   }
 }
 
@@ -627,6 +657,18 @@ export function applyCoupon(orderId: string, code: string, discount: number, ref
 export function setPaymentStatus(orderId: string, status: Order["paymentStatus"], ref: ActorRef): Promise<{ ok: boolean; error?: string }> {
   mutateOrder(orderId, (o) => ({ ...o, paymentStatus: status, updatedAt: new Date().toISOString() }));
   appendEvent(orderId, "payment_status_changed", ref, status);
+  // Phase 3.5: notify admins when payment is collected on a cash order.
+  if (status === "paid") {
+    const order = getOrder(orderId);
+    if (order) {
+      void notifyAdminsViaApi({
+        type: "admin_note",
+        titleAr: "تم تحصيل الدفع",
+        bodyAr: `${order.publicNumber ?? "—"} — ${order.patient.name}`,
+        orderId: isUuid(order.id) ? order.id : undefined,
+      });
+    }
+  }
   return persistOrderActionViaApi(orderId, async () =>
     apiSetPaymentStatus(orderId, status as "pending" | "paid" | "failed" | "refunded"),
   );
@@ -861,6 +903,13 @@ export async function confirmResultsReady(orderId: string, ref: ActorRef): Promi
     // reflects the success the server reported.
     void setOrderStatus(orderId, "completed", ref, "تأكيد إرسال النتائج");
   }
+  // Phase 3.5: admin alert on lab result confirmation / completion.
+  void notifyAdminsViaApi({
+    type: "admin_note",
+    titleAr: "اكتمل طلب — نتائج جاهزة",
+    bodyAr: `${order.publicNumber ?? "—"} — ${order.patient.name}`,
+    orderId: isUuid(orderId) ? orderId : undefined,
+  });
   return { ok: true };
 }
 
@@ -915,6 +964,13 @@ export function openLabIssue(issue: Omit<LabIssue, "id" | "createdAt" | "status"
       type: "lab_issue",
       titleAr: "تحديث على طلبك",
       bodyAr: msg,
+      orderId: isUuid(order.id) ? order.id : undefined,
+    });
+    // Phase 3.5: admin alert when a lab issue is opened.
+    void notifyAdminsViaApi({
+      type: "admin_note",
+      titleAr: "مشكلة مخبرية على طلب",
+      bodyAr: `${order.publicNumber ?? "—"} — ${issue.description}`,
       orderId: isUuid(order.id) ? order.id : undefined,
     });
   }

@@ -22,6 +22,9 @@ const KEY_MAP: Partial<Record<keyof SystemSettings, string>> = {
   allowCashOrders: "allow_cash_orders",
   bookingWindowDays: "booking_horizon_days",
   maxOrdersPerShift: "max_orders_per_shift",
+  enableStripe: "enable_stripe",
+  stripePublicKey: "stripe_public_key",
+  stripeMode: "stripe_mode",
 };
 
 export async function PATCH(req: NextRequest) {

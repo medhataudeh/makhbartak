@@ -20,7 +20,7 @@ import {
 } from "@/lib/store";
 import { useEditableNurse, updateNurseProfile } from "@/lib/nurse-profile";
 import { useSystemSettings } from "@/lib/system-settings";
-import { instructionsForOrder, isStructuredInstructions } from "@/lib/order-utils";
+import { instructionsForOrder, isStructuredInstructions, customerOrderRef } from "@/lib/order-utils";
 import { useToast } from "@/components/ui/Toast";
 import { useLibraryTools, useChecklistDefaults } from "@/lib/tool-library";
 import { aggregateNurseTools } from "@/lib/tool-aggregation";
@@ -726,7 +726,10 @@ function NextVisitCard({ stop, onOpen }: { stop: NurseRouteStop; onOpen: () => v
     >
       <div aria-hidden="true" className="absolute -bottom-8 -start-8 w-32 h-32 rounded-full bg-white/[0.07]" />
       <p className="text-[11px] font-medium text-cyan-200 uppercase tracking-wider mb-1">الزيارة التالية</p>
-      <h2 id="next-visit-title" className="text-lg font-bold leading-snug mb-3">{o.patient.name}</h2>
+      <h2 id="next-visit-title" className="text-lg font-bold leading-snug">{o.patient.name}</h2>
+      <p className="text-[11px] text-cyan-200 mb-3">
+        <span className="lat ltr-tech">{customerOrderRef(o)}</span>
+      </p>
       <ul className="space-y-1.5 mb-4 text-sm" role="list">
         <li className="flex items-center gap-2">
           <Clock size={14} className="text-cyan-200" aria-hidden="true" />
@@ -1264,6 +1267,18 @@ function NurseVisitDetail({
 
   const handleComplete = () => {
     if (!verified) { toast.error("يجب التحقق من هوية المريض أولاً"); return; }
+    // Phase 3.5 hardening: payment gate. Online orders must be paid; cash
+    // orders must be collected before the sample. The server enforces the
+    // online-paid rule too (set_order_status_admin), so this is a UX
+    // shortcut, not the only line of defence.
+    if (o.paymentMethod === "online" && o.paymentStatus !== "paid") {
+      toast.error("لم يُؤكَّد الدفع بعد لهذا الطلب. لا يمكن أخذ العينة.");
+      return;
+    }
+    if (o.paymentMethod === "cash" && o.paymentStatus !== "paid") {
+      toast.error("اضغط 'تم استلام المبلغ' قبل تسجيل أخذ العينة.");
+      return;
+    }
     if (status !== "arrived") {
       if (!confirmSkip("لم تسجّل الوصول بعد. هل أنت متأكد من تسجيل أخذ العينة؟")) return;
     }
@@ -1290,7 +1305,12 @@ function NurseVisitDetail({
     >
       <header className="flex items-center gap-3 px-4 py-4 bg-white border-b border-gray-100">
         <BackButton onClick={onBack} />
-        <h2 className="text-base font-bold text-[#164E63]">تفاصيل الزيارة</h2>
+        <div className="flex-1 min-w-0">
+          <h2 className="text-base font-bold text-[#164E63] truncate">تفاصيل الزيارة</h2>
+          <p className="text-[11px] text-gray-400 mt-0.5">
+            <span className="lat ltr-tech">{customerOrderRef(o)}</span>
+          </p>
+        </div>
       </header>
 
       <div className="flex-1 overflow-y-auto p-4 space-y-3 pb-cta">
@@ -1408,6 +1428,7 @@ function NurseVisitDetail({
           status={status}
           verified={verified}
           pendingAction={pendingAction}
+          paymentReady={o.paymentStatus === "paid"}
           onOnTheWay={handleOnTheWay}
           onArrived={handleArrived}
           onVerify={() => setVerifyOpen(true)}
@@ -1501,12 +1522,14 @@ function NurseVisitDetail({
 // behind a quiet "مشكلة؟" link to keep this button as the only thing the
 // nurse needs to read.
 function NursePrimaryAction({
-  status, verified, pendingAction,
+  status, verified, pendingAction, paymentReady,
   onOnTheWay, onArrived, onVerify, onCollected, onDelivered,
 }: {
   status: Order["status"];
   verified: boolean;
   pendingAction: string | null;
+  /** Phase 3.5: cash collected (or online paid) before sample. */
+  paymentReady: boolean;
   onOnTheWay: () => void;
   onArrived: () => void;
   onVerify: () => void;
@@ -1549,15 +1572,22 @@ function NursePrimaryAction({
       );
     }
     return (
-      <Button
-        variant="primary" size="lg" className="w-full"
-        loading={pendingAction === "collected"}
-        disabled={!!pendingAction && pendingAction !== "collected"}
-        onClick={onCollected}
-      >
-        <CheckCircle2 size={16} aria-hidden="true" />
-        تم أخذ العينة
-      </Button>
+      <div className="space-y-1.5">
+        <Button
+          variant="primary" size="lg" className="w-full"
+          loading={pendingAction === "collected"}
+          disabled={(!!pendingAction && pendingAction !== "collected") || !paymentReady}
+          onClick={onCollected}
+        >
+          <CheckCircle2 size={16} aria-hidden="true" />
+          تم أخذ العينة
+        </Button>
+        {!paymentReady && (
+          <p className="text-[11px] text-amber-700 text-center">
+            يجب تأكيد الدفع قبل أخذ العينة.
+          </p>
+        )}
+      </div>
     );
   }
   if (status === "on_the_way") {
@@ -1653,8 +1683,8 @@ function PaymentCollectionCard({
     );
   }
 
-  // Cash + pending: nurse needs to collect.
-  const enabled = status === "arrived" || status === "sample_collected";
+  // Cash + pending: nurse needs to collect BEFORE the sample (Phase 3.5).
+  const enabled = status === "arrived";
   return (
     <section className="bg-emerald-50/60 rounded-2xl border border-emerald-100 p-4">
       <p className="text-[11px] text-emerald-700 font-semibold uppercase tracking-wide mb-1">
