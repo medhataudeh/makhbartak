@@ -2,10 +2,13 @@
 import { useSyncExternalStore } from "react";
 import type { BrandingConfig } from "./types";
 
-// Phase 1 production hardening: app_branding is now a Supabase singleton.
-// localStorage is demoted to a first-paint cache so the shell themes
-// instantly on cold load, but DB is the source of truth — every mount
-// hydrates from `/api/admin/branding` and overwrites the cache.
+// STORAGE POLICY (final hardening):
+//   * SOURCE OF TRUTH: public.app_branding (Supabase singleton).
+//   * localStorage `makhbartak.branding.v1` is a READ-THROUGH first-paint
+//     cache only. It is overwritten on every successful API hydrate, and
+//     rolled back on PUT failure. Never used as a fallback when the API
+//     reports an error — admins always see the canonical row after an
+//     online refresh.
 
 const KEY = "makhbartak.branding.v1";
 

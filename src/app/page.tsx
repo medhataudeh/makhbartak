@@ -81,9 +81,11 @@ function CustomerApp() {
     void hydrateProfileForCustomer(userId);
     void hydrateNotificationsForCustomer(userId);
   }, [userId]);
-  // Persist nav state to sessionStorage so a hard refresh keeps the user
-  // on the tab/screen they were on. This is *not* the auth session — just
-  // a tiny UX hint scoped to the tab. localStorage is not used.
+  // STORAGE POLICY: sessionStorage `makhbartak.customer.nav.v1` is a
+  // UX hint only — preserves the active customer tab across hard refresh
+  // within the same tab. NEVER used to persist business data; clearing it
+  // resets only the navigation state. The auth session lives in cookies
+  // and on the auth.users row, separate from this key.
   const NAV_KEY = "makhbartak.customer.nav.v1";
   const [activeTab, setActiveTabState] = useState<NavTab>(() => {
     if (typeof window === "undefined") return "home";

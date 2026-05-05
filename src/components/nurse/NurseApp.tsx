@@ -9,7 +9,6 @@ import {
   XCircle, Wrench, Droplets,
 } from "lucide-react";
 import {
-  MOCK_NURSES,
   buildPrepChecklist, FAILED_COLLECTION_REASONS, NURSE_BADGES,
 } from "@/lib/mock-data";
 import { useNurseGamification } from "@/lib/nurse-gamification";
@@ -52,9 +51,11 @@ function nurseAddressDisplay(addr: import("@/lib/types").Address): string {
   return tail || head || "";
 }
 
-// Manual visit reorder per nurse-day. Stored in sessionStorage so it
-// survives in-tab navigation but not cross-device — the daily route is a
-// short-lived UX preference; a future migration can promote it to DB.
+// STORAGE POLICY: sessionStorage manual reorder is a UX hint only — it
+// preserves the nurse's chosen visit order within a single tab/day.
+// NEVER persists business data: the canonical visit list comes from
+// `useOrders()` filtered by nurse + date. Clearing the key only resets
+// the optional ordering preference; visits remain intact.
 function manualOrderKey(nurseId: string, date: string): string {
   return `makhbartak.nurse.manualOrder.${nurseId}.${date}`;
 }
@@ -91,17 +92,15 @@ export function NurseApp() {
 function NurseAppInner({ nurseId, onLogout }: { nurseId: string; onLogout: () => void }) {
   const session = useSession();
   const editableNurse = useEditableNurse(nurseId);
-  // Seed metadata is only relevant when the active nurse id matches a
-  // seeded mock row. For admin-created nurses (DB UUIDs that don't appear
-  // in MOCK_NURSES), we synthesize a minimal Nurse from the session so the
-  // app never silently falls back to MOCK_NURSES[0]'s identity.
-  const seedNurse = MOCK_NURSES.find((n) => n.id === nurseId);
+  // FINAL HARDENING: nurse identity is derived from the enriched session
+  // alone. The MOCK_NURSES seed-id fallback has been removed so demo
+  // metadata can never leak into a real nurse session.
   const sessionNurse: Nurse = {
     id: nurseId,
-    name: session?.name || seedNurse?.name || "—",
-    phone: seedNurse?.phone ?? "",
-    city: session?.nurseCity ?? seedNurse?.city ?? "",
-    photoUrl: session?.nursePhotoUrl ?? seedNurse?.photoUrl,
+    name: session?.name || "—",
+    phone: "",
+    city: session?.nurseCity ?? "",
+    photoUrl: session?.nursePhotoUrl,
     isActive: true,
   };
   const nurse = editableNurse ?? sessionNurse;
@@ -578,10 +577,13 @@ function NurseHome({
           nurseName={nurse.name}
           date={today}
           onCancel={() => setShortageOpen(false)}
-          onSubmit={(reqId) => {
+          onSubmit={(reqId, error) => {
+            if (!reqId) {
+              toast.error(error ?? "تعذر إرسال طلب الأدوات");
+              return;
+            }
             setShortageOpen(false);
             toast.success("تم إرسال طلب الأدوات للإدارة");
-            void reqId;
           }}
         />
       </BottomSheet>
@@ -1721,7 +1723,9 @@ function ShortageRequestForm({ nurseId, nurseName, date, onCancel, onSubmit }: {
   nurseName: string;
   date: string;
   onCancel: () => void;
-  onSubmit: (requestId: string) => void;
+  // FINAL HARDENING: callback receives null + Arabic error when the server
+  // rejected the submit. Caller must surface that to the nurse.
+  onSubmit: (requestId: string | null, error?: string) => void;
 }) {
   const tools = useLibraryTools().filter((t) => t.isActive);
   const [picks, setPicks] = useState<Record<string, number>>({});
@@ -1736,18 +1740,21 @@ function ShortageRequestForm({ nurseId, nurseName, date, onCancel, onSubmit }: {
   const submit = async () => {
     if (totalSelected === 0) return;
     setSubmitting(true);
-    await new Promise((r) => setTimeout(r, 300));
     const items = Object.entries(picks)
       .filter(([, qty]) => qty > 0)
       .map(([toolId, qty]) => {
         const cat = tools.find((t) => t.id === toolId);
         return { toolId, toolNameAr: cat?.nameAr, requestedQuantity: qty };
       });
-    const req = submitShortageRequest({
+    const r = await submitShortageRequest({
       nurseId, nurseName, date, note: note.trim() || undefined, items,
     });
     setSubmitting(false);
-    onSubmit(req.id);
+    if (!r.ok || !r.request) {
+      onSubmit(null, r.error);
+      return;
+    }
+    onSubmit(r.request.id);
   };
 
   return (

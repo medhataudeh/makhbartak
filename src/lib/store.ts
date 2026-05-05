@@ -822,37 +822,46 @@ export function deleteResultFile(orderId: string, fileId: string) {
 // The order flips straight to `completed`. The customer sees "مكتمل" with the
 // PDFs as the dominant element. There is no separate result_ready bucket on
 // the customer side.
-export function confirmResultsReady(orderId: string, ref: ActorRef): boolean {
+//
+// FINAL HARDENING (P0): completion must be canonical in Supabase. We DO NOT
+// flip the local state to `completed` until the server route confirms.
+// On failure we surface an Arabic error and the order stays in its prior
+// status so finance/invoice triggers don't fire on a half-confirmed order.
+export async function confirmResultsReady(orderId: string, ref: ActorRef): Promise<{ ok: boolean; error?: string }> {
   const order = getOrder(orderId);
-  if (!order) return false;
+  if (!order) return { ok: false, error: "الطلب غير موجود" };
   const hasActive = (order.resultFiles ?? []).some((f) => f.isActive);
-  if (!hasActive) return false;
-  // Local optimistic state flip — this also fires the Phase-2 status route
-  // path internally for the order.status update.
-  setOrderStatus(orderId, "completed", ref, "تأكيد إرسال النتائج");
-  // Phase 3: also call the lab-confirm route so the server insists on at
-  // least one active row in lab_result_files (defense-in-depth) and stamps
-  // a uniform actor_role='lab' history row, independent of which mock
-  // session called setOrderStatus.
-  void persistConfirmViaApi(orderId);
-  return true;
-}
+  if (!hasActive) return { ok: false, error: "ارفع ملف نتيجة واحداً على الأقل قبل التأكيد" };
 
-async function persistConfirmViaApi(orderId: string): Promise<void> {
-  if (!USE_SUPABASE) return;
-  if (!isUuid(orderId)) return;
+  // Flag-off / non-uuid: legacy in-memory path keeps the prototype working.
+  if (!USE_SUPABASE || !isUuid(orderId)) {
+    void setOrderStatus(orderId, "completed", ref, "تأكيد إرسال النتائج");
+    return { ok: true };
+  }
+
+  // Production path: server confirms first. Only after a successful server
+  // response do we mirror the canonical row (status, events, completed_at)
+  // into the local store.
   const session = (await import("./auth")).getStoredSession();
-  if (!session || (session.role !== "lab" && session.role !== "admin")) return;
+  if (!session || (session.role !== "lab" && session.role !== "admin")) {
+    return { ok: false, error: "الجلسة غير صالحة" };
+  }
   const result = await apiConfirmLabResults(orderId);
   if ("error" in result) {
-    console.warn("[api/orders/lab/confirm] failed; status update may not be canonical", result.error);
-    return;
+    console.error("[api/orders/lab/confirm] failed", { orderId, error: result.error });
+    return { ok: false, error: result.error || "تعذر تأكيد إرسال النتائج، حاول مرة أخرى" };
   }
   if (result.order) {
     const remote = result.order;
     _orders = _orders.map((o) => (o.id === remote.id ? { ...o, ...remote } : o));
+    appendEvent(orderId, "completed", ref, "تأكيد إرسال النتائج");
     emit();
+  } else {
+    // Server didn't return the row — fall back to a local flip so the UI
+    // reflects the success the server reported.
+    void setOrderStatus(orderId, "completed", ref, "تأكيد إرسال النتائج");
   }
+  return { ok: true };
 }
 
 /** Admin override — close an order without uploaded results. Logged. */

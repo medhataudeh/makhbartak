@@ -3,12 +3,14 @@ import { useSyncExternalStore } from "react";
 import type { SystemSettings } from "./types";
 import { SYSTEM_SETTINGS } from "./mock-data";
 
-// Phase 3 production hardening: app_settings row in Supabase is the only
-// source of truth. SYSTEM_SETTINGS from mock-data is *only* used as a
-// per-render default object so unhydrated calls never crash on
-// `.allowCashOrders` / `.morningShiftStart` lookups. localStorage is
-// allowed as an optional read-through cache for first paint, but every
-// successful API hydrate overwrites it — never the other way around.
+// STORAGE POLICY (final hardening):
+//   * SOURCE OF TRUTH: public.app_settings (Supabase singleton id=1).
+//   * SYSTEM_SETTINGS from mock-data is only used as a per-render default
+//     so unhydrated reads never crash on `.allowCashOrders` /
+//     `.morningShiftStart` lookups.
+//   * localStorage `makhbartak.system-settings.cache.v1` is a READ-THROUGH
+//     first-paint cache. Every successful API hydrate overwrites it; the
+//     cache never overrides a fresh API response.
 
 const CACHE_KEY = "makhbartak.system-settings.cache.v1";
 

@@ -6,15 +6,16 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { isUuid } from "./uuid";
 export { isUuid, assertUuid } from "./uuid";
 
-// ─── Dev session UUID ──────────────────────────────────────────────────────
-// When the dev-OTP fallback is on we don't have a real Supabase session, so
-// `auth.getUser()` returns null. Local writes still create rows that need a
-// stable id (local-only); we persist a single uuid per browser so dev runs
-// look like a real customer to the rest of the app — without ever sending
-// that uuid to Supabase (the gate in getCurrentCustomerId enforces this).
+// ─── Dev session UUID (development-only) ───────────────────────────────────
+// FINAL HARDENING: hard-gated behind NODE_ENV !== "production". Production
+// builds always return null and the dev-OTP code path is unreachable. The
+// localStorage key here is a development convenience only; the value never
+// leaves the browser and is never sent to Supabase (the gate in
+// getCurrentCustomerId enforces that).
 const DEV_UUID_KEY = "makhbartak.dev.user.uuid";
 
 export function getDevCustomerId(): string | null {
+  if (process.env.NODE_ENV === "production") return null;
   if (typeof window === "undefined") return null;
   try {
     let id = window.localStorage.getItem(DEV_UUID_KEY);

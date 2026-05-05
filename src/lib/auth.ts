@@ -235,7 +235,6 @@ export function hasRole(session: AuthSession | null, role: Role): boolean {
   return !!session && session.role === role;
 }
 
-import { MOCK_NURSES } from "./mock-data";
 import { isUuid } from "./supabase/uuid";
 import type { Nurse, LabUser, AdminUser, AuthUser } from "./types";
 import {
@@ -243,23 +242,22 @@ import {
   apiCreateUser, apiPatchUser, apiDeleteUser, apiResetUserPassword,
 } from "./admin-users-api";
 
-// Build a Nurse from the live session. The session is enriched server-side
-// by /api/me from the real `nurses` row + `profiles` row, so admin-created
-// nurses are first-class citizens here. Falls back to MOCK_NURSES only when
-// the session predates the route enrichment (legacy callers without
-// nurseId on the JWT). Never returns null when the session role is nurse —
-// the gate is route-auth's job, not this helper's.
+// FINAL HARDENING: build a Nurse strictly from the enriched RouteSession
+// returned by /api/me. The MOCK_NURSES seed-id fallback has been removed;
+// a real Supabase Auth session always carries a UUID nurseId resolved
+// from the `nurses` row, so demo data can no longer leak into the nurse
+// shell. Returns null when the session lacks a nurse id — callers (NurseApp)
+// surface an Arabic "session invalid" and force a re-login.
 export function nurseFromSession(session: AuthSession | null): Nurse | null {
   if (!session || session.role !== "nurse") return null;
   const id = session.nurseId ?? session.linkedEntityId;
   if (!id) return null;
-  const seed = MOCK_NURSES.find((n) => n.id === id);
   return {
     id,
-    name: session.name || seed?.name || "—",
-    phone: seed?.phone ?? "",
-    city: session.nurseCity ?? seed?.city ?? "",
-    photoUrl: session.nursePhotoUrl ?? seed?.photoUrl,
+    name: session.name || "—",
+    phone: "",
+    city: session.nurseCity ?? "",
+    photoUrl: session.nursePhotoUrl,
     isActive: true,
   };
 }

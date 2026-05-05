@@ -5,16 +5,15 @@ import { USE_SUPABASE } from "./supabase/flags";
 import { isUuid } from "./supabase/uuid";
 import { apiSetPaymentPreference } from "./customer-api";
 
-// Phase 3 production hardening: customers.preferred_payment_method is the
-// only source of truth. hydrateProfileForCustomer (lib/profile.ts) calls
-// setHydratedPreferredPayment with the canonical value at startup; every
-// in-app change flows through setPreferredPayment which writes to the
-// API first and then mirrors locally on success.
-//
-// localStorage is allowed only as a read-through UX cache so the cart
-// pre-selects yesterday's choice during the round-trip. The cache is
-// rewritten on every API confirmation; it is never read as a fallback
-// when the API call fails.
+// STORAGE POLICY (final hardening):
+//   * SOURCE OF TRUTH: public.customers.preferred_payment_method.
+//   * hydrateProfileForCustomer (lib/profile.ts) loads the canonical value
+//     at session startup; setPreferredPayment writes to the API first and
+//     mirrors locally only after the server confirms.
+//   * localStorage `makhbartak.payment.preferred` is a READ-THROUGH UX
+//     cache so the cart pre-selects yesterday's choice during the
+//     round-trip. The cache is rewritten on every API confirmation and
+//     is never used to override a fresh API response.
 
 const CACHE_KEY = "makhbartak.payment.preferred";
 

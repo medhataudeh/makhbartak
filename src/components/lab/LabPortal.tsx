@@ -8,7 +8,7 @@ import {
 import type { Lab, LabUser, Order, LabSettlement } from "@/lib/types";
 import { LAB_USER_ROLE_LABELS } from "@/lib/types";
 import {
-  MOCK_LABS, LAB_ISSUE_REASONS, computeOrderLabAmount,
+  LAB_ISSUE_REASONS, computeOrderLabAmount,
 } from "@/lib/mock-data";
 import {
   useOrders, uploadResultFile, archiveResultFile, openLabIssue, setOrderStatus,
@@ -70,13 +70,11 @@ export function LabPortal() {
     if (!labUser?.labId) { setLab(null); setLabStatus("idle"); return; }
     let cancelled = false;
     (async () => {
+      // FINAL HARDENING: lab row is loaded strictly from /api/labs/[id].
+      // The MOCK_LABS slug short-circuit has been removed; a real lab
+      // session always carries a UUID labId resolved from the lab_users
+      // row, so no fallback to demo data is possible.
       setLabStatus("loading");
-      const seed = MOCK_LABS.find((l) => l.id === labUser.labId);
-      if (seed) {
-        // Mock-mode seed (slug ids) — no API needed.
-        if (!cancelled) { setLab(seed); setLabStatus("ready"); }
-        return;
-      }
       try {
         const res = await fetch(`/api/labs/${encodeURIComponent(labUser.labId)}`, { cache: "no-store" });
         if (cancelled) return;
@@ -515,10 +513,10 @@ function OrdersSection({ lab, labUser, labOrders, brand, resultsFocus }: {
                 <Button
                   variant="primary" size="sm"
                   disabled={selectedFiles.length === 0 || selected.status === "completed"}
-                  onClick={() => {
-                    const ok = confirmResultsReady(selected.id, { actor: "lab", actorName: labUser.fullName });
-                    if (ok) toast.success("تم إرسال النتائج — اكتمل الطلب");
-                    else toast.error("ارفع ملف نتيجة واحداً على الأقل قبل التأكيد");
+                  onClick={async () => {
+                    const r = await confirmResultsReady(selected.id, { actor: "lab", actorName: labUser.fullName });
+                    if (r.ok) toast.success("تم إرسال النتائج — اكتمل الطلب");
+                    else toast.error(r.error ?? "تعذر تأكيد إرسال النتائج");
                   }}
                 >
                   <CheckCircle2 size={14} aria-hidden="true" /> تأكيد إرسال النتائج

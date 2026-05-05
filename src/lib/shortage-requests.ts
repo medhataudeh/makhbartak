@@ -63,11 +63,20 @@ function nextId(prefix: string) {
   return `${prefix}-${Date.now().toString(36)}-${Math.floor(Math.random() * 1e4)}`;
 }
 
-export function submitShortageRequest(input: SubmitInput): NurseToolShortageRequest {
+// FINAL HARDENING (P1): submission is awaited end-to-end. Optimistic local
+// row is rolled back on server failure so admin never sees a request that
+// only exists on one device. On success we replace the placeholder id
+// with the canonical UUID returned by the server, then re-hydrate so any
+// server-side derived fields (timestamps, nurseName) match the DB.
+export async function submitShortageRequest(input: SubmitInput): Promise<{
+  ok: boolean;
+  error?: string;
+  request?: NurseToolShortageRequest;
+}> {
   const now = new Date().toISOString();
-  const id = nextId("nsr");
+  const localId = nextId("nsr");
   const req: NurseToolShortageRequest = {
-    id,
+    id: localId,
     nurseId: input.nurseId,
     nurseName: input.nurseName,
     date: input.date,
@@ -76,31 +85,30 @@ export function submitShortageRequest(input: SubmitInput): NurseToolShortageRequ
     createdAt: now,
     updatedAt: now,
   };
-  const items: NurseToolShortageItem[] = input.items
+  const localItems: NurseToolShortageItem[] = input.items
     .filter((it) => it.requestedQuantity > 0 && it.toolId)
     .map((it) => ({
       id: nextId("nsi"),
-      requestId: id,
+      requestId: localId,
       toolId: it.toolId,
       toolNameAr: it.toolNameAr,
       requestedQuantity: it.requestedQuantity,
     }));
   _requests = [req, ..._requests];
-  _items = [..._items, ...items];
+  _items = [..._items, ...localItems];
   emit();
-  // Background persist via API. The local placeholder id (nsr-...) is kept
-  // for the optimistic UI; the server's canonical row will land on the next
-  // hydrateShortageRequestsForNurse() call.
-  void persistShortageSubmitViaApi(input);
-  return req;
-}
 
-async function persistShortageSubmitViaApi(input: SubmitInput): Promise<void> {
-  if (!USE_SUPABASE) return;
-  if (!isUuid(input.nurseId)) return;
+  // Flag-off / non-uuid: legacy in-memory only — accept the local row.
+  if (!USE_SUPABASE || !isUuid(input.nurseId)) {
+    return { ok: true, request: req };
+  }
   const session: AuthSession | null = (await import("./auth")).getStoredSession();
-  if (!session || (session.role !== "nurse" && session.role !== "admin")) return;
-  await apiSubmitShortageRequest(input.nurseId, {
+  if (!session || (session.role !== "nurse" && session.role !== "admin")) {
+    rollbackLocal(localId);
+    return { ok: false, error: "الجلسة غير صالحة" };
+  }
+
+  const result = await apiSubmitShortageRequest(input.nurseId, {
     day: input.date,
     note: input.note,
     items: input.items
@@ -111,6 +119,35 @@ async function persistShortageSubmitViaApi(input: SubmitInput): Promise<void> {
         quantity: it.requestedQuantity,
       })),
   });
+  if (!result.ok) {
+    console.error("[api/nurses/shortage-requests] submit failed", { nurseId: input.nurseId, error: result.error });
+    rollbackLocal(localId);
+    return { ok: false, error: result.error || "تعذر إرسال طلب الأدوات، حاول مرة أخرى" };
+  }
+
+  // Replace the placeholder id with the canonical UUID so admin and nurse
+  // views agree on identity. A follow-up hydrate fills in any server-side
+  // timestamps and nurseName.
+  if (result.requestId) {
+    _requests = _requests.map((r) =>
+      r.id === localId ? { ...r, id: result.requestId! } : r,
+    );
+    _items = _items.map((i) =>
+      i.requestId === localId ? { ...i, requestId: result.requestId! } : i,
+    );
+    emit();
+  }
+  void hydrateShortageRequestsForNurse(input.nurseId);
+  return {
+    ok: true,
+    request: result.requestId ? { ...req, id: result.requestId } : req,
+  };
+}
+
+function rollbackLocal(localId: string) {
+  _requests = _requests.filter((r) => r.id !== localId);
+  _items = _items.filter((i) => i.requestId !== localId);
+  emit();
 }
 
 export function setShortageRequestStatus(

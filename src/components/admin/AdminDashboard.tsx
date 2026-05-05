@@ -8,9 +8,10 @@ import {
   ChevronUp, ChevronDown, ChevronLeft, Route, MapPin, Wrench,
 } from "lucide-react";
 import {
-  // Phase 2: only constants + helpers remain mock-sourced. All MOCK_*
-  // arrays have been routed through admin APIs / catalog hooks.
-  ADMIN_STATS, ORDER_STATUS_LABELS, MOCK_GAMIFICATION,
+  // Final hardening: only constants + helpers remain. All MOCK_* arrays
+  // have been routed through admin APIs / catalog hooks; the leaderboard
+  // is DB-only (no MOCK_GAMIFICATION fallback).
+  ADMIN_STATS, ORDER_STATUS_LABELS,
   NURSE_LEVELS, NURSE_BADGES, GAMIFICATION_CONFIG, canAccess,
 } from "@/lib/mock-data";
 import { ROLE_LABELS, ACTIVITY_LABELS } from "@/lib/types";
@@ -1829,31 +1830,33 @@ function GamificationAdmin({ nurses, config, setConfig }: {
     return () => { cancelled = true; };
   }, []);
 
+  // FINAL HARDENING: leaderboard reads ONLY from nurse_gamification rows.
+  // Nurses without a row don't appear (they get one auto-created on first
+  // GET via ensure_nurse_gamification_admin). The MOCK_GAMIFICATION
+  // fallback has been removed; demo data never leaks to admin reports.
   const leaderboard = nurses
     .map((n) => {
       const remote = remoteRows.find((r) => r.nurse_id === n.id);
-      if (remote) {
-        const level = NURSE_LEVELS.find((lv) => lv.id === remote.level_id) ?? NURSE_LEVELS[0];
-        return {
-          nurse: n,
-          game: {
-            nurseId: n.id,
-            totalCompleted: remote.total_completed,
-            totalPoints: remote.total_points,
-            pointsToday: remote.points_today,
-            monthlyCompleted: remote.monthly_completed,
-            monthlyPoints: remote.monthly_points,
-            successRate: remote.success_rate,
-            failedCount: remote.failed_count,
-            streak: remote.streak,
-            level,
-            badges: [],
-          },
-        };
-      }
-      return { nurse: n, game: MOCK_GAMIFICATION[n.id] };
+      if (!remote) return null;
+      const level = NURSE_LEVELS.find((lv) => lv.id === remote.level_id) ?? NURSE_LEVELS[0];
+      return {
+        nurse: n,
+        game: {
+          nurseId: n.id,
+          totalCompleted: remote.total_completed,
+          totalPoints: remote.total_points,
+          pointsToday: remote.points_today,
+          monthlyCompleted: remote.monthly_completed,
+          monthlyPoints: remote.monthly_points,
+          successRate: remote.success_rate,
+          failedCount: remote.failed_count,
+          streak: remote.streak,
+          level,
+          badges: [],
+        },
+      };
     })
-    .filter((x) => x.game)
+    .filter((x): x is NonNullable<typeof x> => x !== null)
     .sort((a, b) => b.game.totalPoints - a.game.totalPoints);
 
   return (

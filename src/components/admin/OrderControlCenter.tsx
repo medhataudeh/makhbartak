@@ -570,9 +570,10 @@ function OperationsTab({ order, role, nurses, labs, ref }: {
             <Button
               size="sm" variant="primary"
               disabled={activeFiles.length === 0}
-              onClick={() => {
-                const ok = confirmResultsReady(order.id, ref);
-                if (!ok) return;
+              onClick={async () => {
+                const r = await confirmResultsReady(order.id, ref);
+                if (!r.ok) toast.error(r.error ?? "تعذر تأكيد إرسال النتائج");
+                else toast.success("اكتمل الطلب");
               }}
             >
               <CheckCircle2 size={14} aria-hidden="true" />
