@@ -182,6 +182,26 @@ export function OrderDetails({ order, onClose }: OrderDetailsProps) {
           </div>
         </div>
 
+        {/* Phase 3.6 — uploaded prescription image. Only renders when the
+           customer chose the prescription flow and the file landed in the
+           `prescriptions` bucket. URL is signed by enrichOrdersWithSignedUrls. */}
+        {order.prescriptionUrl && (
+          <div className="px-4 pb-4">
+            <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">الوصفة المرفوعة</h3>
+            <a
+              href={order.prescriptionUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="block bg-white rounded-xl border border-gray-100 overflow-hidden cursor-pointer active:bg-gray-50"
+            >
+              <div className="relative w-full h-48 bg-gray-50">
+                <Image src={order.prescriptionUrl} alt="الوصفة الطبية" fill sizes="(max-width: 768px) 100vw, 448px" className="object-contain" />
+              </div>
+              <p className="text-[11px] text-gray-500 px-3 py-2 text-center">اضغط لفتح الصورة الكاملة</p>
+            </a>
+          </div>
+        )}
+
         {/* Items — package shows as ONE card, others list tests */}
         <div className="px-4 pb-4">
           <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">

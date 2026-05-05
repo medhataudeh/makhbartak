@@ -23,6 +23,8 @@ export interface ApiCreateOrderInput {
   paymentMethod: PaymentMethod;
   paymentStatus: "pending" | "paid" | "failed";
   initialStatus: OrderStatus;
+  /** Storage path returned by /api/customers/[id]/prescriptions when type === "prescription". */
+  prescriptionUrl?: string;
 }
 
 export async function apiCreateOrder(

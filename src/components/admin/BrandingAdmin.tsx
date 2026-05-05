@@ -4,6 +4,7 @@ import Image from "next/image";
 import { ImageIcon, Palette, Save, RotateCcw, FlaskConical, Bell } from "lucide-react";
 import type { BrandingConfig, AdminRole } from "@/lib/types";
 import { useBranding, setBranding, DEFAULT_BRANDING } from "@/lib/branding";
+import { MediaPicker } from "@/components/admin/MediaPicker";
 import { logActivity } from "@/lib/activity-log";
 import { Button } from "@/components/ui/Button";
 import { useToast } from "@/components/ui/Toast";
@@ -184,6 +185,7 @@ function ColorRow({ label, value, onChange }: { label: string; value: string; on
 }
 
 function LogoRow({ label, value, onChange, size, dark }: { label: string; value: string; onChange: (v: string) => void; size: number; dark?: boolean }) {
+  // Phase 3.6: pick from the Media Library instead of pasting URLs.
   return (
     <Field label={label}>
       <div className="flex items-center gap-3">
@@ -197,13 +199,9 @@ function LogoRow({ label, value, onChange, size, dark }: { label: string; value:
             <ImageIcon size={size * 0.4} className={`absolute inset-0 m-auto ${dark ? "text-white/40" : "text-gray-300"}`} aria-hidden="true" />
           )}
         </div>
-        <input
-          value={value}
-          onChange={(e) => onChange(e.target.value)}
-          placeholder="https://… أو /path/to/logo.png"
-          className="flex-1 h-10 px-3 rounded-xl border border-gray-200 text-sm lat"
-          dir="ltr"
-        />
+        <div className="flex-1">
+          <MediaPicker label="" value={value} onChange={onChange} compact />
+        </div>
       </div>
     </Field>
   );

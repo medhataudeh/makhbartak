@@ -4,6 +4,7 @@ import { motion } from "framer-motion";
 import { Camera, FlaskConical, ShoppingCart, ChevronLeft, Bell } from "lucide-react";
 import { useSliders } from "@/lib/home-sliders";
 import { usePackages, useCatalogStatus } from "@/lib/catalog";
+import { useBranding } from "@/lib/branding";
 import type { Package, SliderItem } from "@/lib/types";
 import { HomeSlider } from "@/components/home/HomeSlider";
 
@@ -29,6 +30,7 @@ export function HomeScreen({
   const packages = usePackages();
   const sliders = useSliders();
   const catalogStatus = useCatalogStatus();
+  const branding = useBranding();
   const isCatalogEmpty = catalogStatus === "ready" && packages.length === 0 && sliders.length === 0;
   // Resolve a slider item to an action (or null if there's nothing to do).
   // A null result tells HomeSlider to render the card as visually disabled
@@ -64,12 +66,18 @@ export function HomeScreen({
 
   return (
     <div className="flex flex-col pb-nav md:pb-12 bg-app min-h-screen">
-      {/* HIG-style header — logo + notifications + cart on home */}
+      {/* HIG-style header — branded logo (DB-driven) + notifications + cart. */}
       <div className="flex items-center justify-between px-5 md:px-8 pt-5 pb-4 bg-white/80 backdrop-blur border-b border-gray-100">
         <div className="flex items-center gap-2.5">
-          <div className="w-9 h-9 rounded-xl bg-[#0891B2] flex items-center justify-center" aria-hidden="true">
-            <FlaskConical size={18} className="text-white" />
-          </div>
+          {branding.logos.header ? (
+            <div className="relative w-9 h-9 rounded-xl overflow-hidden bg-white" aria-hidden="true">
+              <Image src={branding.logos.header} alt="" fill sizes="36px" className="object-cover" />
+            </div>
+          ) : (
+            <div className="w-9 h-9 rounded-xl bg-[#0891B2] flex items-center justify-center" aria-hidden="true">
+              <FlaskConical size={18} className="text-white" />
+            </div>
+          )}
           <h1 className="text-lg md:text-xl font-bold text-[#164E63] tracking-tight">مختبرك</h1>
         </div>
         <div className="flex items-center gap-2">

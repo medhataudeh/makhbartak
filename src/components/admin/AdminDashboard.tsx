@@ -35,6 +35,8 @@ import { ShortageRequestsAdmin } from "@/components/admin/ShortageRequestsAdmin"
 import { useLibraryInstructions } from "@/lib/instruction-library";
 import { useLibraryTools } from "@/lib/tool-library";
 import { useTests, usePackages } from "@/lib/catalog";
+import { useBranding } from "@/lib/branding";
+import Image from "next/image";
 import { AdminUserContext } from "@/components/admin/AdminContext";
 import { useCurrentAdmin } from "@/components/admin/AdminContext";
 import { useOrders, createOrder, hydrateOrdersForAdmin } from "@/lib/store";
@@ -125,6 +127,7 @@ export function AdminDashboard({ user, onLogout }: AdminDashboardProps) {
   );
   const [section, setSection] = useState<AdminSection>(accessible[0]?.id ?? "overview");
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const branding = useBranding();
 
   // Centralized mutable state — single source of truth so child sections can
   // CRUD without prop-drilling and changes survive across tab switches.
@@ -200,9 +203,15 @@ export function AdminDashboard({ user, onLogout }: AdminDashboardProps) {
       >
         <div className="px-5 py-5 border-b border-gray-100 flex items-center justify-between">
           <div className="flex items-center gap-3 min-w-0">
-            <div className="w-10 h-10 rounded-xl bg-[#ECFEFF] flex items-center justify-center flex-shrink-0">
-              <FlaskConical size={20} className="text-[#0891B2]" aria-hidden="true" />
-            </div>
+            {branding.logos.adminDashboard ? (
+              <div className="relative w-10 h-10 rounded-xl overflow-hidden bg-white flex-shrink-0">
+                <Image src={branding.logos.adminDashboard} alt="" fill sizes="40px" className="object-cover" />
+              </div>
+            ) : (
+              <div className="w-10 h-10 rounded-xl bg-[#ECFEFF] flex items-center justify-center flex-shrink-0">
+                <FlaskConical size={20} className="text-[#0891B2]" aria-hidden="true" />
+              </div>
+            )}
             <div className="min-w-0">
               <p className="text-sm font-bold text-[#164E63] truncate">لوحة الإدارة</p>
               <p className="text-[11px] text-gray-400 truncate">{ROLE_LABELS[user.role]}</p>
@@ -1816,6 +1825,8 @@ function GamificationAdmin({ nurses, config, setConfig }: {
     failed_count: number; success_rate: number; streak: number; level_id: string;
   };
   const [remoteRows, setRemoteRows] = useState<GameRow[]>([]);
+  type NurseRatingAgg = { nurse_id: string; count: number; average: number };
+  const [nurseRatings, setNurseRatings] = useState<NurseRatingAgg[]>([]);
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -1826,6 +1837,15 @@ function GamificationAdmin({ nurses, config, setConfig }: {
         const rows = (body?.rows ?? []) as GameRow[];
         if (!cancelled) setRemoteRows(rows);
       } catch { /* keep empty rows on failure */ }
+    })();
+    (async () => {
+      try {
+        const res = await fetch("/api/admin/ratings", { cache: "no-store" });
+        if (!res.ok || cancelled) return;
+        const body = await res.json().catch(() => null);
+        const rows = (body?.nurses ?? []) as NurseRatingAgg[];
+        if (!cancelled) setNurseRatings(rows);
+      } catch { /* keep empty */ }
     })();
     return () => { cancelled = true; };
   }, []);
@@ -1911,6 +1931,10 @@ function GamificationAdmin({ nurses, config, setConfig }: {
             { key: "points",   label: "النقاط",      render: (x) => <span className="font-bold">{x.game.totalPoints.toLocaleString("ar")}</span> },
             { key: "done",     label: "زيارات",      render: (x) => x.game.totalCompleted },
             { key: "rate",     label: "نسبة النجاح", render: (x) => `${x.game.successRate}%` },
+            { key: "rating",   label: "متوسط التقييم", render: (x) => {
+              const agg = nurseRatings.find((r) => r.nurse_id === x.nurse.id);
+              return agg ? <span className="text-amber-700 font-semibold">{agg.average} <span className="text-[10px] text-gray-400">({agg.count})</span></span> : <span className="text-gray-300">—</span>;
+            } },
             { key: "act",      label: "إجراءات",     render: (x) => (
               <button onClick={() => { setAdjustment(0); setAdjustOpen(x.nurse); }} className="text-xs px-2 py-1 rounded-md bg-[#ECFEFF] text-[#0891B2] cursor-pointer">تعديل نقاط</button>
             )},
@@ -2279,16 +2303,44 @@ function NotificationsAdmin({ notifications, setNotifications }: { notifications
     return () => { cancelled = true; };
   }, [setNotifications]);
 
-  // Send is intentionally a no-op until a broadcast endpoint exists; the
-  // existing admin POST is per-recipient. We surface the placeholder so
-  // admins know the broadcast path isn't wired yet.
-  const send = () => {
+  // Phase 3.6 — broadcast through /api/admin/notifications/broadcast.
+  // The route fans out one row per active admin profile (today). When a
+  // future migration adds customer/nurse broadcast targeting we extend
+  // the body shape.
+  const toast = useToast();
+  const send = async () => {
+    if (!title.trim() || !body.trim()) return;
     setSending(true);
-    setTimeout(() => {
-      setTitle(""); setBody(""); setSending(false); setConfirmOpen(false);
-    }, 300);
+    try {
+      const res = await fetch("/api/admin/notifications/broadcast", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ type: "admin_note", titleAr: title.trim(), bodyAr: body.trim() }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        toast.error((json as { error?: string }).error ?? "تعذر إرسال الإشعار");
+        return;
+      }
+      toast.success(`تم الإرسال لـ ${(json as { count?: number }).count ?? 0} مدير`);
+      setTitle(""); setBody(""); setConfirmOpen(false);
+      // Re-hydrate the history panel so the new row shows up immediately.
+      try {
+        const h = await fetch("/api/admin/notifications?limit=200", { cache: "no-store" });
+        if (h.ok) {
+          const hb = await h.json().catch(() => null);
+          const rows = (hb?.notifications ?? []) as RawNotificationRow[];
+          setNotifications(rows.map((r): Notification => ({
+            id: r.id, userId: r.recipient_id, type: r.type,
+            titleAr: r.title_ar, bodyAr: r.body_ar,
+            orderId: r.order_id ?? undefined, isRead: r.is_read, createdAt: r.created_at,
+          })));
+        }
+      } catch { /* ignore */ }
+    } finally {
+      setSending(false);
+    }
   };
-  void send;
 
   return (
     <div className="space-y-4">
@@ -2297,7 +2349,7 @@ function NotificationsAdmin({ notifications, setNotifications }: { notifications
           <Field label="عنوان الإشعار"><TextInput value={title} onChange={(e) => setTitle(e.target.value)} placeholder="عرض جديد" /></Field>
           <Field label="نص الإشعار"><TextInput value={body} onChange={(e) => setBody(e.target.value)} placeholder="..." /></Field>
         </div>
-        <p className="text-[11px] text-amber-700 mt-2">البث الجماعي للجميع غير مربوط بقاعدة البيانات بعد. الإشعارات الفردية تُرسَل عبر الإجراءات داخل الطلبات.</p>
+        <p className="text-[11px] text-gray-500 mt-2">يُرسَل البث الجماعي حالياً إلى جميع حسابات الإدارة النشطة. توسيع الجمهور إلى العملاء/الممرضين قيد التطوير.</p>
         <div className="flex justify-end mt-4">
           <Button size="md" disabled={!title.trim() || !body.trim()} loading={sending} onClick={() => setConfirmOpen(true)}>إرسال للجميع</Button>
         </div>
@@ -2315,7 +2367,7 @@ function NotificationsAdmin({ notifications, setNotifications }: { notifications
         />
       </Section>
       {confirmOpen && (
-        <ConfirmModal title="تأكيد الإرسال" message={`سيُرسل الإشعار "${title}" لجميع المستخدمين النشطين.`}
+        <ConfirmModal title="تأكيد الإرسال" message={`سيُرسل الإشعار "${title}" لجميع حسابات الإدارة النشطة.`}
           onCancel={() => setConfirmOpen(false)} onConfirm={send}
         />
       )}
@@ -2916,6 +2968,58 @@ function SettingsAdmin() {
             }}
             label="السماح بالطلبات نقداً"
           />
+        </div>
+      </Section>
+
+      {/* Phase 3.6 — Stripe / online payments. Read-only flag today; the
+          live integration lands in Phase 4. The values are persisted on
+          app_settings via update_app_settings_admin. */}
+      <Section title="المدفوعات الإلكترونية — Stripe">
+        <div className="space-y-3">
+          <div className="flex items-center justify-between gap-4">
+            <div>
+              <p className="text-sm font-semibold text-[#164E63]">تفعيل Stripe</p>
+              <p className="text-xs text-gray-500">عند التفعيل ستُوجَّه عمليات الدفع الإلكتروني عبر Stripe في طور التطوير. لن يتأثر الدفع نقداً.</p>
+            </div>
+            <Toggle
+              checked={live.enableStripe ?? false}
+              onChange={(v) => {
+                updateSystemSettings({ enableStripe: v });
+                logActivity({
+                  adminId: me.id, adminName: me.name, role: me.role,
+                  action: "settings_change", entity: "settings", entityId: "enableStripe",
+                  details: v ? "تفعيل Stripe" : "إيقاف Stripe",
+                });
+                toast.success("تم تحديث الإعداد");
+              }}
+              label="تفعيل Stripe"
+            />
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <Field label="مفتاح Stripe العام (publishable)">
+              <TextInput
+                value={live.stripePublicKey ?? ""}
+                onChange={(e) => updateSystemSettings({ stripePublicKey: e.target.value })}
+                placeholder="pk_test_..."
+              />
+            </Field>
+            <Field label="بيئة Stripe">
+              <select
+                value={live.stripeMode ?? "test"}
+                onChange={(e) => {
+                  updateSystemSettings({ stripeMode: e.target.value as "test" | "live" });
+                  toast.success("تم تحديث البيئة");
+                }}
+                className="w-full h-10 px-3 rounded-xl border border-gray-200 text-sm cursor-pointer"
+              >
+                <option value="test">اختبار (test)</option>
+                <option value="live">إنتاج (live)</option>
+              </select>
+            </Field>
+          </div>
+          <p className="text-[11px] text-amber-700 leading-relaxed">
+            مفتاح Stripe السري ومنطق الدفع نفسه يُضافان في مرحلة المالية. هذه الإعدادات تُمهّد للتفعيل فقط.
+          </p>
         </div>
       </Section>
 

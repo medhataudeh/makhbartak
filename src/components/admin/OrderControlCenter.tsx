@@ -1,5 +1,5 @@
 "use client";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   X, ClipboardList, Package as PackageIcon, Settings as SettingsIcon, History,
   AlertTriangle, DollarSign, StickyNote, MapPin, User, Clock, Calendar,
@@ -279,6 +279,61 @@ function StickyHeader({ order, role, onClose, onOpenUser }: {
   );
 }
 
+// Phase 3.6 — admin/lab/nurse-side rating card. Reads `order_ratings`
+// directly via the admin endpoint added below. Renders nothing while
+// loading or when no rating has been submitted yet.
+function Stars({ n }: { n: number }) {
+  return (
+    <span className="text-amber-500" aria-label={`${n} من 5`}>
+      {"★".repeat(n)}{"☆".repeat(5 - n)}
+    </span>
+  );
+}
+function RatingCard({ orderId }: { orderId: string }) {
+  type RatingRow = {
+    overall_rating: number;
+    nurse_rating: number | null;
+    lab_rating: number | null;
+    comment: string | null;
+    created_at: string;
+  };
+  const [row, setRow] = useState<RatingRow | null>(null);
+  const [loaded, setLoaded] = useState(false);
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(`/api/admin/orders/${encodeURIComponent(orderId)}/rating`, { cache: "no-store" });
+        if (!res.ok || cancelled) { setLoaded(true); return; }
+        const body = await res.json().catch(() => null);
+        if (cancelled) return;
+        setRow((body?.rating ?? null) as RatingRow | null);
+      } catch { /* ignore */ }
+      finally { if (!cancelled) setLoaded(true); }
+    })();
+    return () => { cancelled = true; };
+  }, [orderId]);
+  if (!loaded) return null;
+  if (!row) return null;
+  return (
+    <section className="bg-amber-50 border border-amber-100 rounded-xl p-4">
+      <p className="text-[11px] text-amber-900 font-semibold uppercase tracking-wide mb-2">تقييم العميل</p>
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs text-[#164E63]">
+        <div><p className="text-[11px] text-gray-500 mb-0.5">عام</p><Stars n={row.overall_rating} /></div>
+        {row.nurse_rating != null && (
+          <div><p className="text-[11px] text-gray-500 mb-0.5">الممرض</p><Stars n={row.nurse_rating} /></div>
+        )}
+        {row.lab_rating != null && (
+          <div><p className="text-[11px] text-gray-500 mb-0.5">المخبر</p><Stars n={row.lab_rating} /></div>
+        )}
+      </div>
+      {row.comment && (
+        <p className="text-xs text-amber-900/80 mt-2 leading-relaxed">&ldquo;{row.comment}&rdquo;</p>
+      )}
+    </section>
+  );
+}
+
 function ActionItem({ icon: Icon, label, onClick, danger }: {
   icon: React.FC<{ size?: number; className?: string }>; label: string; onClick: () => void; danger?: boolean;
 }) {
@@ -303,9 +358,11 @@ function ActionItem({ icon: Icon, label, onClick, danger }: {
 function OverviewTab({ order, onOpenUser }: { order: Order; onOpenUser?: (userId: string) => void }) {
   const allOrders = useOrders();
   const previousOrdersCount = allOrders.filter((o) => o.userId === order.userId && o.id !== order.id).length;
+  const showRating = order.status === "completed";
 
   return (
     <div className="space-y-3">
+      {showRating && <RatingCard orderId={order.id} />}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
         <Card title="المريض" icon={<User size={14} aria-hidden="true" />}>
           <Row label="الاسم المُدخل" value={order.patient.name} />
@@ -390,6 +447,21 @@ function ItemsTab({ order }: { order: Order }) {
   return (
     <div className="space-y-3">
       <p className="text-[11px] text-gray-500">نستخدم بيانات لحظة الطلب — لا يتم تحديث الأسعار تلقائياً بعد الإنشاء.</p>
+      {/* Phase 3.6 — admin viewer for the customer's uploaded prescription. */}
+      {order.prescriptionUrl && (
+        <div className="bg-white rounded-xl border border-gray-100 p-3">
+          <p className="text-[11px] text-gray-400 uppercase tracking-wide mb-2">الوصفة المرفوعة من العميل</p>
+          <a
+            href={order.prescriptionUrl}
+            target="_blank"
+            rel="noreferrer"
+            className="block relative w-full h-44 bg-gray-50 rounded-lg overflow-hidden cursor-pointer"
+          >
+            <Image src={order.prescriptionUrl} alt="الوصفة" fill sizes="(max-width: 768px) 100vw, 480px" className="object-contain" />
+          </a>
+          <p className="text-[11px] text-gray-400 mt-2 text-center">اضغط لفتح الصورة الكاملة (رابط موقّت من Supabase Storage).</p>
+        </div>
+      )}
       {pkg ? (
         <div className="bg-white rounded-xl border border-gray-100 overflow-hidden">
           {/* Parent — package card */}

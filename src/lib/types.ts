@@ -241,6 +241,9 @@ export interface Order {
   /** @deprecated kept for old screens — prefer resultFiles. */
   resultPdfUrl?: string;
   resultFiles?: OrderResultFile[];
+  /** Customer-uploaded prescription image. Storage path on create; signed
+   *  URL after enrichOrdersWithSignedUrls. NULL for non-prescription orders. */
+  prescriptionUrl?: string;
   nurseId?: string;
   labId?: string;
   internalNotes?: string;

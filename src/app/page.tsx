@@ -50,6 +50,9 @@ interface BookingState {
   address?: Address;
   patient?: Patient;
   paymentMethod?: PaymentMethod;
+  /** Storage path returned by /api/customers/[id]/prescriptions when the
+   *  customer chose the prescription flow. Forwarded to /api/orders. */
+  prescriptionPath?: string;
 }
 
 export default function App() {
@@ -216,6 +219,7 @@ function CustomerApp() {
       instructions: dedupeInstructions(COMMON_INSTRUCTIONS),
       publicNumber,
       initialStatus,
+      prescriptionUrl: booking.prescriptionPath,
     });
     setLastIdempotencyKey(snapshot.idempotencyKey);
     setBooking((b) => ({ ...b, paymentMethod: snapshot.paymentMethod }));
@@ -350,9 +354,9 @@ function CustomerApp() {
       case "prescription":
         return (
           <PrescriptionUploader
-            onContinue={(tests) => {
-              if (!requireLogin(() => { setBooking({ tests }); setView("booking"); })) return;
-              setBooking({ tests }); setView("booking");
+            onContinue={({ tests, prescriptionPath }) => {
+              if (!requireLogin(() => { setBooking({ tests, prescriptionPath }); setView("booking"); })) return;
+              setBooking({ tests, prescriptionPath }); setView("booking");
             }}
             onBack={goHome}
           />

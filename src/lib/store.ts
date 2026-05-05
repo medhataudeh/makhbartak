@@ -278,6 +278,10 @@ interface CreateOrderInput {
   /** Phase 1: required to write to Supabase via /api/orders. When omitted or
    *  not a customer session, the order stays local-only (mock mode). */
   session?: AuthSession;
+  /** Phase 3.6: storage path of the customer-uploaded prescription image
+   *  (returned by /api/customers/[id]/prescriptions). Forwarded to
+   *  /api/orders POST so place_order_admin persists it on the row. */
+  prescriptionUrl?: string;
 }
 
 export function createOrder(input: CreateOrderInput): Order {
@@ -311,6 +315,7 @@ export function createOrder(input: CreateOrderInput): Order {
     paymentMethod: input.paymentMethod,
     paymentStatus: input.paymentStatus,
     instructions: input.instructions,
+    prescriptionUrl: input.prescriptionUrl,
     nurseId: undefined,
     labId: undefined,
     resultFiles: [],
@@ -397,6 +402,7 @@ async function writeOrderRemote(order: Order, input: CreateOrderInput): Promise<
     paymentMethod: order.paymentMethod,
     paymentStatus: order.paymentStatus,
     initialStatus: order.status,
+    prescriptionUrl: input.prescriptionUrl,
   });
   if ("error" in result) {
     console.warn("[api/orders] create failed; keeping local order", result.error);

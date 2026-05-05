@@ -1,7 +1,9 @@
 "use client";
 import { useState } from "react";
 import { motion } from "framer-motion";
+import Image from "next/image";
 import { Lock, User, Eye, EyeOff, FlaskConical, AlertCircle } from "lucide-react";
+import { useBranding } from "@/lib/branding";
 import { Button } from "@/components/ui/Button";
 import { loginUser } from "@/lib/auth";
 import type { AuthSession, Role } from "@/lib/types";
@@ -30,6 +32,7 @@ export function LoginForm({
   brandTitle, brandSubtitle, allowedRoles, onSuccess, demoCredentials,
   onForgotPassword, onSignup,
 }: Props) {
+  const branding = useBranding();
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
@@ -62,9 +65,15 @@ export function LoginForm({
         className="w-full max-w-md bg-white rounded-2xl border border-gray-100 p-6 md:p-8"
       >
         <div className="flex items-center gap-3 mb-6">
-          <div className="w-12 h-12 rounded-2xl bg-[#ECFEFF] flex items-center justify-center">
-            <FlaskConical size={22} className="text-[#0891B2]" aria-hidden="true" />
-          </div>
+          {branding.logos.main ? (
+            <div className="relative w-12 h-12 rounded-2xl overflow-hidden bg-white">
+              <Image src={branding.logos.main} alt="" fill sizes="48px" className="object-cover" />
+            </div>
+          ) : (
+            <div className="w-12 h-12 rounded-2xl bg-[#ECFEFF] flex items-center justify-center">
+              <FlaskConical size={22} className="text-[#0891B2]" aria-hidden="true" />
+            </div>
+          )}
           <div>
             <h1 className="text-lg font-bold text-[#164E63]">{brandTitle}</h1>
             {brandSubtitle && <p className="text-xs text-gray-500">{brandSubtitle}</p>}

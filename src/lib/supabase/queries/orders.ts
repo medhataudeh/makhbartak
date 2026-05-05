@@ -20,7 +20,7 @@ const ORDER_SELECT = `
   payment_method, payment_status,
   nurse_id, lab_id, internal_notes, failed_reason,
   patient_official_name, patient_national_id,
-  package_snapshot, created_at, updated_at,
+  package_snapshot, prescription_url, created_at, updated_at,
   address:addresses ( id, customer_id, label, description, city, lat, lng, is_default ),
   patient:patients ( id, customer_id, name, national_id, note, is_default ),
   items:order_items ( id, lab_test_id, name_ar_snapshot, name_en_snapshot, price_snapshot, display_order ),
@@ -44,7 +44,7 @@ const ORDER_SELECT_BARE = `
   payment_method, payment_status,
   nurse_id, lab_id, internal_notes, failed_reason,
   patient_official_name, patient_national_id,
-  package_snapshot, created_at, updated_at,
+  package_snapshot, prescription_url, created_at, updated_at,
   patient_id, address_id
 `;
 
@@ -136,39 +136,45 @@ export async function enrichOrdersWithSignedUrls(
   sb: SupabaseClient,
   orders: Order[],
 ): Promise<Order[]> {
-  // Collect storage paths for active files only — archived files don't need
-  // a customer-visible URL and the bucket's customer RLS only permits
-  // active rows anyway.
-  const paths = new Set<string>();
+  // Result files (active rows only) live in `lab-results`. Prescription
+  // images live in `prescriptions`. Both are private buckets — sign in
+  // parallel and merge.
+  const resultPaths = new Set<string>();
+  const rxPaths = new Set<string>();
   for (const o of orders) {
     for (const f of o.resultFiles ?? []) {
-      if (f.isActive && looksLikeStoragePath(f.fileUrl)) paths.add(f.fileUrl);
+      if (f.isActive && looksLikeStoragePath(f.fileUrl)) resultPaths.add(f.fileUrl);
+    }
+    if (o.prescriptionUrl && looksLikeStoragePath(o.prescriptionUrl)) {
+      rxPaths.add(o.prescriptionUrl);
     }
   }
-  if (paths.size === 0) return orders;
+  if (resultPaths.size === 0 && rxPaths.size === 0) return orders;
 
-  const pathList = Array.from(paths);
-  const { data, error } = await sb.storage
-    .from("lab-results")
-    .createSignedUrls(pathList, SIGNED_URL_TTL_SECONDS);
-  if (error || !data) {
-    console.warn("[supabase] createSignedUrls failed", error);
-    return orders;
+  const [resSigned, rxSigned] = await Promise.all([
+    resultPaths.size === 0 ? null : sb.storage
+      .from("lab-results")
+      .createSignedUrls(Array.from(resultPaths), SIGNED_URL_TTL_SECONDS),
+    rxPaths.size === 0 ? null : sb.storage
+      .from("prescriptions")
+      .createSignedUrls(Array.from(rxPaths), SIGNED_URL_TTL_SECONDS),
+  ]);
+  const map = new Map<string, string>();
+  for (const row of resSigned?.data ?? []) {
+    if (row.path && row.signedUrl) map.set(row.path, row.signedUrl);
   }
-  const signed = new Map<string, string>();
-  for (const row of data) {
-    if (row.path && row.signedUrl) signed.set(row.path, row.signedUrl);
+  for (const row of rxSigned?.data ?? []) {
+    if (row.path && row.signedUrl) map.set(row.path, row.signedUrl);
   }
+
   return orders.map((o) => {
-    if (!o.resultFiles?.length) return o;
-    return {
-      ...o,
-      resultFiles: o.resultFiles.map((f) =>
-        f.isActive && signed.has(f.fileUrl)
-          ? { ...f, fileUrl: signed.get(f.fileUrl)! }
-          : f,
-      ),
-    };
+    const resultFiles = o.resultFiles?.map((f) =>
+      f.isActive && map.has(f.fileUrl) ? { ...f, fileUrl: map.get(f.fileUrl)! } : f,
+    ) ?? o.resultFiles;
+    const prescriptionUrl = o.prescriptionUrl && map.has(o.prescriptionUrl)
+      ? map.get(o.prescriptionUrl)!
+      : o.prescriptionUrl;
+    return { ...o, resultFiles, prescriptionUrl };
   });
 }
 
@@ -319,6 +325,7 @@ function mapRowToOrder(r: RawOrderRow): Order {
             nationalId: r.patient_national_id ?? "",
           }
         : undefined,
+      prescriptionUrl: r.prescription_url ?? undefined,
       events: ((r.events ?? []) as RawEvent[]).map<OrderEvent>((e) => ({
         id: e.id,
         orderId: r.id,
@@ -413,6 +420,7 @@ interface RawOrderRow {
   patient_official_name: string | null;
   patient_national_id: string | null;
   package_snapshot: unknown;
+  prescription_url?: string | null;
   created_at: string;
   updated_at: string;
   address: RawAddress | null;

@@ -31,6 +31,8 @@ interface CreateOrderBody {
     paymentMethod: PaymentMethod;
     paymentStatus: "pending" | "paid" | "failed";
     initialStatus: OrderStatus;
+    /** Storage path returned by the prescriptions upload route. */
+    prescriptionUrl?: string;
   };
 }
 
@@ -90,6 +92,7 @@ export async function POST(req: NextRequest) {
     total: order.total,
     payment_method: order.paymentMethod,
     payment_status: order.paymentStatus,
+    prescription_url: order.prescriptionUrl ?? null,
     items: order.items.map((it, idx) => ({
       lab_test_id: it.testId,
       name_ar_snapshot: it.nameAr,

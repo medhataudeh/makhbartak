@@ -27,7 +27,9 @@ import { formatDate, formatPrice, getShiftLabel } from "@/lib/utils";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { Button } from "@/components/ui/Button";
 import { OrderControlCenter } from "@/components/admin/OrderControlCenter";
+import { MediaPicker } from "@/components/admin/MediaPicker";
 import { useToast } from "@/components/ui/Toast";
+import { useBranding } from "@/lib/branding";
 
 // Lab portal lifecycle statuses — anything we can act on, plus completed for history.
 const LAB_STATUSES = [
@@ -235,6 +237,9 @@ function LabSetupError({ message, onLogout }: { message: string; onLogout: () =>
 type LabSection = "orders" | "results" | "issues" | "accounting" | "lab_settings";
 
 function LabPortalShell({ lab, labUser, onLogout }: { lab: Lab; labUser: LabUser; onLogout: () => void }) {
+  // Phase 3.6: platform branding fallback when the lab has no logo of its own.
+  const platformBranding = useBranding();
+  const platformLogo = platformBranding.logos.labPortal ?? platformBranding.logos.main;
   const orders = useOrders();
   const labOrders = useMemo(
     () => orders.filter((o) => o.labId === lab.id && (LAB_STATUSES as readonly string[]).includes(o.status)),
@@ -262,15 +267,18 @@ function LabPortalShell({ lab, labUser, onLogout }: { lab: Lab; labUser: LabUser
       {/* Mobile top bar — brand + logout. Section nav is a horizontal scroller below. */}
       <div className="md:hidden sticky top-0 z-30 bg-white border-b border-gray-100">
         <div className="px-4 py-3 flex items-center gap-3" style={{ background: brand.accentColor }}>
-          {lab.branding?.logo ?? lab.logo ? (
-            <div className="w-9 h-9 rounded-xl overflow-hidden bg-white relative flex-shrink-0">
-              <Image src={(lab.branding?.logo ?? lab.logo)!} alt="" fill sizes="36px" className="object-cover" />
-            </div>
-          ) : (
-            <div className="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0" style={{ background: brand.primaryColor }}>
-              <Building2 size={16} className="text-white" aria-hidden="true" />
-            </div>
-          )}
+          {(() => {
+            const url = lab.branding?.logo ?? lab.logo ?? platformLogo;
+            return url ? (
+              <div className="w-9 h-9 rounded-xl overflow-hidden bg-white relative flex-shrink-0">
+                <Image src={url} alt="" fill sizes="36px" className="object-cover" />
+              </div>
+            ) : (
+              <div className="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0" style={{ background: brand.primaryColor }}>
+                <Building2 size={16} className="text-white" aria-hidden="true" />
+              </div>
+            );
+          })()}
           <div className="flex-1 min-w-0">
             <p className="text-sm font-bold truncate" style={{ color: brand.primaryColor }}>{portalName}</p>
             <p className="text-[11px] truncate" style={{ color: brand.secondaryColor }}>
@@ -308,15 +316,18 @@ function LabPortalShell({ lab, labUser, onLogout }: { lab: Lab; labUser: LabUser
       {/* Desktop sidebar */}
       <aside className="hidden md:flex md:w-72 lg:w-80 bg-white border-s border-gray-100 flex-col h-screen sticky top-0">
         <div className="px-4 py-4 border-b border-gray-100 flex items-center gap-3" style={{ background: brand.accentColor }}>
-          {lab.branding?.logo ?? lab.logo ? (
-            <div className="w-10 h-10 rounded-xl overflow-hidden bg-white relative flex-shrink-0">
-              <Image src={(lab.branding?.logo ?? lab.logo)!} alt="" fill sizes="40px" className="object-cover" />
-            </div>
-          ) : (
-            <div className="w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0" style={{ background: brand.primaryColor }}>
-              <Building2 size={18} className="text-white" aria-hidden="true" />
-            </div>
-          )}
+          {(() => {
+            const url = lab.branding?.logo ?? lab.logo ?? platformLogo;
+            return url ? (
+              <div className="w-10 h-10 rounded-xl overflow-hidden bg-white relative flex-shrink-0">
+                <Image src={url} alt="" fill sizes="40px" className="object-cover" />
+              </div>
+            ) : (
+              <div className="w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0" style={{ background: brand.primaryColor }}>
+                <Building2 size={18} className="text-white" aria-hidden="true" />
+              </div>
+            );
+          })()}
           <div className="flex-1 min-w-0">
             <p className="text-sm font-bold truncate" style={{ color: brand.primaryColor }}>{portalName}</p>
             <p className="text-[11px] truncate" style={{ color: brand.secondaryColor }}>
@@ -537,6 +548,27 @@ function OrdersSection({ lab, labUser, labOrders, brand, resultsFocus }: {
                 <InfoCard label="عدد التحاليل" value={String(selected.items.length)} />
               )}
             </div>
+
+            {/* Phase 3.6 — customer's prescription image (if uploaded). */}
+            {selected.prescriptionUrl && (
+              <section className="bg-white rounded-2xl border border-gray-100 p-5 mb-5">
+                <header className="flex items-center justify-between mb-3">
+                  <h2 className="text-sm font-bold text-[#164E63] flex items-center gap-2">
+                    <FileText size={16} style={{ color: brand.primaryColor }} aria-hidden="true" />
+                    الوصفة المرفوعة
+                  </h2>
+                </header>
+                <a
+                  href={selected.prescriptionUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="block relative w-full h-56 bg-gray-50 rounded-lg overflow-hidden cursor-pointer"
+                >
+                  <Image src={selected.prescriptionUrl} alt="الوصفة" fill sizes="(max-width: 1024px) 100vw, 600px" className="object-contain" />
+                </a>
+                <p className="text-[11px] text-gray-400 mt-2 text-center">رابط موقّت — يصلح للتنزيل خلال ساعة.</p>
+              </section>
+            )}
 
             {/* Tests — sell price only when permitted */}
             <section className="bg-white rounded-2xl border border-gray-100 p-5 mb-5">
@@ -1248,7 +1280,7 @@ function LabSettingsSection({ lab }: { lab: Lab }) {
       <Card title="بيانات أساسية">
         <Field label="الاسم بالعربية"><input value={draft.nameAr} onChange={(e) => set("nameAr", e.target.value)} className="w-full h-10 px-3 rounded-xl border border-gray-200 text-sm" /></Field>
         <Field label="الاسم بالإنجليزية"><input value={draft.nameEn} onChange={(e) => set("nameEn", e.target.value)} className="w-full h-10 px-3 rounded-xl border border-gray-200 text-sm lat" dir="ltr" /></Field>
-        <Field label="رابط الشعار"><input value={draft.logo} onChange={(e) => set("logo", e.target.value)} placeholder="https://…" className="w-full h-10 px-3 rounded-xl border border-gray-200 text-sm lat" dir="ltr" /></Field>
+        <MediaPicker label="شعار المخبر" value={draft.logo ?? ""} onChange={(url) => set("logo", url)} compact />
       </Card>
 
       <Card title="التواصل">
