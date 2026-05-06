@@ -4,7 +4,7 @@ import { enrichOrdersWithSignedUrls, fetchOrderById } from "@/lib/supabase/queri
 import { isUuid } from "@/lib/supabase/uuid";
 import { requireAdmin } from "@/lib/route-auth";
 
-interface ForceCompleteBody { reason: string }
+interface ForceCompleteBody { reason: string; allowUnpaid?: boolean }
 
 export async function POST(
   req: NextRequest,
@@ -23,14 +23,23 @@ export async function POST(
   }
 
   const sb = getSupabaseAdmin();
+  // Phase 4.1.1 — RPC refuses unpaid by default. Caller must opt in via
+  // allowUnpaid=true; that path stamps [unpaid_force] on the history note
+  // and skips commission accrual server-side.
   const { error: rpcErr } = await sb.rpc("force_complete_order_admin", {
     p_order_id: orderId,
     p_reason: body.reason,
     p_actor_role: auth.session.role,
     p_actor_id: auth.session.userId,
     p_actor_name: auth.session.fullName ?? null,
+    p_allow_unpaid: !!body.allowUnpaid,
   });
-  if (rpcErr) return NextResponse.json({ error: rpcErr.message }, { status: 500 });
+  if (rpcErr) {
+    const msg = rpcErr.message ?? "تعذر إغلاق الطلب";
+    const isBusiness = typeof msg === "string" && msg.includes("لا يمكن إغلاق طلب غير مدفوع");
+    if (isBusiness) return NextResponse.json({ error: msg }, { status: 409 });
+    return NextResponse.json({ error: msg }, { status: 500 });
+  }
 
   const hydrated = await fetchOrderById(sb, orderId);
   const [enriched] = hydrated ? await enrichOrdersWithSignedUrls(sb, [hydrated]) : [null];

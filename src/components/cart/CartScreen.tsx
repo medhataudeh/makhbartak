@@ -10,6 +10,7 @@ import { BottomSheet } from "@/components/ui/BottomSheet";
 import { BackButton } from "@/components/ui/BackButton";
 import { usePreferredPayment, setPreferredPayment } from "@/lib/payment-pref";
 import { useToast } from "@/components/ui/Toast";
+import { useSystemSettings } from "@/lib/system-settings";
 
 export interface CartConfirmSnapshot {
   paymentMethod: PaymentMethod;
@@ -41,6 +42,11 @@ interface CartScreenProps {
 export function CartScreen({ tests, pkg, shift, address, patient, onConfirm, onBack }: CartScreenProps) {
   const savedMethod = usePreferredPayment();
   const toast = useToast();
+  const settings = useSystemSettings();
+  // Phase 4.3: online checkout is opt-in. Hide the option entirely when
+  // enable_stripe is false so a customer never picks something we cannot
+  // settle. Cash stays available as long as allowCashOrders is true.
+  const onlineEnabled = !!settings.enableStripe;
   // Idempotency key: stable for this CartScreen mount. Duplicate confirm
   // clicks reuse the same key; createOrder dedupes server-side.
   const [idempotencyKey] = useState(() => `idem-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`);
@@ -56,7 +62,10 @@ export function CartScreen({ tests, pkg, shift, address, patient, onConfirm, onB
 
   // Always have a value: saved preference, else cash by default for SY market.
   // The user can change via the bottom sheet but is never *forced* to pick.
-  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>(savedMethod ?? "cash");
+  // If the saved preference is "online" but Stripe was just disabled, fall
+  // back to cash so the cart stays usable.
+  const initialMethod: PaymentMethod = savedMethod === "online" && !onlineEnabled ? "cash" : (savedMethod ?? "cash");
+  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>(initialMethod);
 
   // Subtotal: package counts as ONE line at its package price.
   // Coupon applies to subtotal regardless of order type (package, custom, prescription).
@@ -301,10 +310,11 @@ export function CartScreen({ tests, pkg, shift, address, patient, onConfirm, onB
       {/* Payment sheet */}
       <BottomSheet open={paymentSheet} onClose={() => setPaymentSheet(false)} title="طريقة الدفع">
         <div className="px-4 py-4 space-y-2">
-          {([
-            { value: "online" as PaymentMethod, Icon: CreditCard, iconClass: "text-[#0891B2]", label: "الدفع الإلكتروني", sub: "فيزا، ماستركارد" },
+          {(([
+            // Phase 4.3 — only surface online when Stripe is enabled.
+            ...(onlineEnabled ? [{ value: "online" as PaymentMethod, Icon: CreditCard, iconClass: "text-[#0891B2]", label: "الدفع الإلكتروني", sub: "فيزا، ماستركارد" }] : []),
             { value: "cash" as PaymentMethod, Icon: Banknote, iconClass: "text-[#059669]", label: "الدفع عند الاستلام", sub: "نقداً عند وصول الممرض" },
-          ]).map((opt) => (
+          ]) as { value: PaymentMethod; Icon: typeof CreditCard; iconClass: string; label: string; sub: string }[]).map((opt) => (
             <motion.button
               key={opt.value}
               whileTap={{ scale: 0.97 }}

@@ -4,20 +4,20 @@ import { enrichOrdersWithSignedUrls, fetchOrderById } from "@/lib/supabase/queri
 import { isUuid } from "@/lib/supabase/uuid";
 import { requireAuthedUser } from "@/lib/route-auth";
 
-const ALLOWED = ["pending", "paid", "failed", "refunded"] as const;
+// Phase 4.1.1 — `paid` is no longer accepted here. The canonical paths are:
+//   * Nurse  → POST /api/orders/[id]/cash-collected (RPC nurse_collect_cash)
+//   * Admin  → POST /api/admin/orders/[id]/record-cash-payment (RPC admin_record_cash_payment)
+// Both RPCs write the payments row, flip orders.payment_status, credit the
+// nurse wallet, and log history in one transaction. Allowing `paid` here
+// would re-open the off-ledger flip-the-status hole flagged by the audit.
+const ALLOWED = ["pending", "failed", "refunded"] as const;
 type AllowedPaymentStatus = (typeof ALLOWED)[number];
 
 interface SetPaymentStatusBody {
-  paymentStatus: AllowedPaymentStatus;
+  paymentStatus: AllowedPaymentStatus | "paid";
   note?: string;
 }
 
-// POST /api/orders/[id]/payment-status
-// Admin can set any payment status. Nurse can ONLY mark a cash order as
-// `paid` (collection confirmation). Any other transition from a nurse
-// session is rejected. Always re-checks that the order is assigned to the
-// nurse — the FK comparison uses `nurses.id` (= auth.session.nurseId), not
-// `profile_id` / auth user id.
 export async function POST(
   req: NextRequest,
   ctx: { params: Promise<{ id: string }> },
@@ -26,42 +26,28 @@ export async function POST(
   if (!isUuid(orderId)) return NextResponse.json({ error: "order id must be a uuid" }, { status: 400 });
   const auth = await requireAuthedUser();
   if (!auth.ok) return NextResponse.json({ error: auth.error }, { status: auth.status });
-  if (auth.session.role !== "admin" && auth.session.role !== "nurse") {
-    return NextResponse.json({ error: "role not authorized" }, { status: 403 });
+  if (auth.session.role !== "admin") {
+    // Nurse calls the dedicated cash-collected endpoint. Anything else has no
+    // business mutating payment_status, so this is admin-only post-4.1.1.
+    return NextResponse.json({
+      error: "هذه العملية متاحة للإدارة فقط. الممرض يستخدم تأكيد التحصيل النقدي.",
+    }, { status: 403 });
   }
   let body: SetPaymentStatusBody;
   try { body = await req.json(); } catch {
     return NextResponse.json({ error: "invalid json" }, { status: 400 });
   }
   const { paymentStatus, note } = body ?? {};
+  if (paymentStatus === "paid") {
+    return NextResponse.json({
+      error: "لا يمكن وضع الطلب كمدفوع من هنا. استخدم تسجيل التحصيل النقدي أو مسار الدفع الإلكتروني.",
+    }, { status: 409 });
+  }
   if (!ALLOWED.includes(paymentStatus as AllowedPaymentStatus)) {
     return NextResponse.json({ error: "حالة الدفع غير صالحة" }, { status: 400 });
   }
 
   const sb = getSupabaseAdmin();
-
-  // Nurse-specific gating — verify ownership + restrict to cash-collection.
-  if (auth.session.role === "nurse") {
-    const { data: row, error: rowErr } = await sb
-      .from("orders").select("id, nurse_id, payment_method").eq("id", orderId).maybeSingle();
-    if (rowErr) {
-      console.error("[api/orders/payment-status] order lookup failed", { orderId, code: rowErr.code, message: rowErr.message });
-      return NextResponse.json({ error: "تعذر قراءة الطلب من قاعدة البيانات" }, { status: 500 });
-    }
-    if (!row) return NextResponse.json({ error: "الطلب غير موجود" }, { status: 404 });
-    if (!auth.session.nurseId || row.nurse_id !== auth.session.nurseId) {
-      console.warn("[api/orders/payment-status] nurse tried to update unassigned order", {
-        orderId, expected: row.nurse_id, sessionNurseId: auth.session.nurseId,
-      });
-      return NextResponse.json({ error: "هذا الطلب غير مخصص لك" }, { status: 403 });
-    }
-    if (row.payment_method !== "cash") {
-      return NextResponse.json({ error: "تأكيد التحصيل متاح للطلبات النقدية فقط" }, { status: 400 });
-    }
-    if (paymentStatus !== "paid") {
-      return NextResponse.json({ error: "الممرض يستطيع تأكيد تحصيل الدفع فقط" }, { status: 403 });
-    }
-  }
 
   const { error: rpcErr } = await sb.rpc("set_payment_status_admin", {
     p_order_id: orderId,

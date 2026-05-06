@@ -21,7 +21,8 @@ export async function GET(req: NextRequest) {
   let q = sb.from("payments")
     .select(`
       id, order_id, method, status, amount, currency, provider, provider_ref,
-      paid_at, collected_by_nurse_id, collected_at,
+      charged_amount, provider_currency, exchange_rate,
+      paid_at, collected_by_nurse_id, collected_at, refunded_amount, refunded_at, refund_reason,
       verified_by_admin_id, verified_at, created_at,
       order:orders!inner ( public_number, total, payment_method ),
       nurse:nurses ( id, profile:profiles!inner ( full_name ) )
@@ -38,9 +39,10 @@ export async function GET(req: NextRequest) {
   type Row = {
     id: string; order_id: string; method: string; status: string;
     amount: number; currency: string; provider: string | null; provider_ref: string | null;
+    charged_amount: number | null; provider_currency: string | null; exchange_rate: number | null;
     paid_at: string | null; collected_by_nurse_id: string | null; collected_at: string | null;
+    refunded_amount: number | null; refunded_at: string | null; refund_reason: string | null;
     verified_by_admin_id: string | null; verified_at: string | null; created_at: string;
-    // PostgREST returns embedded to-one rows as arrays in the generated types.
     order: { public_number: string | null; total: number | null; payment_method: string }[] | null;
     nurse: { id: string; profile: { full_name: string | null }[] | null }[] | null;
   };
@@ -60,12 +62,18 @@ export async function GET(req: NextRequest) {
       currency:         row.currency ?? "SYP",
       provider:         row.provider,
       providerRef:      row.provider_ref,
+      chargedAmount:    row.charged_amount === null || row.charged_amount === undefined ? null : Number(row.charged_amount),
+      providerCurrency: row.provider_currency,
+      exchangeRate:     row.exchange_rate === null || row.exchange_rate === undefined ? null : Number(row.exchange_rate),
       paidAt:           row.paid_at,
       collectedAt:      row.collected_at,
       collectedByNurseId: row.collected_by_nurse_id,
       collectedByNurseName: profileRow?.full_name ?? null,
       verifiedByAdminId: row.verified_by_admin_id,
       verifiedAt:       row.verified_at,
+      refundedAmount:   Number(row.refunded_amount ?? 0),
+      refundedAt:       row.refunded_at,
+      refundReason:     row.refund_reason,
       createdAt:        row.created_at,
     };
   });

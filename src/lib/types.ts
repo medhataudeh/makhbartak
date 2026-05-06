@@ -236,7 +236,7 @@ export interface Order {
   /** Filled by the nurse during patient verification. */
   patientVerification?: PatientVerification;
   paymentMethod: PaymentMethod;
-  paymentStatus: "pending" | "paid" | "failed";
+  paymentStatus: "pending" | "paid" | "failed" | "refunded";
   instructions: Instruction[];
   /** @deprecated kept for old screens — prefer resultFiles. */
   resultPdfUrl?: string;

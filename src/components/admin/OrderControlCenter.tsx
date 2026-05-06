@@ -17,7 +17,7 @@ import { formatDate, formatPrice, getShiftLabel, relativeTime } from "@/lib/util
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { Button } from "@/components/ui/Button";
 import {
-  setOrderStatus, assignNurse, assignLab, applyCoupon, setPaymentStatus,
+  setOrderStatus, assignNurse, assignLab, applyCoupon, setPaymentStatus, recordAdminCashPayment,
   uploadResultFile, archiveResultFile, restoreResultFile, openLabIssue, resolveLabIssue,
   confirmResultsReady, forceCompleteOrder,
   cancelOrder, rescheduleOrder, addNote, useOrders,
@@ -231,12 +231,17 @@ function StickyHeader({ order, role, onClose, onOpenUser }: {
                       }
                     }} />
                     <ActionItem icon={CreditCard} label="تغيير حالة الدفع" onClick={async () => {
-                      const next = window.prompt("paid / pending / failed:", order.paymentStatus);
-                      if (next === "paid" || next === "pending" || next === "failed") {
+                      // Phase 4.1.1: 'paid' transitions go through the cash-payment
+                      // RPC (separate menu item below). This route handles the
+                      // operational pending/failed/refunded transitions only.
+                      const next = window.prompt("pending / failed / refunded:", order.paymentStatus === "paid" ? "pending" : order.paymentStatus);
+                      if (next === "pending" || next === "failed" || next === "refunded") {
                         const r = await setPaymentStatus(order.id, next, ref);
                         if (!r.ok) toast.error(r.error ?? "تعذر تغيير حالة الدفع");
                         else record(role, "invoice_status", "order", order.id, `حالة الدفع → ${next}`);
                         setActionsOpen(false);
+                      } else if (next === "paid") {
+                        toast.error("استخدم زر «تسجيل تحصيل نقدي» في الملخص المالي.");
                       }
                     }} />
                     <hr className="my-1 border-gray-100" />
@@ -880,14 +885,34 @@ function FinanceTab({ order, role, ref }: {
       {editable && (
         <Card title="إجراءات" icon={<Pencil size={14} aria-hidden="true" />}>
           <div className="flex flex-wrap gap-2">
-            <Button size="sm" variant="outline" onClick={async () => {
-              const r = await setPaymentStatus(order.id, "paid", ref);
-              if (!r.ok) toast.error(r.error ?? "تعذر تأكيد الدفع");
-            }}>تأكيد الدفع</Button>
-            <Button size="sm" variant="outline" onClick={async () => {
-              const r = await setPaymentStatus(order.id, "pending", ref);
-              if (!r.ok) toast.error(r.error ?? "تعذر تعليق الدفع");
-            }}>تعليق الدفع</Button>
+            {/* Phase 4.1.1 — admin office cash collection. Calls
+                admin_record_cash_payment which writes the paid payments row
+                + (if a nurse is assigned) wallet credit + history in one
+                transaction. Online and already-paid orders disable. */}
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={order.paymentMethod !== "cash" || order.paymentStatus === "paid"}
+              onClick={async () => {
+                const note = window.prompt("ملاحظة (اختياري):", "تحصيل في المكتب") ?? undefined;
+                const r = await recordAdminCashPayment(order.id, ref, note?.trim() || undefined);
+                if (!r.ok) toast.error(r.error ?? "تعذر تسجيل التحصيل");
+                else toast.success("تم تسجيل التحصيل النقدي");
+              }}
+            >تسجيل تحصيل نقدي</Button>
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={order.paymentStatus !== "paid"}
+              onClick={async () => {
+                const reason = window.prompt("سبب الاسترداد:", "");
+                if (reason === null) return;
+                const r = await setPaymentStatus(order.id, "refunded", ref);
+                if (!r.ok) toast.error(r.error ?? "تعذر استرداد الدفع");
+                else toast.success("تم تسجيل الاسترداد");
+                void reason;
+              }}
+            >استرداد الدفع</Button>
             <Button size="sm" variant="outline" onClick={() => window.print()}>
               <Download size={13} aria-hidden="true" /> الفاتورة
             </Button>

@@ -21,7 +21,7 @@ export interface ApiCreateOrderInput {
   patientId: string;
   addressId: string;
   paymentMethod: PaymentMethod;
-  paymentStatus: "pending" | "paid" | "failed";
+  paymentStatus: "pending" | "paid" | "failed" | "refunded";
   initialStatus: OrderStatus;
   /** Storage path returned by /api/customers/[id]/prescriptions when type === "prescription". */
   prescriptionUrl?: string;
@@ -209,6 +209,25 @@ export async function apiCollectCash(
 ): Promise<{ order: Order | null } | { error: string }> {
   const res = await fetch(`/api/orders/${encodeURIComponent(orderId)}/cash-collected`, {
     method: "POST",
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    return { error: body.error ?? `HTTP ${res.status}` };
+  }
+  return res.json();
+}
+
+// Phase 4.1.1 — admin office-collection. Same on-ledger contract as
+// apiCollectCash; the RPC writes the paid payment row + history + (if a
+// nurse is assigned) wallet credit in one transaction.
+export async function apiAdminRecordCashPayment(
+  orderId: string,
+  note?: string,
+): Promise<{ order: Order | null } | { error: string }> {
+  const res = await fetch(`/api/admin/orders/${encodeURIComponent(orderId)}/record-cash-payment`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ note }),
   });
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));

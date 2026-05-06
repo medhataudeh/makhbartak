@@ -22,7 +22,8 @@ import {
   apiCreateOrder, apiListOrdersForAdmin, apiListOrdersForCustomer, apiListOrdersForNurse,
   apiSetOrderStatus, apiUploadLabResultFile, apiArchiveLabResultFile, apiConfirmLabResults,
   apiAssignNurse, apiAssignLab,
-  apiAddOrderNote, apiApplyCoupon, apiSetPaymentStatus, apiCollectCash, apiCancelOrder,
+  apiAddOrderNote, apiApplyCoupon, apiSetPaymentStatus, apiCollectCash,
+  apiAdminRecordCashPayment, apiCancelOrder,
   apiRescheduleOrder, apiVerifyPatient, apiForceCompleteOrder,
 } from "./orders-api";
 import { isUuid } from "./supabase/uuid";
@@ -660,24 +661,41 @@ export function applyCoupon(orderId: string, code: string, discount: number, ref
   );
 }
 
-export function setPaymentStatus(orderId: string, status: Order["paymentStatus"], ref: ActorRef): Promise<{ ok: boolean; error?: string }> {
+// Phase 4.1.1 — admin-side payment status mutator. The 'paid' transition is
+// no longer accepted here; admins must use recordAdminCashPayment so the
+// payments row + wallet ledger move atomically. The 'refunded' transition
+// runs reverse_cash_collection_admin server-side when the order was paid.
+export function setPaymentStatus(
+  orderId: string,
+  status: Exclude<Order["paymentStatus"], "paid">,
+  ref: ActorRef,
+): Promise<{ ok: boolean; error?: string }> {
   mutateOrder(orderId, (o) => ({ ...o, paymentStatus: status, updatedAt: new Date().toISOString() }));
   appendEvent(orderId, "payment_status_changed", ref, status);
-  // Phase 3.5: notify admins when payment is collected on a cash order.
-  if (status === "paid") {
-    const order = getOrder(orderId);
-    if (order) {
-      void notifyAdminsViaApi({
-        type: "admin_note",
-        titleAr: "تم تحصيل الدفع",
-        bodyAr: `${order.publicNumber ?? "—"} — ${order.patient.name}`,
-        orderId: isUuid(order.id) ? order.id : undefined,
-      });
-    }
-  }
   return persistOrderActionViaApi(orderId, async () =>
-    apiSetPaymentStatus(orderId, status as "pending" | "paid" | "failed" | "refunded"),
+    apiSetPaymentStatus(orderId, status as "pending" | "failed" | "refunded"),
   );
+}
+
+// Phase 4.1.1 — admin office cash-collection. Use this from admin UI; never
+// flip payment_status='paid' directly.
+export function recordAdminCashPayment(orderId: string, ref: ActorRef, note?: string): Promise<{ ok: boolean; error?: string }> {
+  mutateOrder(orderId, (o) =>
+    o.paymentMethod === "cash" && o.paymentStatus !== "paid"
+      ? { ...o, paymentStatus: "paid", updatedAt: new Date().toISOString() }
+      : o,
+  );
+  appendEvent(orderId, "payment_status_changed", ref, "paid");
+  const order = getOrder(orderId);
+  if (order) {
+    void notifyAdminsViaApi({
+      type: "admin_note",
+      titleAr: "تم تحصيل الدفع (إدارة)",
+      bodyAr: `${order.publicNumber ?? "—"} — ${order.patient.name}`,
+      orderId: isUuid(order.id) ? order.id : undefined,
+    });
+  }
+  return persistOrderActionViaApi(orderId, async () => apiAdminRecordCashPayment(orderId, note));
 }
 
 // Phase 4.1 — nurse confirms they have cash in hand. Distinct from
