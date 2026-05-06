@@ -20,6 +20,7 @@ import { useToast } from "@/components/ui/Toast";
 import { checkPassword, PASSWORD_HINT_AR } from "@/lib/password-policy";
 import { formatDate, formatPrice, relativeTime } from "@/lib/utils";
 import { Button } from "@/components/ui/Button";
+import { BottomSheet } from "@/components/ui/BottomSheet";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { CredentialsShareSheet, generateTempPassword, type ShareableCredentials } from "@/components/admin/CredentialsShareSheet";
 import { MediaPicker } from "@/components/admin/MediaPicker";
@@ -517,6 +518,14 @@ function LabOrders({ lab, labs, orders, adminRef }: {
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [city, setCity] = useState<string>("all");
   const [date, setDate] = useState<string>("");
+  // U3.D: order id whose lab the admin is currently reassigning. null when
+  // the picker sheet is closed.
+  const [reassignTarget, setReassignTarget] = useState<string | null>(null);
+  // U3.D: per-issue sheet targets. null when the corresponding sheet is
+  // closed; when set, the parent looks up the issue from allIssues to seed
+  // the sheet's initialValue.
+  const [messageTarget, setMessageTarget] = useState<string | null>(null);
+  const [resolveTarget, setResolveTarget] = useState<string | null>(null);
 
   const cities = useMemo(() => {
     const set = new Set<string>();
@@ -531,20 +540,7 @@ function LabOrders({ lab, labs, orders, adminRef }: {
     return true;
   });
 
-  const reassign = (orderId: string) => {
-    const id = window.prompt(
-      "أدخل معرّف المخبر الجديد:\n" + labs.map((l) => `${l.id} — ${l.nameAr}`).join("\n"),
-      lab.id,
-    );
-    if (id && id !== lab.id) {
-      assignLab(orderId, id, { actor: "admin", actorName: adminRef.adminName });
-      logActivity({
-        adminId: adminRef.adminId, adminName: adminRef.adminName, role: adminRef.role,
-        action: "order_update", entity: "order", entityId: orderId,
-        details: `إعادة إسناد المخبر إلى ${id}`,
-      });
-    }
-  };
+  const reassign = (orderId: string) => setReassignTarget(orderId);
 
   return (
     <div className="space-y-3">
@@ -626,34 +622,17 @@ function LabOrders({ lab, labs, orders, adminRef }: {
                     <p className="text-[11px] text-gray-500 mt-1 leading-relaxed">{i.description}</p>
                     {/* Customer-facing message editor */}
                     <button
-                      onClick={() => {
-                        const next = window.prompt("الرسالة التي يراها العميل:", i.customerMessageAr ?? "حدثت مشكلة في العينة، وسيتم التواصل معك من فريق الدعم.");
-                        if (next !== null) {
-                          updateLabIssueCustomerMessage(i.id, next.trim());
-                          logActivity({
-                            adminId: adminRef.adminId, adminName: adminRef.adminName, role: adminRef.role,
-                            action: "order_update", entity: "lab_issue", entityId: i.id,
-                            details: `تعديل رسالة العميل لمشكلة ${i.orderId}`,
-                          });
-                        }
-                      }}
+                      onClick={() => setMessageTarget(i.id)}
                       className="mt-1.5 text-[10px] text-[#0891B2] font-semibold cursor-pointer"
                     >
                       {i.customerMessageAr ? "تعديل رسالة العميل" : "تعيين رسالة للعميل"}
                     </button>
                   </div>
                   {i.status !== "resolved" ? (
-                    <button onClick={() => {
-                      const note = window.prompt("ملاحظة الحل:", "");
-                      if (note !== null) {
-                        resolveLabIssue(i.id, note, { actor: "admin", actorName: adminRef.adminName });
-                        logActivity({
-                          adminId: adminRef.adminId, adminName: adminRef.adminName, role: adminRef.role,
-                          action: "order_update", entity: "lab_issue", entityId: i.id,
-                          details: `حل مشكلة المخبر — ${i.orderId}`,
-                        });
-                      }
-                    }} className="text-[10px] px-2 py-1 rounded-md bg-[#ECFEFF] text-[#0891B2] cursor-pointer flex items-center gap-1 flex-shrink-0">
+                    <button
+                      onClick={() => setResolveTarget(i.id)}
+                      className="text-[10px] px-2 py-1 rounded-md bg-[#ECFEFF] text-[#0891B2] cursor-pointer flex items-center gap-1 flex-shrink-0"
+                    >
                       <RotateCcw size={11} aria-hidden="true" /> حل
                     </button>
                   ) : (
@@ -665,6 +644,84 @@ function LabOrders({ lab, labs, orders, adminRef }: {
           );
         })()}
       </Card>
+
+      <LabPickerSheet
+        open={reassignTarget !== null}
+        title="إعادة إسناد المخبر"
+        labs={labs}
+        excludeId={lab.id}
+        onCancel={() => setReassignTarget(null)}
+        onPick={(id) => {
+          const orderId = reassignTarget;
+          setReassignTarget(null);
+          if (orderId === null || id === lab.id) return;
+          // Same payload + activity-log shape as the prompt era.
+          assignLab(orderId, id, { actor: "admin", actorName: adminRef.adminName });
+          logActivity({
+            adminId: adminRef.adminId, adminName: adminRef.adminName, role: adminRef.role,
+            action: "order_update", entity: "order", entityId: orderId,
+            details: `إعادة إسناد المخبر إلى ${id}`,
+          });
+        }}
+      />
+
+      {/* U3.D: per-issue customer message editor. Looks up the current
+          issue at sheet-open time so the textarea seeds with the
+          existing message (or the documented Arabic fallback). The
+          ReasonSheet's render-time state-sync pattern means the
+          initialValue is read once at the open transition. */}
+      <ReasonSheet
+        open={messageTarget !== null}
+        title="رسالة العميل"
+        placeholder="الرسالة التي يراها العميل"
+        confirmLabel="حفظ"
+        initialValue={
+          (() => {
+            const issue = orders.flatMap((o) => o.issues ?? []).find((i) => i.id === messageTarget);
+            return issue?.customerMessageAr ?? "حدثت مشكلة في العينة، وسيتم التواصل معك من فريق الدعم.";
+          })()
+        }
+        onCancel={() => setMessageTarget(null)}
+        onConfirm={(next) => {
+          const issueId = messageTarget;
+          setMessageTarget(null);
+          if (issueId === null) return;
+          // Look up the issue again to capture the orderId for the
+          // activity-log line — same shape as today.
+          const issue = orders.flatMap((o) => o.issues ?? []).find((i) => i.id === issueId);
+          // Identical mutator payload to the prompt era: trimmed string.
+          updateLabIssueCustomerMessage(issueId, next.trim());
+          logActivity({
+            adminId: adminRef.adminId, adminName: adminRef.adminName, role: adminRef.role,
+            action: "order_update", entity: "lab_issue", entityId: issueId,
+            details: `تعديل رسالة العميل لمشكلة ${issue?.orderId ?? issueId}`,
+          });
+        }}
+      />
+
+      {/* U3.D: per-issue resolve-note collector. Empty input is allowed
+          (matches today's `if (note !== null)` guard — cancel skips,
+          empty submit proceeds). */}
+      <ReasonSheet
+        open={resolveTarget !== null}
+        title="حل المشكلة"
+        placeholder="ملاحظة الحل (اختيارية)"
+        confirmLabel="تأكيد الحل"
+        onCancel={() => setResolveTarget(null)}
+        onConfirm={(note) => {
+          const issueId = resolveTarget;
+          setResolveTarget(null);
+          if (issueId === null) return;
+          const issue = orders.flatMap((o) => o.issues ?? []).find((i) => i.id === issueId);
+          // Identical mutator payload to the prompt era.
+          resolveLabIssue(issueId, note, { actor: "admin", actorName: adminRef.adminName });
+          logActivity({
+            adminId: adminRef.adminId, adminName: adminRef.adminName, role: adminRef.role,
+            action: "order_update", entity: "lab_issue", entityId: issueId,
+            details: `حل مشكلة المخبر — ${issue?.orderId ?? issueId}`,
+          });
+        }}
+      />
     </div>
   );
 }
@@ -1333,5 +1390,126 @@ function ConfirmDialog({ title, message, danger, onConfirm, onCancel }: {
         </div>
       </div>
     </div>
+  );
+}
+
+// ─── ReasonSheet (local) ──────────────────────────────────────────────────────
+// U3.D: typed BottomSheet replacement for the legacy `window.prompt` flows
+// that collect a free-text note. Mirrors the OCC ReasonSheet shape from
+// U3.A/B/C; duplicated locally rather than extracted to a shared module to
+// keep U3.D's blast radius to a single file. Future de-duplication is a
+// straightforward follow-up.
+//
+// Render-time state-sync (wasOpen flag) reuses the same pattern that the
+// rest of the codebase uses (CommissionField / StripeKeyField / OCC sheets)
+// to avoid the React 19 `react-hooks/set-state-in-effect` rule.
+function ReasonSheet({
+  open,
+  title,
+  placeholder,
+  required = false,
+  confirmLabel = "تأكيد",
+  cancelLabel = "إلغاء",
+  initialValue = "",
+  onConfirm,
+  onCancel,
+}: {
+  open: boolean;
+  title: string;
+  placeholder: string;
+  required?: boolean;
+  confirmLabel?: string;
+  cancelLabel?: string;
+  initialValue?: string;
+  onConfirm: (note: string) => void;
+  onCancel: () => void;
+}) {
+  const [value, setValue] = useState(initialValue);
+  const [wasOpen, setWasOpen] = useState(open);
+  if (wasOpen !== open) {
+    setWasOpen(open);
+    if (open) setValue(initialValue);
+  }
+
+  const trimmed = value.trim();
+  const canSubmit = required ? trimmed.length > 0 : true;
+
+  return (
+    <BottomSheet open={open} onClose={onCancel} title={title}>
+      <div className="space-y-3 px-4 pb-4">
+        <textarea
+          value={value}
+          onChange={(e) => setValue(e.target.value)}
+          rows={4}
+          placeholder={placeholder}
+          className="w-full p-3 rounded-xl border border-gray-200 text-sm resize-none focus:border-[#0891B2] outline-none"
+          aria-label={title}
+          autoFocus
+        />
+        <div className="flex items-center justify-end gap-2">
+          <Button size="sm" variant="ghost" onClick={onCancel}>{cancelLabel}</Button>
+          <Button size="sm" variant="primary" disabled={!canSubmit} onClick={() => onConfirm(trimmed)}>
+            {confirmLabel}
+          </Button>
+        </div>
+      </div>
+    </BottomSheet>
+  );
+}
+
+// ─── LabPickerSheet ──────────────────────────────────────────────────────────
+// U3.D: typed BottomSheet replacement for the multi-line text prompt that
+// asked the admin to type a lab id. Renders the catalog as a clickable
+// list; the current lab is filtered out so picking is always a real
+// reassignment (mirrors today's `id !== lab.id` guard exactly). Same
+// UX-side tightening as U3.B's StatusPickerSheet — impossible to submit
+// a non-catalog value, but server-side validation at the route is
+// unchanged.
+function LabPickerSheet({
+  open,
+  title,
+  labs,
+  excludeId,
+  onCancel,
+  onPick,
+}: {
+  open: boolean;
+  title: string;
+  labs: Lab[];
+  /** The lab currently assigned — hidden from the list so re-picking it
+   *  isn't possible (matches the `id !== lab.id` guard in today's prompt
+   *  callsite). */
+  excludeId: string;
+  onCancel: () => void;
+  onPick: (labId: string) => void;
+}) {
+  const candidates = labs.filter((l) => l.id !== excludeId);
+  return (
+    <BottomSheet open={open} onClose={onCancel} title={title}>
+      <div className="space-y-2 px-4 pb-4">
+        {candidates.length === 0 ? (
+          <p className="text-xs text-gray-400 py-3 text-center">
+            لا توجد مخابر أخرى متاحة.
+          </p>
+        ) : (
+          <ul className="space-y-1.5 max-h-72 overflow-y-auto">
+            {candidates.map((l) => (
+              <li key={l.id}>
+                <button
+                  onClick={() => onPick(l.id)}
+                  className="w-full flex items-center justify-between gap-2 px-3 py-2.5 rounded-xl border border-gray-200 text-sm cursor-pointer hover:bg-gray-50 text-start"
+                >
+                  <span className="font-semibold text-[#164E63]">{l.nameAr}</span>
+                  <span className="text-[11px] text-gray-400 lat" dir="ltr">{l.id}</span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+        <div className="flex items-center justify-end gap-2 pt-1">
+          <Button size="sm" variant="ghost" onClick={onCancel}>إلغاء</Button>
+        </div>
+      </div>
+    </BottomSheet>
   );
 }
