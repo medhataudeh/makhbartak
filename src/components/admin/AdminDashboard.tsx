@@ -4,7 +4,7 @@ import {
   LayoutGrid, ClipboardList, FlaskConical, Package as PackageIcon, Tag, Users,
   Building2, Settings, TrendingUp, Clock, CheckCircle, DollarSign, FileText,
   UserCog, Image as ImageIcon, Bell, Activity, Shapes, LogOut, Search, Menu,
-  X, CreditCard, Eye, Trophy, Plus, Trash2, Pencil,
+  X, CreditCard, Eye, Trophy, Plus, Trash2, Pencil, Lock,
   ChevronUp, ChevronDown, ChevronLeft, Route, MapPin, Wrench,
 } from "lucide-react";
 import {
@@ -56,6 +56,8 @@ import type { Lab } from "@/lib/types";
 import { logActivity } from "@/lib/activity-log";
 import { useToast } from "@/components/ui/Toast";
 import { useSystemSettings, updateSystemSettings } from "@/lib/system-settings";
+import { useAdminSystemSettings, invalidateAdminSystemSettings } from "@/lib/admin-system-settings";
+import { SYSTEM_SETTINGS } from "@/lib/mock-data";
 import {
   useAdmins, upsertAdmin, deleteAdmin, setAdminActive,
   useCustomerUsers, upsertCustomerUser, deleteCustomerUser, setCustomerUserActive, resetCustomerUserPassword,
@@ -2880,9 +2882,20 @@ function ActivityAdmin() {
 function SettingsAdmin() {
   const me = useCurrentAdmin();
   const toast = useToast();
-  const live = useSystemSettings();
+  // Phase D of public/private settings split: SettingsAdmin reads from the
+  // admin-scoped store (cap-gated /api/admin/system/settings GET) so the
+  // commission percentage and any future admin-only fields are available
+  // here without leaking through the public route.
+  const adminState = useAdminSystemSettings();
+  // Form scaffold: when the admin endpoint denies (forbidden), the early
+  // return below skips the form entirely; otherwise we use canonical data
+  // when available and SYSTEM_SETTINGS as a placeholder during the brief
+  // hydration gap.
+  const live = adminState.settings ?? SYSTEM_SETTINGS;
   // F7: app-settings PATCH is super_admin-only at the API. Render the screen
   // read-only for any other role so the form doesn't invite saves that 403.
+  // This is distinct from the "forbidden" state below, which kicks in when
+  // the caller cannot even READ the admin settings.
   const canWrite = adminHas(me.role, "system.app_settings.write");
   // Draft mirrors the live store; controlled inputs write here, "حفظ" persists
   // through updateSystemSettings(). The cash-orders toggle stays live (no
@@ -2910,6 +2923,11 @@ function SettingsAdmin() {
     try {
       const r = await updateSystemSettings(patch);
       if (!r.ok) { toast.error(r.error ?? "تعذر تحديث الإعداد"); return false; }
+      // Phase D: invalidate the admin store so the next read pulls the
+      // canonical post-write values (commission %, Stripe keys, etc.).
+      // The public store has already been optimistically merged inside
+      // updateSystemSettings; this keeps the admin-only fields in sync.
+      invalidateAdminSystemSettings();
       toast.success(successMsg);
       return true;
     } finally {
@@ -2950,6 +2968,9 @@ function SettingsAdmin() {
       // path showed success even when the PATCH returned an error.
       const r = await updateSystemSettings(draft);
       if (!r.ok) { toast.error(r.error ?? "تعذر حفظ الإعدادات"); return; }
+      // Phase D: refresh the admin store so admin-only fields reflect the
+      // canonical post-write state on the next read.
+      invalidateAdminSystemSettings();
       logActivity({
         adminId: me.id, adminName: me.name, role: me.role,
         action: "settings_change", entity: "settings", entityId: "global",
@@ -2970,6 +2991,33 @@ function SettingsAdmin() {
     setNewCity("");
   };
   const removeCity = (c: string) => set("supportedCities", draft.supportedCities.filter((x) => x !== c));
+
+  // Phase D: explicit forbidden state. Distinct from the "read-only but
+  // viewing allowed" path below (canWrite=false, fieldset disabled, banner
+  // explaining limited editing) — this branch fires when the caller cannot
+  // even READ the admin settings (lacks system.app_settings.read or is not
+  // an admin). We deliberately do not silently render mock-data placeholders
+  // here so a permission regression surfaces visibly instead of masquerading
+  // as a working but stale screen.
+  if (adminState.status === "forbidden") {
+    return (
+      <div className="space-y-3 max-w-xl">
+        <div className="flex items-center gap-2 text-[#164E63]">
+          <Lock size={16} aria-hidden="true" />
+          <h2 className="text-base font-bold">إعدادات النظام</h2>
+        </div>
+        <div className="bg-gray-50 border border-gray-100 rounded-xl p-4 space-y-1">
+          <p className="text-sm font-semibold text-[#164E63]">
+            ليست لديك صلاحية الاطلاع على إعدادات النظام
+          </p>
+          <p className="text-xs text-gray-500 leading-relaxed">
+            تُعرَض هذه الصفحة للمدراء الذين تشمل صلاحياتهم قراءة إعدادات النظام.
+            تواصل مع المدير العام لطلب الصلاحيات اللازمة.
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <fieldset disabled={!canWrite} className="space-y-4 min-w-0">

@@ -28,6 +28,15 @@ import { logger } from "@/lib/logger";
 //   charge.refunded              → record_provider_refund
 //
 // Anything else is recorded with result='ignored' and returns 200.
+//
+// PR3.A — payment_provider_events bookkeeping is now routed through the
+// SECURITY DEFINER `set_payment_provider_event_result(text, uuid, text)`
+// RPC (mig 040) instead of direct service-role UPDATEs. External
+// behavior is byte-identical: same response codes, same retry contract,
+// same result tags. The INSERT (which relies on the PK 23505 collision
+// for dedup) and the SELECT (which reads the existing result on replay)
+// are still direct service-role calls — the trigger PR3.B will attach
+// only blocks UPDATE/DELETE, not INSERT/SELECT.
 
 export const runtime = "nodejs";
 
@@ -132,7 +141,10 @@ export async function POST(req: NextRequest) {
     const { data: pid } = await sb.rpc("find_payment_by_provider_ref", { p_provider_ref: providerRef });
     paymentId = (pid as string | null) ?? null;
     if (paymentId) {
-      await sb.from("payment_provider_events").update({ payment_id: paymentId }).eq("id", event.id);
+      await sb.rpc("set_payment_provider_event_result", {
+        p_event_id: event.id,
+        p_payment_id: paymentId,
+      });
     }
   }
 
@@ -141,7 +153,10 @@ export async function POST(req: NextRequest) {
       route: "api/webhooks/stripe",
       eventId: event.id, type: event.type, providerRef,
     });
-    await sb.from("payment_provider_events").update({ result: "no_match" }).eq("id", event.id);
+    await sb.rpc("set_payment_provider_event_result", {
+      p_event_id: event.id,
+      p_result: "no_match",
+    });
     return NextResponse.json({ received: true, matched: false });
   }
 
@@ -162,11 +177,17 @@ export async function POST(req: NextRequest) {
         route: "api/webhooks/stripe",
         paymentId, code: error.code,
       });
-      await sb.from("payment_provider_events").update({ result: "confirm_error" }).eq("id", event.id);
+      await sb.rpc("set_payment_provider_event_result", {
+        p_event_id: event.id,
+        p_result: "confirm_error",
+      });
       // 5xx so Stripe retries.
       return NextResponse.json({ error: "confirm failed; will retry" }, { status: 500 });
     }
-    await sb.from("payment_provider_events").update({ result: "confirmed" }).eq("id", event.id);
+    await sb.rpc("set_payment_provider_event_result", {
+      p_event_id: event.id,
+      p_result: "confirmed",
+    });
     return NextResponse.json({ received: true, result: "confirmed" });
   }
 
@@ -183,10 +204,16 @@ export async function POST(req: NextRequest) {
         route: "api/webhooks/stripe",
         paymentId, code: error.code,
       });
-      await sb.from("payment_provider_events").update({ result: "failed_error" }).eq("id", event.id);
+      await sb.rpc("set_payment_provider_event_result", {
+        p_event_id: event.id,
+        p_result: "failed_error",
+      });
       return NextResponse.json({ error: "mark-failed failed; will retry" }, { status: 500 });
     }
-    await sb.from("payment_provider_events").update({ result: "failed" }).eq("id", event.id);
+    await sb.rpc("set_payment_provider_event_result", {
+      p_event_id: event.id,
+      p_result: "failed",
+    });
     return NextResponse.json({ received: true, result: "failed" });
   }
 
@@ -214,15 +241,24 @@ export async function POST(req: NextRequest) {
         route: "api/webhooks/stripe",
         paymentId, code: error.code,
       });
-      await sb.from("payment_provider_events").update({ result: "refund_error" }).eq("id", event.id);
+      await sb.rpc("set_payment_provider_event_result", {
+        p_event_id: event.id,
+        p_result: "refund_error",
+      });
       return NextResponse.json({ error: "refund failed; will retry" }, { status: 500 });
     }
-    await sb.from("payment_provider_events").update({ result: "refunded" }).eq("id", event.id);
+    await sb.rpc("set_payment_provider_event_result", {
+      p_event_id: event.id,
+      p_result: "refunded",
+    });
     return NextResponse.json({ received: true, result: "refunded" });
   }
 
   // Unknown event type — record and ack.
-  await sb.from("payment_provider_events").update({ result: "ignored" }).eq("id", event.id);
+  await sb.rpc("set_payment_provider_event_result", {
+    p_event_id: event.id,
+    p_result: "ignored",
+  });
   return NextResponse.json({ received: true, result: "ignored" });
 }
 // Suppress unused warning if a future tag list is referenced elsewhere.
