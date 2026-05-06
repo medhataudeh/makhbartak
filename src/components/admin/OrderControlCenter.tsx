@@ -25,6 +25,7 @@ import {
   cancelOrder, rescheduleOrder, addNote, useOrders,
 } from "@/lib/store";
 import { logActivity } from "@/lib/activity-log";
+import { apiValidateCoupon } from "@/lib/admin-catalog-api";
 import { useToast } from "@/components/ui/Toast";
 
 type Tab = "overview" | "items" | "operations" | "timeline" | "issues" | "finance" | "notes";
@@ -166,6 +167,9 @@ function StickyHeader({ order, role, onClose, onOpenUser }: {
 }) {
   const [actionsOpen, setActionsOpen] = useState(false);
   const [cancelOpen, setCancelOpen] = useState(false);
+  const [rescheduleOpen, setRescheduleOpen] = useState(false);
+  const [statusFlipOpen, setStatusFlipOpen] = useState(false);
+  const [couponOpen, setCouponOpen] = useState(false);
   const ref = { actor: role.actor, actorName: role.actorName };
   const isLab = role.role === "lab_user";
   const toast = useToast();
@@ -221,40 +225,24 @@ function StickyHeader({ order, role, onClose, onOpenUser }: {
                        quick-actions menu anymore. Use the dropdowns under
                        the "Operations" tab — they read real DB rows so the
                        admin can never accidentally submit a stale id. */}
-                    <ActionItem icon={RefreshCw} label="إعادة جدولة" onClick={async () => {
-                      const date = window.prompt("تاريخ جديد (YYYY-MM-DD):", order.visitDate);
-                      if (date) {
-                        const r = await rescheduleOrder(order.id, date, order.shift, ref);
-                        if (!r.ok) toast.error(r.error ?? "تعذر إعادة الجدولة");
-                        else record(role, "order_update", "order", order.id, `إعادة جدولة → ${date}`);
-                        setActionsOpen(false);
-                      }
+                    <ActionItem icon={RefreshCw} label="إعادة جدولة" onClick={() => {
+                      setActionsOpen(false);
+                      setRescheduleOpen(true);
                     }} />
                     {hasCap(role.role, "finance.coupon") && (
-                      <ActionItem icon={Tag} label="تطبيق/إزالة كوبون" onClick={async () => {
-                        const code = window.prompt("كود الكوبون (فارغ للإزالة):", order.couponCode ?? "");
-                        if (code !== null) {
-                          const disc = code ? Number(window.prompt("قيمة الخصم:", String(order.couponDiscount || 0)) || 0) : 0;
-                          const r = await applyCoupon(order.id, code, disc, ref);
-                          if (!r.ok) toast.error(r.error ?? "تعذر تحديث الكوبون");
-                          else record(role, "coupon_change", "order", order.id, code ? `${code} -${disc}` : "إزالة الكوبون");
-                          setActionsOpen(false);
-                        }
+                      <ActionItem icon={Tag} label="تطبيق/إزالة كوبون" onClick={() => {
+                        setActionsOpen(false);
+                        setCouponOpen(true);
                       }} />
                     )}
-                    <ActionItem icon={CreditCard} label="تغيير حالة الدفع" onClick={async () => {
-                      // Phase 4.1.1: 'paid' transitions go through the cash-payment
-                      // RPC (separate menu item below). This route handles the
-                      // operational pending/failed/refunded transitions only.
-                      const next = window.prompt("pending / failed / refunded:", order.paymentStatus === "paid" ? "pending" : order.paymentStatus);
-                      if (next === "pending" || next === "failed" || next === "refunded") {
-                        const r = await setPaymentStatus(order.id, next, ref);
-                        if (!r.ok) toast.error(r.error ?? "تعذر تغيير حالة الدفع");
-                        else record(role, "invoice_status", "order", order.id, `حالة الدفع → ${next}`);
-                        setActionsOpen(false);
-                      } else if (next === "paid") {
-                        toast.error("استخدم زر «تسجيل تحصيل نقدي» في الملخص المالي.");
-                      }
+                    {/* Phase 4.1.1: 'paid' transitions go through the cash-payment
+                        RPC (separate menu item below). This sheet handles the
+                        operational pending/failed/refunded transitions only;
+                        the StatusPickerSheet redirects "paid" requests to the
+                        record-cash flow with the same toast as before. */}
+                    <ActionItem icon={CreditCard} label="تغيير حالة الدفع" onClick={() => {
+                      setActionsOpen(false);
+                      setStatusFlipOpen(true);
                     }} />
                     <hr className="my-1 border-gray-100" />
                   </>
@@ -301,6 +289,54 @@ function StickyHeader({ order, role, onClose, onOpenUser }: {
           const r = await cancelOrder(order.id, ref, reason || undefined);
           if (!r.ok) toast.error(r.error ?? "تعذر إلغاء الطلب");
           else record(role, "order_update", "order", order.id, `إلغاء الطلب${reason ? ` — ${reason}` : ""}`);
+        }}
+      />
+      <DateSheet
+        open={rescheduleOpen}
+        title="إعادة جدولة الطلب"
+        initialValue={order.visitDate}
+        confirmLabel="تأكيد"
+        onCancel={() => setRescheduleOpen(false)}
+        onConfirm={async (date) => {
+          setRescheduleOpen(false);
+          const r = await rescheduleOrder(order.id, date, order.shift, ref);
+          if (!r.ok) toast.error(r.error ?? "تعذر إعادة الجدولة");
+          else record(role, "order_update", "order", order.id, `إعادة جدولة → ${date}`);
+        }}
+      />
+      <StatusPickerSheet
+        open={statusFlipOpen}
+        title="تغيير حالة الدفع"
+        current={order.paymentStatus}
+        onCancel={() => setStatusFlipOpen(false)}
+        onPick={async (next) => {
+          setStatusFlipOpen(false);
+          const r = await setPaymentStatus(order.id, next, ref);
+          if (!r.ok) toast.error(r.error ?? "تعذر تغيير حالة الدفع");
+          else record(role, "invoice_status", "order", order.id, `حالة الدفع → ${next}`);
+        }}
+        onPickPaid={() => {
+          // Same redirect message as the prior prompt era.
+          toast.error("استخدم زر «تسجيل تحصيل نقدي» في الملخص المالي.");
+        }}
+      />
+      <CouponSheet
+        open={couponOpen}
+        initialCode={order.couponCode ?? ""}
+        initialDiscount={order.couponDiscount ?? 0}
+        subtotal={order.subtotal}
+        onCancel={() => setCouponOpen(false)}
+        onConfirm={async (code, disc) => {
+          setCouponOpen(false);
+          // Mutator payload byte-identical to the prompt era:
+          //   * empty code  → applyCoupon(id, "", 0, ref)            // remove
+          //   * non-empty   → applyCoupon(id, code, <admin's disc>)  // apply / override
+          // The admin's typed discount is the source of truth at the
+          // mutator boundary regardless of the SSoT validation outcome —
+          // exactly the prompt-era contract.
+          const r = await applyCoupon(order.id, code, disc, ref);
+          if (!r.ok) toast.error(r.error ?? "تعذر تحديث الكوبون");
+          else record(role, "coupon_change", "order", order.id, code ? `${code} -${disc}` : "إزالة الكوبون");
         }}
       />
     </header>
@@ -397,6 +433,7 @@ function ReasonSheet({
   title,
   placeholder,
   required = false,
+  multiline = true,
   confirmLabel = "تأكيد",
   cancelLabel = "إلغاء",
   initialValue = "",
@@ -408,6 +445,11 @@ function ReasonSheet({
   title: string;
   placeholder: string;
   required?: boolean;
+  /** When false, render a single-line <input type="text"> instead of a
+   *  multiline <textarea>. Used by U3.B's filename callsite where a short
+   *  identifier is the right input shape. Defaults to true to preserve
+   *  the U3.A callsites' existing multiline behaviour. */
+  multiline?: boolean;
   confirmLabel?: string;
   cancelLabel?: string;
   initialValue?: string;
@@ -433,15 +475,27 @@ function ReasonSheet({
   return (
     <BottomSheet open={open} onClose={onCancel} title={title}>
       <div className="space-y-3 px-4 pb-4">
-        <textarea
-          value={value}
-          onChange={(e) => setValue(e.target.value)}
-          rows={4}
-          placeholder={placeholder}
-          className="w-full p-3 rounded-xl border border-gray-200 text-sm resize-none focus:border-[#0891B2] outline-none"
-          aria-label={title}
-          autoFocus
-        />
+        {multiline ? (
+          <textarea
+            value={value}
+            onChange={(e) => setValue(e.target.value)}
+            rows={4}
+            placeholder={placeholder}
+            className="w-full p-3 rounded-xl border border-gray-200 text-sm resize-none focus:border-[#0891B2] outline-none"
+            aria-label={title}
+            autoFocus
+          />
+        ) : (
+          <input
+            type="text"
+            value={value}
+            onChange={(e) => setValue(e.target.value)}
+            placeholder={placeholder}
+            className="w-full h-11 px-3 rounded-xl border border-gray-200 text-sm focus:border-[#0891B2] outline-none"
+            aria-label={title}
+            autoFocus
+          />
+        )}
         <div className="flex items-center justify-end gap-2">
           <Button size="sm" variant="ghost" onClick={onCancel}>
             {cancelLabel}
@@ -453,6 +507,299 @@ function ReasonSheet({
             onClick={() => onConfirm(trimmed)}
           >
             {confirmLabel}
+          </Button>
+        </div>
+      </div>
+    </BottomSheet>
+  );
+}
+
+// ─── DateSheet ────────────────────────────────────────────────────────────────
+// U3.B: typed BottomSheet replacement for `window.prompt("…YYYY-MM-DD…", default)`.
+// Uses the native <input type="date"> picker so the browser enforces the
+// YYYY-MM-DD shape on the way in. The route's DATE_RE regex still gates
+// server-side, so the mutator payload + API contract are unchanged from the
+// prompt era; this is a UX tightening (impossible-to-mistype) only.
+function DateSheet({
+  open,
+  title,
+  initialValue,
+  confirmLabel = "تأكيد",
+  cancelLabel = "إلغاء",
+  onConfirm,
+  onCancel,
+}: {
+  open: boolean;
+  title: string;
+  initialValue: string;
+  confirmLabel?: string;
+  cancelLabel?: string;
+  onConfirm: (date: string) => void;
+  onCancel: () => void;
+}) {
+  const [value, setValue] = useState(initialValue);
+  const [wasOpen, setWasOpen] = useState(open);
+  if (wasOpen !== open) {
+    setWasOpen(open);
+    if (open) setValue(initialValue);
+  }
+  // Native <input type="date"> emits "" on a cleared field and a
+  // YYYY-MM-DD string otherwise. Confirm only when the value is non-empty
+  // — matches today's `if (date)` guard exactly.
+  const canSubmit = value.length > 0;
+  return (
+    <BottomSheet open={open} onClose={onCancel} title={title}>
+      <div className="space-y-3 px-4 pb-4">
+        <input
+          type="date"
+          value={value}
+          onChange={(e) => setValue(e.target.value)}
+          className="w-full h-11 px-3 rounded-xl border border-gray-200 text-sm focus:border-[#0891B2] outline-none lat"
+          dir="ltr"
+          aria-label={title}
+          autoFocus
+        />
+        <div className="flex items-center justify-end gap-2">
+          <Button size="sm" variant="ghost" onClick={onCancel}>{cancelLabel}</Button>
+          <Button size="sm" variant="primary" disabled={!canSubmit} onClick={() => onConfirm(value)}>
+            {confirmLabel}
+          </Button>
+        </div>
+      </div>
+    </BottomSheet>
+  );
+}
+
+// ─── StatusPickerSheet ────────────────────────────────────────────────────────
+// U3.B: typed BottomSheet replacement for the legacy free-text payment-
+// status enum prompt. Today's flow asks the admin to type one of three
+// strings ("pending"/"failed"/"refunded") with a soft hint about "paid".
+// The new sheet renders three explicit buttons — same valid set, same
+// helper text for the "paid" case, no free-text path that could submit
+// anything outside the enum.
+function StatusPickerSheet({
+  open,
+  title,
+  current,
+  onPick,
+  onPickPaid,
+  onCancel,
+}: {
+  open: boolean;
+  title: string;
+  current: string;
+  onPick: (next: "pending" | "failed" | "refunded") => void;
+  /** Fired when the admin clicks the disabled "paid" hint, mirroring the
+   *  prior toast that redirected them to the record-cash flow. */
+  onPickPaid: () => void;
+  onCancel: () => void;
+}) {
+  const OPTIONS: { value: "pending" | "failed" | "refunded"; labelAr: string; hint?: string }[] = [
+    { value: "pending",  labelAr: "قيد الانتظار", hint: "بانتظار التحصيل" },
+    { value: "failed",   labelAr: "فاشل",         hint: "تعذّر تحصيل المبلغ" },
+    { value: "refunded", labelAr: "مُسترَد",      hint: "تم إعادة المبلغ" },
+  ];
+  return (
+    <BottomSheet open={open} onClose={onCancel} title={title}>
+      <div className="space-y-2 px-4 pb-4">
+        <p className="text-[11px] text-gray-400">الحالة الحالية: <span className="lat" dir="ltr">{current}</span></p>
+        {OPTIONS.map((o) => (
+          <button
+            key={o.value}
+            onClick={() => onPick(o.value)}
+            className="w-full flex items-center justify-between gap-2 px-3 py-2.5 rounded-xl border border-gray-200 text-sm cursor-pointer hover:bg-gray-50 text-start"
+          >
+            <span className="font-semibold text-[#164E63]">{o.labelAr}</span>
+            <span className="text-[11px] text-gray-400">{o.hint}</span>
+          </button>
+        ))}
+        <button
+          onClick={onPickPaid}
+          className="w-full text-[11px] text-amber-600 px-3 py-2 rounded-xl bg-amber-50 cursor-pointer text-start"
+        >
+          لتعليم الطلب كمدفوع، استخدم زر «تسجيل تحصيل نقدي» من الملخص المالي.
+        </button>
+        <div className="flex items-center justify-end gap-2 pt-1">
+          <Button size="sm" variant="ghost" onClick={onCancel}>إلغاء</Button>
+        </div>
+      </div>
+    </BottomSheet>
+  );
+}
+
+// ─── CouponSheet ──────────────────────────────────────────────────────────────
+// U3.C: typed BottomSheet replacement for the legacy two-step
+// `window.prompt("كود الكوبون") → window.prompt("قيمة الخصم")` flow.
+//
+// Validation flow goes through the centralized Coupon SSoT route
+// /api/coupons/validate (mounted on `validateCouponServer` in
+// lib/server/coupons.ts) via the existing apiValidateCoupon helper. This
+// component does NOT re-implement coupon math, date checks, usage caps,
+// or min-order rules — it consumes the canonical validation result.
+//
+// Override semantics — preserved exactly:
+//   * The discount field is always editable.
+//   * On a successful "تحقق" (verify), the field is pre-filled with the
+//     SSoT-computed discount IF the admin hasn't typed in it yet. Once
+//     the admin manually edits the field (`discountUserEdited` flips
+//     true), subsequent verify clicks no longer overwrite the field.
+//   * Validation never blocks submit. The admin's typed value is the
+//     source of truth at the mutator boundary, identical to the
+//     prompt-era behaviour.
+//
+// Mutator payload parity:
+//   * Empty code  →  applyCoupon(orderId, "", 0, ref)            // remove
+//   * Non-empty   →  applyCoupon(orderId, code, Number(field) || 0, ref)
+function CouponSheet({
+  open,
+  initialCode,
+  initialDiscount,
+  subtotal,
+  onCancel,
+  onConfirm,
+}: {
+  open: boolean;
+  initialCode: string;
+  initialDiscount: number;
+  /** Authoritative subtotal passed to /api/coupons/validate as the SSoT
+   *  module's `subtotal` parameter. Order subtotal in this codebase is
+   *  the field the cart and admin order-create routes both use. */
+  subtotal: number;
+  onCancel: () => void;
+  onConfirm: (code: string, discount: number) => void;
+}) {
+  const [code, setCode] = useState(initialCode);
+  const [discount, setDiscount] = useState<string>(String(initialDiscount || 0));
+  const [discountUserEdited, setDiscountUserEdited] = useState(false);
+  const [validating, setValidating] = useState(false);
+  type Result =
+    | { kind: "idle" }
+    | { kind: "ok"; message: string; suggestedDiscount: number }
+    | { kind: "invalid"; message: string }
+    | { kind: "error"; message: string };
+  const [result, setResult] = useState<Result>({ kind: "idle" });
+
+  // Render-time state-sync (same pattern as the U3.A/B sheets) — reset
+  // every time the sheet opens so a stale value from the prior session
+  // isn't sticky.
+  const [wasOpen, setWasOpen] = useState(open);
+  if (wasOpen !== open) {
+    setWasOpen(open);
+    if (open) {
+      setCode(initialCode);
+      setDiscount(String(initialDiscount || 0));
+      setDiscountUserEdited(false);
+      setResult({ kind: "idle" });
+    }
+  }
+
+  const verify = async () => {
+    const trimmed = code.trim();
+    if (!trimmed) return;
+    setValidating(true);
+    try {
+      const r = await apiValidateCoupon(trimmed, subtotal);
+      if (r.valid && typeof r.discount === "number") {
+        setResult({ kind: "ok", message: r.message, suggestedDiscount: r.discount });
+        // Pre-fill the discount field ONLY if the admin hasn't typed in
+        // it yet. Manual edits stay sticky — preserves the override
+        // contract exactly.
+        if (!discountUserEdited) {
+          setDiscount(String(r.discount));
+        }
+      } else {
+        setResult({ kind: "invalid", message: r.message ?? "الكوبون غير صالح" });
+      }
+    } catch {
+      // apiValidateCoupon already returns a fallback on network errors;
+      // catching here is belt-and-suspenders.
+      setResult({ kind: "error", message: "تعذر التحقق من الكوبون" });
+    } finally {
+      setValidating(false);
+    }
+  };
+
+  const trimmedCode = code.trim();
+  const willRemove = trimmedCode === "";
+  // Discount sent to the mutator. Today's prompt era used
+  // `code ? Number(disc || 0) : 0`; we mirror that exactly: when removing,
+  // 0; when applying, the field's number value (NaN coerces to 0 via
+  // Number.isFinite check).
+  const numericDiscount = Number(discount);
+  const discountForSubmit = willRemove ? 0 : (Number.isFinite(numericDiscount) ? numericDiscount : 0);
+
+  return (
+    <BottomSheet open={open} onClose={onCancel} title="تطبيق/إزالة كوبون">
+      <div className="space-y-3 px-4 pb-4">
+        <div>
+          <label className="text-[11px] text-gray-500 mb-1 block">كود الكوبون</label>
+          <div className="flex items-stretch gap-2">
+            <input
+              type="text"
+              value={code}
+              onChange={(e) => {
+                setCode(e.target.value);
+                // Clear stale validation feedback when the code changes.
+                if (result.kind !== "idle") setResult({ kind: "idle" });
+              }}
+              placeholder="WELCOME30 — اتركه فارغاً للإزالة"
+              className="flex-1 h-11 px-3 rounded-xl border border-gray-200 text-sm focus:border-[#0891B2] outline-none lat"
+              dir="ltr"
+              aria-label="كود الكوبون"
+              autoFocus
+            />
+            <Button
+              size="sm"
+              variant="outline"
+              loading={validating}
+              disabled={!trimmedCode || validating}
+              onClick={verify}
+            >تحقق</Button>
+          </div>
+          {result.kind === "ok" && (
+            <p className="text-[11px] mt-1.5 text-emerald-600">
+              {result.message} — الخصم المقترح: {result.suggestedDiscount}
+            </p>
+          )}
+          {result.kind === "invalid" && (
+            <p className="text-[11px] mt-1.5 text-rose-600">{result.message}</p>
+          )}
+          {result.kind === "error" && (
+            <p className="text-[11px] mt-1.5 text-gray-500">{result.message}</p>
+          )}
+        </div>
+
+        <div>
+          <label className="text-[11px] text-gray-500 mb-1 block">قيمة الخصم (يمكنك تعديلها)</label>
+          <input
+            type="number"
+            inputMode="decimal"
+            min="0"
+            value={discount}
+            onChange={(e) => {
+              setDiscount(e.target.value);
+              setDiscountUserEdited(true);
+            }}
+            disabled={willRemove}
+            className="w-full h-11 px-3 rounded-xl border border-gray-200 text-sm focus:border-[#0891B2] outline-none lat disabled:bg-gray-50 disabled:text-gray-400"
+            dir="ltr"
+            aria-label="قيمة الخصم"
+          />
+          {willRemove && (
+            <p className="text-[11px] mt-1.5 text-gray-400">
+              ترك الكود فارغاً يزيل الكوبون من الطلب.
+            </p>
+          )}
+        </div>
+
+        <div className="flex items-center justify-end gap-2 pt-1">
+          <Button size="sm" variant="ghost" onClick={onCancel}>إلغاء</Button>
+          <Button
+            size="sm"
+            variant="primary"
+            onClick={() => onConfirm(trimmedCode, discountForSubmit)}
+          >
+            {willRemove ? "إزالة الكوبون" : "حفظ"}
           </Button>
         </div>
       </div>
@@ -651,6 +998,7 @@ function OperationsTab({ order, role, nurses, labs, ref }: {
   const activeFiles = allFiles.filter((f) => f.isActive);
   const archivedFiles = allFiles.filter((f) => !f.isActive);
   const [forceCompleteOpen, setForceCompleteOpen] = useState(false);
+  const [uploadNameOpen, setUploadNameOpen] = useState(false);
 
 
   return (
@@ -704,17 +1052,7 @@ function OperationsTab({ order, role, nurses, labs, ref }: {
       {/* Result files */}
       <Card title="ملفات النتائج" icon={<FileText size={14} aria-hidden="true" />} action={
         <button
-          onClick={() => {
-            const name = window.prompt("اسم الملف:", `${order.id}-result.pdf`);
-            if (name) {
-              uploadResultFile(order.id, {
-                labId: order.labId ?? "lab-1",
-                fileUrl: `/results/${order.id}/${name}`,
-                fileName: name,
-                uploadedBy: ref.actorName ?? "—",
-              });
-            }
-          }}
+          onClick={() => setUploadNameOpen(true)}
           className="text-xs px-2.5 py-1 rounded-md bg-[#ECFEFF] text-[#0891B2] cursor-pointer flex items-center gap-1"
         >
           <Upload size={12} aria-hidden="true" /> رفع PDF
@@ -828,6 +1166,25 @@ function OperationsTab({ order, role, nurses, labs, ref }: {
           if (!r.ok) toast.error(r.error ?? "تعذر إغلاق الطلب");
         }}
       />
+      <ReasonSheet
+        open={uploadNameOpen}
+        title="رفع PDF"
+        placeholder="اسم الملف"
+        multiline={false}
+        required
+        confirmLabel="رفع"
+        initialValue={`${order.id}-result.pdf`}
+        onCancel={() => setUploadNameOpen(false)}
+        onConfirm={(name) => {
+          setUploadNameOpen(false);
+          uploadResultFile(order.id, {
+            labId: order.labId ?? "lab-1",
+            fileUrl: `/results/${order.id}/${name}`,
+            fileName: name,
+            uploadedBy: ref.actorName ?? "—",
+          });
+        }}
+      />
     </div>
   );
 }
@@ -889,6 +1246,7 @@ function IssuesTab({ order, role, ref }: {
   const [labType, setLabType] = useState<LabIssueType>("invalid_sample");
   const [labDesc, setLabDesc] = useState("");
   const [failedReason, setFailedReason] = useState(order.failedReason ?? "");
+  const [resolveTarget, setResolveTarget] = useState<string | null>(null);
 
   const issues = order.issues ?? [];
 
@@ -965,10 +1323,7 @@ function IssuesTab({ order, role, ref }: {
                 </div>
                 <p className="text-xs text-gray-500 mt-1 leading-relaxed">{i.description}</p>
                 {i.status !== "resolved" && role.role !== "lab_user" && (
-                  <Button size="sm" variant="outline" className="mt-2" onClick={() => {
-                    const note = window.prompt("ملاحظة الحل:", "");
-                    if (note !== null) resolveLabIssue(i.id, note, ref);
-                  }}>
+                  <Button size="sm" variant="outline" className="mt-2" onClick={() => setResolveTarget(i.id)}>
                     <RotateCcw size={12} aria-hidden="true" />
                     حل المشكلة
                   </Button>
@@ -978,6 +1333,18 @@ function IssuesTab({ order, role, ref }: {
           </ul>
         )}
       </Card>
+      <ReasonSheet
+        open={resolveTarget !== null}
+        title="حل المشكلة"
+        placeholder="ملاحظة الحل (اختيارية)"
+        confirmLabel="تأكيد الحل"
+        onCancel={() => setResolveTarget(null)}
+        onConfirm={(note) => {
+          const id = resolveTarget;
+          setResolveTarget(null);
+          if (id !== null) resolveLabIssue(id, note, ref);
+        }}
+      />
     </div>
   );
 }
@@ -989,6 +1356,7 @@ function FinanceTab({ order, role, ref }: {
   const toast = useToast();
   const editable = canEditPricing(role.role);
   const [refundOpen, setRefundOpen] = useState(false);
+  const [recordCashOpen, setRecordCashOpen] = useState(false);
   return (
     <div className="space-y-3">
       <Card title="الملخص المالي" icon={<DollarSign size={14} aria-hidden="true" />}>
@@ -1011,12 +1379,7 @@ function FinanceTab({ order, role, ref }: {
                 size="sm"
                 variant="outline"
                 disabled={order.paymentMethod !== "cash" || order.paymentStatus === "paid"}
-                onClick={async () => {
-                  const note = window.prompt("ملاحظة (اختياري):", "تحصيل في المكتب") ?? undefined;
-                  const r = await recordAdminCashPayment(order.id, ref, note?.trim() || undefined);
-                  if (!r.ok) toast.error(r.error ?? "تعذر تسجيل التحصيل");
-                  else toast.success("تم تسجيل التحصيل النقدي");
-                }}
+                onClick={() => setRecordCashOpen(true)}
               >تسجيل تحصيل نقدي</Button>
             )}
             {hasCap(role.role, "finance.refund") && (
@@ -1051,6 +1414,24 @@ function FinanceTab({ order, role, ref }: {
           const r = await setPaymentStatus(order.id, "refunded", ref);
           if (!r.ok) toast.error(r.error ?? "تعذر استرداد الدفع");
           else toast.success("تم تسجيل الاسترداد");
+        }}
+      />
+      <ReasonSheet
+        open={recordCashOpen}
+        title="تسجيل تحصيل نقدي"
+        placeholder="ملاحظة (اختياري)"
+        confirmLabel="تأكيد التحصيل"
+        initialValue="تحصيل في المكتب"
+        onCancel={() => setRecordCashOpen(false)}
+        onConfirm={async (note) => {
+          setRecordCashOpen(false);
+          // Mirrors the prior `note?.trim() || undefined` policy: an
+          // empty/whitespace-only note becomes undefined at the mutator
+          // boundary, identical to the prompt-era payload.
+          const trimmed = note.trim();
+          const r = await recordAdminCashPayment(order.id, ref, trimmed || undefined);
+          if (!r.ok) toast.error(r.error ?? "تعذر تسجيل التحصيل");
+          else toast.success("تم تسجيل التحصيل النقدي");
         }}
       />
     </div>
