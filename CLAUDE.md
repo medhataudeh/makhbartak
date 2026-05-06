@@ -26,6 +26,25 @@ the database.
 
 For deeper product/design context: `PRODUCT.md`, `DESIGN.md`, `AGENTS.md`.
 
+### How to read this document
+
+Rules are tagged so a reader can tell what is uncompromising from what is
+just current code. When a section uses one of these words, treat it
+literally:
+
+- **Invariant** — must never be violated; affects money, security,
+  auditability, or data correctness. Tightening is welcome; loosening
+  needs a deliberate decision.
+- **Constraint** — important rule, but a violation is recoverable. Push
+  back before changing.
+- **Implementation** — true today; will plausibly change without breaking
+  correctness. Don't cargo-cult, don't rewrite for sport.
+- **Guideline** — preferred approach, judgment call. Reasons can override.
+
+Earlier drafts of this document mixed these together. If you read a rule
+that sounds absolute but isn't tagged, prefer the spirit: protect money,
+auditability, and PII; keep the rest negotiable.
+
 ---
 
 ## Product context
@@ -65,8 +84,26 @@ For deeper product/design context: `PRODUCT.md`, `DESIGN.md`, `AGENTS.md`.
 | Payments | Stripe (REST via fetch, no SDK dep). Client uses `@stripe/stripe-js` + `@stripe/react-stripe-js` |
 | Package manager | **npm** (package-lock.json committed) |
 
-No tests are configured. No state library — `useSyncExternalStore` over
-module-level mutable stores in `src/lib/*`.
+No tests are configured today (see *Testing roadmap* below — debt, not a
+position).
+
+State today is hand-rolled module-level stores in `src/lib/*` consumed
+through `useSyncExternalStore`. **No third-party state/query library.**
+This is **implementation detail**, not an architectural ban.
+
+- **Invariant:** the server is the source of truth for every domain in the
+  *Data Ownership Map*. After any mutation, the affected store is invalidated
+  and rehydrated from its canonical API. Cross-domain reads of finance /
+  ownership / auth state go through API routes, never through the browser
+  Supabase client.
+- **Implementation:** module-level `subscribe + emit` per domain.
+- **When to revisit:** consider a query/cache library (TanStack Query is the
+  natural candidate) only when at least two of these are true: ≥3 stores need
+  coordinated invalidation on a single mutation, request deduplication /
+  background refetch becomes a real product need, or the hand-rolled
+  subscribe boilerplate exceeds ~25 files. Migrate one domain at a time and
+  keep the canonical-refresh contract identical. Do **not** preemptively
+  swap libraries — the invariant above is library-agnostic.
 
 ## Important commands
 
@@ -151,6 +188,92 @@ Order status flips to `completed` are guarded by triggers:
 strict payment gate (mig 029) refuses `set_order_status_admin` calls that
 try to advance an unpaid order to `sample_collected+`.
 
+#### Financial Calculation Ownership
+
+This is a healthcare-finance platform. Money math is **server-side only**.
+
+- Financial calculations MUST happen in SQL / RPC / API-route logic.
+- The frontend MUST NOT calculate any of:
+  - commissions
+  - settlements
+  - refunds
+  - payouts
+  - wallet balances
+  - revenue / collected / refunded totals
+  - platform net or "net after labs"
+  - exchange-rate conversions for online charges
+- The frontend renders **canonical values returned by the API**. If a
+  number isn't in the response, the answer is "expose it server-side",
+  never "compute it in React".
+- Wallet balances are **ledger-derived**. They are written only as a
+  side-effect of an RPC inserting a `*_wallet_transactions` row.
+  Manual mutation of `nurse_wallets.balance` or `lab_wallets.balance` is
+  forbidden — drift will fail the SQL invariant queries.
+- Historical records are **append-only / immutable**:
+  - `nurse_wallet_transactions`, `lab_wallet_transactions`, `payments`,
+    `payment_provider_events`, `order_status_history`,
+    `admin_activity_logs` are write-once. Don't UPDATE/DELETE them in
+    application code; admin "corrections" go through `adjustment` /
+    `cash_refund` / `refund` ledger types.
+  - `lab_wallet_transactions.payout_snapshot` (per-item breakdown at
+    accrual time) and `nurse_wallet_transactions.commission_rate_snapshot`
+    must NOT be backfilled or rewritten when rates change later.
+
+Examples:
+
+```ts
+// ❌ Don't do this — recomputing a balance in React.
+const balance = txns.reduce((s, t) => s + (t.direction === "credit" ? t.amount : -t.amount), 0);
+
+// ❌ Don't do this — inferring platform revenue from local order data.
+const revenue = orders.reduce((s, o) => s + o.total, 0);
+
+// ❌ Don't do this — converting SYP to USD in the cart.
+const usd = totalSyp / 13000;
+
+// ✅ Do this — read what the server returned.
+const { netDue, totalCommission } = await fetch(`/api/nurses/${id}/wallet`).then(r => r.json());
+
+// ✅ Do this — exchange rate comes from create-intent response.
+const { chargedAmount, providerCurrency, exchangeRate } = await apiCreateStripeIntent(orderId);
+```
+
+#### Logic Ownership Taxonomy
+
+A clean test for what belongs where:
+
+**Server-authoritative (never on client) — invariant:**
+
+- **Money math** — prices, totals, discounts, commissions, payouts,
+  settlements, refunds, wallet balances, exchange-rate conversions.
+- **Authorization** — who can see / do what. Client guards are UX hints;
+  the route auth guard is truth.
+- **Canonical state transitions** — order status, payment status, ledger
+  writes.
+- **Identity / uniqueness** — order numbers, idempotency keys, references.
+- **Validation that protects an invariant** — coupon validity, booking-window
+  enforcement, payment gate, catalog price snapshots at order creation.
+
+**Client-acceptable — guideline:**
+
+- **Interaction logic** — which sheet is open, which tab is active, wizard
+  step, drag/scroll/focus.
+- **Presentation logic** — formatting (`formatPrice`, `formatDate`),
+  badge/color selection from canonical status, RTL/LTR handling,
+  responsive layout.
+- **Optimistic UX state** — provisional flips that show immediately and
+  ideally roll back on API failure. Permitted *only* with a follow-up
+  canonical refresh; forbidden as the final resting state for finance
+  fields.
+- **Transient form state** — drafts, validation hints, debouncing. Final
+  validation is still server-side.
+- **Pure projections of canonical data** — filtering, sorting, grouping,
+  derived display flags.
+
+**Litmus test.** "If two clients computed this independently and disagreed,
+would it cost money, breach trust, or break an audit?" Yes → server.
+No → client is fine.
+
 ### Customer-facing payment lifecycle
 
 ```
@@ -233,6 +356,114 @@ A 7th implicit `needs_attention` surfaces failures. Internal
 - 036: Phase 5.2 lab finance (`lab_wallets`, `lab_wallet_transactions`,
   `lab_payout_rules`, accrual trigger extension).
 
+## Freshness model — Realtime, polling, optimistic UI
+
+The data freshness contract today is **API hydration + optimistic UI +
+canonical refresh**. The rules below distinguish what is non-negotiable
+from what is current implementation.
+
+- **Invariant — financial truth.** State transitions on `payments`,
+  `orders.payment_status`, `*_wallet_transactions`, and
+  `payment_provider_events` are settled **only** by the server-side path
+  that owns them (RPC + webhook for online, RPC for cash). Realtime,
+  polling, optimistic UI, and client subscriptions are **read-side**
+  mechanisms; none of them may flip authoritative state.
+- **Invariant — canonical refresh after mutation.** Every mutator returns
+  (or the `useOrderByIdempotencyKey` / `awaitOrderRemote` helpers wait
+  for) the canonical row, which is merged into the store. Optimistic
+  state without a follow-up canonical merge is forbidden for anything
+  financial.
+- **Constraint — polling for webhook-settled state.** When the source of
+  truth is a webhook or a long-running RPC and the user is waiting for
+  confirmation, polling is the right tool today. Example:
+  `StripePaymentScreen` polls `/api/orders/[id]/payment-status` every 2s
+  for up to ~60s. Admin OCC + Lab portal hydrate on mount and refresh on
+  user action.
+- **Implementation — `useSyncExternalStore` is a local-render
+  optimization**, not a source of truth. Module-level stores in
+  `src/lib/store.ts` and siblings cache the last canonical hydrate so
+  re-renders don't refetch; the cache is invalidated on every mutator
+  call.
+- **Guideline — Supabase Realtime is permitted, but never authoritative.**
+  Realtime is **not forbidden**. It is acceptable as a UX nudge for
+  non-financial surfaces (admin OCC order list, nurse online-status
+  board, lab portal new-orders, notifications inbox). If a Realtime
+  subscription is added:
+  1. The handler's only job is to call the canonical hydrator
+     (`fetchOrdersForAdmin`, etc.). It does **not** patch local state
+     from the event payload.
+  2. The screen must remain correct without Realtime — i.e. a fallback
+     poll or manual refresh still produces the same final state.
+  3. Financial fields stay on polling-after-webhook, even on a
+     Realtime-enabled screen.
+  No Realtime subscriptions exist today; do not add them as part of
+  routine work — they are a Phase 5.x+ enhancement.
+- **Guideline — optimistic UI rollback.** Aim to capture the prior row and
+  restore it if the API rejects, especially in finance-adjacent flows.
+  Today, `persistOrderActionViaApi` in `src/lib/store.ts` merges the
+  canonical row on success but does **not** auto-rollback on failure;
+  the next hydrate corrects the view, but UI may briefly mislead. Treat
+  this as known debt. In finance flows, render a "جاري التحقق…"
+  surface during the gap rather than the success surface.
+- **Guideline — eventual consistency is acceptable on non-financial
+  reads.** A nurse seeing a 5-second-stale notification list is not a
+  bug; an admin seeing a 5-second-stale wallet balance during a refund
+  is.
+
+## Data Ownership Map
+
+Every domain has exactly one source of truth. When a screen needs a
+number, the answer is "hydrate it from the canonical table via the
+appropriate API"; never reconstruct it from a join in client code.
+
+| Domain | Source of Truth | Notes |
+|---|---|---|
+| Orders | `orders` | Hydrated through `fetchOrdersForCustomer / ForNurse / ForAdmin / fetchOrderById` (`lib/supabase/queries/orders.ts`); never read directly from client code |
+| Order items | `order_items` | Snapshot at order creation; price/name immutable post-create |
+| Order status history | `order_status_history` | Append-only audit; written by every status RPC |
+| Payments (per collection) | `payments` | Provider snapshot (`provider`, `provider_ref`, `charged_amount`, `provider_currency`, `exchange_rate`, `provider_metadata`) is authoritative for the online charge |
+| Provider events | `payment_provider_events` | Stripe event idempotency log; webhook is the only writer |
+| Nurse wallet | `nurse_wallets` (balance) + `nurse_wallet_transactions` (ledger) | Balance is ledger-derived. `commission_rate_snapshot` immutable |
+| Lab wallet | `lab_wallets` + `lab_wallet_transactions` | `payout_snapshot` jsonb breakdown immutable |
+| Lab payout rules | `lab_payout_rules` + `app_settings.lab_default_payout_*` | 3-tier resolver (`resolve_lab_payout` RPC) |
+| Lab issues | `lab_issues` | Customer message editable; internal `description` private |
+| Settlements (lab periodic) | `settlements` + `settlement_items` | Legacy lab settlement engine; coexists with the new ledger |
+| Notifications | `notifications` | Customer + nurse + admin recipients; `recipient_id = profiles.id` |
+| Admin activity log | `admin_activity_logs` | Append-only operational audit |
+| Customer profile | `customers` (joined with `profiles`) | Auth-bound; soft-deleted via `deleted_at` |
+| Patients | `patients` | Per-customer; soft-deleted via `deleted_at` |
+| Addresses | `addresses` | Per-customer; soft-deleted via `deleted_at` |
+| Catalog tests | `lab_tests` + `test_categories` + `instruction_library` + `lab_test_instructions` | Admin-managed |
+| Catalog packages | `packages` + `package_items` | Admin-managed |
+| Coupons | `coupons` | Server-validated only via `/api/coupons/validate` |
+| Sliders | `home_sliders` | Admin-managed |
+| Nurse prep state | `nurse_prep_state` | Daily persisted state per nurse |
+| Nurse shortage requests | `nurse_shortage_requests` (+ `_items`) | Field-to-admin signal |
+| Nurse gamification | `nurse_gamification` | Read-only to nurse; admin can adjust |
+| Lab result files | `lab_result_files` (+ `_events`) | Files in private bucket; signed URLs minted server-side |
+| Branding | `app_branding` (singleton) | Admin-editable |
+| App settings | `app_settings` (singleton, `id=1` invariant) | Includes Stripe config + payout defaults + commission percentage |
+| Content pages | `content_pages` | Terms / privacy / support / faq |
+
+### Composition rule
+
+- **Invariant — server-owned composition.** Any value that participates in
+  audit, finance, or trust must be composed server-side and returned
+  canonically: order totals, commissions, refund amounts, settlement
+  positions, lab payout snapshots, wallet balances, "net after labs",
+  revenue / collected / refunded summaries, and any cross-table aggregate
+  read as a number by an admin or auditor. Expose via RPC or server view.
+- **Guideline — client composition is allowed for presentation.**
+  Filtering, sorting, grouping rows the API already returned; pairing a
+  `patient.name` with an `order.patientId` from already-hydrated lists;
+  deriving display state (`isOverdue`, `statusColor`) from canonical
+  fields. These are projections of server truth, not aggregations of it.
+  Don't proliferate one-off RPCs for purely presentational joins.
+- **Litmus test:** if the wrong number could mislead a customer about
+  money, an admin in a reconciliation, or an auditor in a dispute →
+  server. If it only affects how something *looks* and is recomputable
+  from already-hydrated canonical fields → client is fine.
+
 ## Project structure
 
 ```
@@ -269,11 +500,39 @@ src/
 supabase/migrations/              # Source of truth for the DB
 ```
 
-The customer app is a **single client component** (`src/app/page.tsx`) that
-switches views via local state — no nested routes for the booking flow.
-`AdminDashboard.tsx` is intentionally one large file with internal
-sub-components and centralized state. Don't blow it apart "for hygiene";
-do split when a section grows new responsibilities.
+**Customer app composition (implementation, not policy).** The customer app
+is a single client component (`src/app/page.tsx`) that switches views via
+local state. This is the current shape, chosen because the booking wizard
+is a single transaction and nested routes would over-complicate the mobile
+back-button. **Mobile-first, RTL is invariant** — whether achieved with one
+component or twenty is a refactoring question, not an architectural one.
+
+Introduce real routes when *any* of: a view should be deep-linkable
+(specific package, shared cart, marketing/SEO surface), a view carries a
+heavy bundle the rest of the app shouldn't pay for, or `page.tsx` grows
+state that doesn't belong to the booking transaction. No restructuring is
+needed today.
+
+**`AdminDashboard.tsx` (guideline, not policy).** Co-locating state and
+sub-components is fine while they share lifecycle and mutate together —
+locality of change beats file-count tidiness. The file is large today
+(~3.6k lines); that is acceptable but no longer purely beneficial.
+
+Split a subtree when *any* of these is true:
+
+- It has a meaningfully independent lifecycle (e.g. a finance subtab loaded
+  only by `finance_admin`) — split and consider lazy-loading it.
+- It belongs to a different role boundary in `ROLE_PERMISSIONS` — splitting
+  clarifies the auth boundary at the file level.
+- The shared mutable state at the top is no longer touched by the subtree.
+- Review/merge friction is dominated by the file (frequent simultaneous
+  edits, conflicts).
+- Type-checking or HMR latency is materially affected.
+
+Don't split for: pure aesthetics, "clean architecture", or arbitrary
+line-count rules. Finance subtabs are the natural first extraction when
+they grow further; treat that as expected refactoring, not "blowing it
+apart."
 
 ## Environment variables
 
@@ -294,6 +553,87 @@ live in `app_settings` and are admin-editable from Settings.
 
 `NEXT_PUBLIC_SHOW_DEMO_CREDS=true` is REFUSED at boot in production —
 `src/lib/demo-credentials.ts` throws on import.
+
+## Deployment Assumptions
+
+The platform's deployment shape — current and intended:
+
+- **Frontend**: Vercel, Next.js 16 App Router. Server routes run on
+  Vercel's serverless runtime (`runtime = "nodejs"` for routes that
+  need the Stripe webhook signature verifier).
+- **Backend**: Supabase (managed Postgres + Auth + Storage). Service
+  role calls from API routes; RLS enabled on every customer-facing
+  table; service-role bypasses RLS by design and is only reachable
+  via `lib/supabase/server-admin.ts` (`server-only`).
+- **Storage**: Supabase Storage, all buckets **private**. Signed URLs
+  minted server-side at hydrate time (TTL ~1h) — `lab-results`,
+  `prescriptions`, `media-library`.
+- **Region**: single-region today is acceptable. Cross-region read
+  replicas are not in scope.
+- **Rate limiting**: in-memory token bucket
+  (`src/lib/api/rate-limit.ts`). This is **single-instance only**.
+  Before scaling beyond one Vercel region or function instance, swap
+  the backing Map for Upstash Redis or Vercel KV. The call surface is
+  shaped to make that swap a single-file change.
+- **Stripe webhook**: requires a stable public HTTPS endpoint at
+  `/api/webhooks/stripe`. The route is `runtime = "nodejs"` and uses
+  `req.text()` to preserve the raw body for signature verification.
+- **Environment separation**: local / staging / production must be
+  fully isolated — separate Supabase projects, separate Stripe keys
+  (test → staging, live → production), separate `STRIPE_WEBHOOK_SECRET`
+  per environment. Never share keys across environments.
+
+Production hard rules:
+
+- **Production must NEVER expose demo credentials.** The boot guard in
+  `src/lib/demo-credentials.ts` throws if `NEXT_PUBLIC_SHOW_DEMO_CREDS`
+  is `"true"` while `NODE_ENV=production`. Don't disable that guard.
+- **Production must NEVER return verbose DB errors.** All high-risk
+  routes funnel errors through `safeApiError` (`src/lib/api/safe-error.ts`)
+  which logs the raw error server-side and returns generic Arabic copy.
+  Don't `return NextResponse.json({ error: error.message }, …)` from
+  any route that touches money, auth, or PII.
+- **Production must NEVER enable `NEXT_PUBLIC_USE_SUPABASE_DEV_OTP`.**
+  The bypass is gated by `NODE_ENV !== "production"` in
+  `src/lib/supabase/flags.ts`; keep that guard.
+
+## Observability Standards
+
+The audit trail is the product. Every financial mutation has to be
+reconstructible from logs + ledger.
+
+- **Every critical finance mutation must log** (server-side via
+  `logger`):
+  - `route` (e.g. `api/orders/cash-collected`)
+  - `orderId` and/or `paymentId` when applicable
+  - actor `role` and `userId`
+  - the txn `type` if a ledger row was written
+  - timestamp (logger appends `ts` automatically)
+- **Logger redacts** (already implemented in `src/lib/logger.ts`):
+  - `authorization` / `cookie` / `set-cookie` headers
+  - any key named `password` / `token` / `access_token` /
+    `refresh_token` / `id_token` / `client_secret` / `stripe-signature`
+    / `stripe_secret_key` / `secret` / `api_key` / `apikey`
+  - any string matching `^Bearer\s+`, `^sk_(live|test)_`, `^whsec_`
+- **All P0 / P1 errors must**:
+  - log server-side with full context (sanitized)
+  - return a safe Arabic error to the client via `safeApiError`
+  - never echo raw `error.message`, constraint names, or RLS hints
+- **Sentry forwarding is opt-in** via `SENTRY_DSN`. The dynamic import
+  in `lib/logger.ts` keeps `@sentry/nextjs` out of the bundle when
+  unused. If we wire Sentry in production, it must:
+  - preserve a correlation id per request (route + nearest UUID such as
+    `orderId` / `paymentId`)
+  - group by `route` + error class so finance and webhook errors don't
+    drown in customer 4xx noise
+  - never receive raw payloads — the same redaction rules apply
+- **Webhook forensics**: every Stripe delivery is recorded in
+  `payment_provider_events` with a `result` tag (`received |
+  confirmed | failed | refunded | ignored | no_match | duplicate |
+  confirm_error | failed_error | refund_error`). The `*_error` tags
+  are retryable and tell ops "Stripe will deliver again". Don't
+  invent new tags without updating the webhook handler's terminal vs
+  retryable sets.
 
 ---
 
@@ -468,6 +808,200 @@ via `enrichOrdersWithSignedUrls` or equivalent helpers.
   focus state lives in `globals.css`.
 - Run `npm run lint` and `npm run build` before declaring a task done.
 
+## AI Agent Rules
+
+If you are an AI assistant editing this codebase, the following rules
+apply on top of everything above. They exist because most regressions
+in a system like this come from an agent taking a "convenient" shortcut.
+
+- **Don't bypass RPCs.** State changes go through SECURITY DEFINER
+  functions in `supabase/migrations/*`. If the change you need isn't
+  expressible by an existing RPC, write a new RPC and call it from a
+  route — don't reach into tables directly from a route handler when
+  an RPC owns that domain.
+- **Don't introduce parallel business logic paths.** If `cancel_order_admin`
+  already handles "this order was paid → reverse the cash" on the
+  server, don't add a second cancel path that does it client-side or
+  in a different RPC. One canonical path per domain.
+- **Don't add direct table writes from client code.** The browser must
+  not import `getSupabaseAdmin` (the `server-only` guard will throw at
+  build time if you try) and must not call `.insert()` / `.update()`
+  / `.delete()` on any business table. Even reads of finance,
+  payments, or wallet tables go through API routes, not the
+  authenticated browser client.
+- **Don't add client-side financial math.** See the
+  "Financial Calculation Ownership" subsection. Numbers come from the
+  API; the UI renders them.
+- **Don't weaken auth guards for convenience.** Every route uses one
+  of `requireAuthedUser` / `requireAdmin` /
+  `requireCustomerSelfOrAdmin` / `requireNurseSelfOrAdmin` and
+  re-checks resource ownership for any URL-scoped id. Don't downgrade
+  `requireAdmin` to `requireAuthedUser`. Don't remove the
+  `lab_id === auth.session.labId` check on lab confirm. Don't return
+  data the session shouldn't see.
+- **Don't introduce mock fallback behavior into production paths.** The
+  legacy `USE_SUPABASE` flag still exists in `src/lib/supabase/flags.ts`
+  and is read in a handful of stores (`tool-library.ts`,
+  `instruction-library.ts`, `nurse-gamification.ts`, `home-sliders.ts`,
+  `BookingFlow.tsx`, `NurseApp.tsx`, `store.ts`). It is set via
+  `NEXT_PUBLIC_USE_SUPABASE=true` and **must be `true` in every deployed
+  environment** — when false, mutators silently no-op the remote write.
+  Treat the remaining `if (!USE_SUPABASE)` branches as dead code on the
+  remove-list, not as legitimate fallbacks. `src/lib/mock-data.ts` is
+  retained but only as a constants/labels module
+  (`ORDER_STATUS_LABELS`, `FAILED_COLLECTION_REASONS`,
+  `LAB_ISSUE_REASONS`, `COMMON_INSTRUCTIONS`, `SYSTEM_SETTINGS`
+  defaults, level tables for gamification). Don't bring back "if the
+  API fails, render mock values" — finance especially must show empty
+  states + an error, never a fake number.
+- **Prefer extending existing flows over creating new duplicated
+  abstractions.** The store mutators, API helpers, and route guards
+  already cover ~95% of the contract you need. New mutators should
+  extend `lib/store.ts`; new admin views should extend
+  `FinanceAdmin.tsx` rather than spawn a parallel page.
+- **Don't relax migration ordering invariants.** Migrations are
+  numbered + idempotent (`if not exists`, `add value if not exists`).
+  Don't edit a previously-applied migration in place; add a new
+  numbered one that supersedes the prior behavior.
+- **Don't add a new `result` tag to `payment_provider_events`** without
+  updating both the webhook handler's `TERMINAL_RESULTS` and
+  `RETRYABLE_RESULTS` sets and migration 035's column comment.
+
+## Known minor risks (deliberately accepted)
+
+These are documented so a future agent does not "discover" them and
+silently change behavior. They were reviewed and considered low-severity
+or below the change-cost threshold for soft-launch.
+
+- **`/api/system/settings` exposes `nurse_commission_percentage`
+  publicly.** Every portal (including unauthenticated guests on `/`)
+  hits this route on mount. The commission rate is operational
+  intelligence, not customer PII or transaction data; gating it would
+  require either making the route auth-aware (touches its caching
+  contract) or splitting the field to an admin-only GET (touches
+  AdminDashboard hydration). For soft-launch we accept the leak; if
+  competitive sensitivity grows, expose the field only on
+  `/api/admin/system/settings` GET and read it from the admin store
+  separately.
+- **Optimistic UI rollback is partial.** `collectCash` and
+  `recordAdminCashPayment` snapshot and restore on failure (added in
+  Phase 5.1 hardening). Other mutators in `store.ts`
+  (`cancelOrder`, `setPaymentStatus`, `addNote`, etc.) still rely on
+  the next canonical hydrate to correct the UI on persist failure.
+  This is bounded — the next refresh fixes it — but a finance flow
+  that depends on a non-cash mutator should add a snapshot/restore
+  pair before launch.
+- **Coupon-validation logic is duplicated** between
+  `/api/coupons/validate` (read-only preview) and the recompute paths
+  inside `/api/orders` POST and `/api/admin/orders` POST. The two
+  copies are line-for-line identical today. Extracting to a shared
+  helper is a low-risk cleanup but not load-bearing — the
+  authoritative computation is whichever runs at order placement.
+- **Admin OCC payment-status changes use `window.prompt`** for
+  pending/failed/refunded transitions (`OrderControlCenter.tsx`).
+  Constrained to non-`paid` values and admin-only; UX debt rather
+  than a security issue.
+
+## Recovery & reconciliation roadmap
+
+**Consistency model.** Authoritative writes are strongly consistent
+within a single RPC transaction. Across the order ↔ payment ↔ ledger
+boundary, the system is **eventually consistent through Stripe webhook
+replay and idempotent RPCs**. Every consumer of finance state must
+tolerate a brief gap between user action and ledger settlement.
+
+**In place today:**
+
+- Stripe replays failed webhook deliveries; `*_error` result tags in
+  `payment_provider_events` mark events as retryable.
+- Partial unique indexes prevent double-credit on replay.
+- `payment_provider_events.id` is the dedup key.
+- Customer payment screen polls until the webhook settles.
+
+**Operational gaps — TODO post-launch operational hardening, not launch
+blockers.** Each item below is explicitly deferred:
+
+- **TODO (post-launch): refund clawback.** A refund of a completed order
+  today does NOT reverse its accrued nurse commission or lab earning.
+  Until automated `commission_clawback` / `earning_clawback` ledger
+  types ship (Phase 5.x), Admin Finance should surface a "pending
+  clawback" badge on refunded-but-completed orders so ops can issue a
+  manual `adjustment` row. *Not a launch blocker* unless your day-1
+  refund volume is non-trivial.
+- **TODO (post-launch): orphan-payment sweeper.** A scheduled job
+  (Supabase cron / Vercel cron) that finds `payments` rows stuck in
+  `pending` with no terminal `payment_provider_events` after N hours,
+  marks them expired, and surfaces them to admin. Until it ships,
+  orphan rows accumulate but are non-load-bearing — the order itself
+  blocks on `payment_status='paid'` so nothing operationally drifts.
+  *Not a launch blocker.*
+- **TODO (post-launch): Stripe reconciliation job.** Nightly diff of
+  `payments` (online, paid-ish, last 24h) against the Stripe
+  `PaymentIntents` API; surface divergence to ops without
+  auto-correcting. Until it ships, divergence is detected by support
+  reports, not proactively. *Not a launch blocker.*
+- **TODO (post-launch): webhook replay runbook.** A documented
+  procedure for ops to re-deliver a Stripe event from the dashboard
+  with the expectation that the system will dedupe. The code already
+  supports this via `payment_provider_events.id` + the `*_error`
+  retryable tags; the gap is human-facing documentation. *Not a
+  launch blocker.*
+- **TODO (post-launch): settlement batch atomicity.** Settlements that
+  touch multiple wallets in one batch must be transactional or
+  explicitly resumable. Behavior today is documented here so future
+  agents do not assume a cleaner contract than exists. *Not a launch
+  blocker.*
+
+Build these as part of post-launch operational hardening; do not block
+v1 / soft-launch on them unless an active production incident demands
+it. Bulk recalculation, mass notifications, and periodic reconciliation
+will eventually move to a queue (Inngest / Vercel Queues / Supabase
+scheduled functions); none of that is required for today's scope, and
+queues do not change the consistency model — they execute the same
+idempotent RPCs.
+
+## Future Scaling Considerations
+
+These are likely upgrades when the platform grows. They are **not
+current blockers** — flagging them so future agents know what's
+deliberate vs deferred.
+
+- **Distributed rate limiting**: replace the in-memory bucket in
+  `lib/api/rate-limit.ts` with Upstash Redis / Vercel KV. The call
+  surface is already shaped for the swap.
+- **Background jobs / queues**: long-running work (e.g. mass
+  notifications, periodic settlement generation, bulk lab earning
+  recalculation if rules change retroactively) belongs on a queue,
+  not inside a serverless route. Likely candidates: Inngest, Vercel
+  Queues, Supabase Edge Functions cron.
+- **Realtime subscriptions**: Supabase Realtime channels for the OCC
+  + nurse home + lab portal would replace polling for non-financial
+  surfaces. Financial surfaces stay on polling-after-canonical-API
+  even if Realtime ships.
+- **Sentry full integration**: DSN + correlation id middleware +
+  per-route grouping. The logger is already wired for the dynamic
+  import.
+- **Ledger immutability enforcement at the DB**:
+  `BEFORE UPDATE OR DELETE` triggers on `nurse_wallet_transactions`,
+  `lab_wallet_transactions`, `payments`, `payment_provider_events`,
+  `order_status_history` raising unless a session GUC
+  `app.allow_ledger_mutation = 'on'` is set.
+- **Refund clawback automation**: a refund of a previously-completed
+  order today does NOT reverse its commission or lab earning. Phase
+  5.x will add `commission_clawback` / `earning_clawback` types and
+  wire them into `record_provider_refund` + `refund_payment_admin`.
+- **Analytics / BI warehouse**: nightly export of orders, payments,
+  ledger, and provider events to a warehouse. Heavy BI queries should
+  not hit the OLTP database.
+- **Audit history for payout-rule edits**: `lab_payout_rules` is
+  mutable today. Add `lab_payout_rules_history` so retroactive rule
+  changes have a paper trail.
+- **Multi-region / read replicas**: not on the roadmap, but if it
+  lands, the Stripe webhook must continue routing to a single writer
+  region — the partial unique index on
+  `payment_provider_events(id)` is the source of truth for
+  idempotency and cannot tolerate split brain.
+
 ## What not to do
 
 - **Don't trust your Next.js training data.** APIs in 16.x may be
@@ -496,6 +1030,43 @@ via `enrichOrdersWithSignedUrls` or equivalent helpers.
   `/api/admin/notifications/broadcast` is admin-authored only.
 - **Don't return raw `error.message` from a Supabase call.** Use
   `safeApiError` from `lib/api/safe-error.ts`.
+
+## Testing roadmap
+
+**Today:** no automated tests are configured. The 17-step manual QA
+checklist below is the safety net. This is **debt to be paid down**, not
+an architectural position.
+
+**Priority order when test infra is added** (do not adopt all at once):
+
+1. **DB-level invariants.** pgTAP or SQL fixtures over the migrations:
+   idempotency partial unique indexes hold; `accrue_nurse_commission` /
+   `accrue_lab_earning` are no-ops on unpaid orders; strict payment gate
+   refuses unpaid `sample_collected+`; wallet balance always equals
+   ledger sum; `payment_provider_events` keyed-on-event-id rejects
+   duplicates.
+2. **Webhook handler.** Signature verification, replay/duplicate
+   handling, every `result` tag (`received | confirmed | … | duplicate
+   | confirm_error`), terminal vs retryable transitions, partial-refund
+   and refund-after-full paths.
+3. **Payout resolution.** `resolve_lab_payout` 3-tier resolver across
+   fixtures: test-specific → lab-default → `app_settings` default.
+   Lock the `payout_snapshot` shape — it is immutable history.
+4. **API route auth guards.** Wrong-portal session → 403. Customer A
+   reading customer B's order → 403. Lab A confirming Lab B's order →
+   403. Force-complete refusing unpaid by default; succeeding with
+   `allowUnpaid:true` without accrual.
+5. **RPC contract tests.** `place_order_admin`, `set_order_status_admin`,
+   `cash_collected`, `record_provider_*`, `cancel_order_admin`,
+   `refund_payment_admin` — input shape, output shape, idempotency.
+6. **Critical UI flows (E2E, Playwright).** Customer cash flow; customer
+   online flow including webhook polling; nurse cash collection; lab
+   confirm with auto-complete; admin refund.
+7. **Component tests** are the lowest priority and should not be the
+   first investment.
+
+The 17-step manual checklist below stays as a release smoke test; each
+automated layer above retires the corresponding manual step.
 
 ## QA checklist
 

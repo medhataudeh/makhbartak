@@ -4,6 +4,7 @@ import { fetchOrderById, enrichOrdersWithSignedUrls } from "@/lib/supabase/queri
 import { tsStatusToSql } from "@/lib/supabase/order-status";
 import { isUuid } from "@/lib/supabase/uuid";
 import { requireAdmin } from "@/lib/route-auth";
+import { logger } from "@/lib/logger";
 import type { Order, OrderStatus, PaymentMethod, Shift } from "@/lib/types";
 
 interface CreateAdminOrderBody {
@@ -84,6 +85,110 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "address does not belong to this customer" }, { status: 400 });
   }
 
+  // ── Server-authoritative pricing (same contract as /api/orders POST). ──
+  // Money math is server-only; admin is privileged but not exempt from
+  // audit integrity. The client-supplied subtotal / coupon_discount /
+  // total / price_snapshot are advisory; we recompute every figure from
+  // the catalog and re-validate the coupon. payment_status is always
+  // seeded "pending"; cash flips via /cash-collected (or the admin
+  // record-cash-payment route), online via the Stripe webhook.
+  const items = Array.isArray(order.items) ? order.items : [];
+  const testIds = Array.from(
+    new Set(items.map((i) => i?.testId).filter((x): x is string => isUuid(x ?? ""))),
+  );
+
+  const priceById = new Map<string, { sellPrice: number; nameAr: string; nameEn: string | null }>();
+  if (testIds.length) {
+    const { data: tests, error: testsErr } = await sb
+      .from("lab_tests")
+      .select("id, sell_price, name_ar, name_en, is_active")
+      .in("id", testIds);
+    if (testsErr) {
+      logger.error("admin orders POST: lab_tests fetch failed", { route: "api/admin/orders", code: testsErr.code });
+      return NextResponse.json({ error: "تعذر التحقق من قائمة الفحوصات" }, { status: 500 });
+    }
+    for (const t of tests ?? []) {
+      if (t.is_active === false) continue;
+      priceById.set(t.id as string, {
+        sellPrice: Number(t.sell_price ?? 0),
+        nameAr: (t.name_ar as string) ?? "",
+        nameEn: (t.name_en as string | null) ?? null,
+      });
+    }
+  }
+
+  let serverSubtotal = 0;
+  let serverItems: Array<{ testId: string; nameAr: string; nameEn: string | null; priceSnapshot: number }> = [];
+
+  if (order.type === "package") {
+    if (!order.packageId || !isUuid(order.packageId)) {
+      return NextResponse.json({ error: "معرف الباقة غير صالح" }, { status: 400 });
+    }
+    const { data: pkg, error: pkgErr } = await sb
+      .from("packages")
+      .select("id, price, is_active")
+      .eq("id", order.packageId)
+      .maybeSingle();
+    if (pkgErr) {
+      logger.error("admin orders POST: package fetch failed", { route: "api/admin/orders", code: pkgErr.code });
+      return NextResponse.json({ error: "تعذر التحقق من الباقة" }, { status: 500 });
+    }
+    if (!pkg || pkg.is_active === false) {
+      return NextResponse.json({ error: "الباقة غير متاحة" }, { status: 400 });
+    }
+    serverSubtotal = Number(pkg.price ?? 0);
+    serverItems = items.map((it) => {
+      const canonical = priceById.get(it.testId);
+      return {
+        testId: it.testId,
+        nameAr: canonical?.nameAr ?? it.nameAr ?? "",
+        nameEn: canonical?.nameEn ?? it.nameEn ?? null,
+        priceSnapshot: canonical?.sellPrice ?? 0,
+      };
+    });
+  } else {
+    serverItems = items.map((it) => {
+      const canonical = priceById.get(it.testId);
+      return {
+        testId: it.testId,
+        nameAr: canonical?.nameAr ?? it.nameAr ?? "",
+        nameEn: canonical?.nameEn ?? it.nameEn ?? null,
+        priceSnapshot: canonical?.sellPrice ?? 0,
+      };
+    });
+    if (serverItems.some((i) => !(i.priceSnapshot > 0))) {
+      return NextResponse.json({ error: "أحد الفحوصات غير متاح أو لا يحمل سعراً صالحاً" }, { status: 400 });
+    }
+    serverSubtotal = serverItems.reduce((s, i) => s + i.priceSnapshot, 0);
+  }
+
+  let serverCouponCode: string | null = null;
+  let serverCouponDiscount = 0;
+  const couponInput = (order.couponCode ?? "").trim().toUpperCase();
+  if (couponInput) {
+    const { data: c } = await sb
+      .from("coupons")
+      .select("code, type, value, min_order_amount, max_discount, usage_limit, used_count, start_date, expiry_date, is_active")
+      .eq("code", couponInput)
+      .maybeSingle();
+    if (c && c.is_active) {
+      const today = new Date().toISOString().split("T")[0];
+      const dateOk = today >= (c.start_date as string) && today <= (c.expiry_date as string);
+      const usageOk = !((c.usage_limit ?? 0) > 0 && (c.used_count ?? 0) >= (c.usage_limit ?? 0));
+      const minOk = serverSubtotal >= Number(c.min_order_amount ?? 0);
+      if (dateOk && usageOk && minOk) {
+        const raw = c.type === "percentage"
+          ? (serverSubtotal * Number(c.value ?? 0)) / 100
+          : Number(c.value ?? 0);
+        const cap = Number(c.max_discount ?? 0);
+        serverCouponDiscount = Math.round((cap > 0 ? Math.min(raw, cap) : raw) * 100) / 100;
+        serverCouponCode = c.code as string;
+      }
+    }
+  }
+
+  const serverTotal = Math.max(0, serverSubtotal - serverCouponDiscount);
+
   const payload = {
     patient_id: order.patientId,
     address_id: order.addressId,
@@ -95,14 +200,14 @@ export async function POST(req: NextRequest) {
     shift: order.shift,
     shift_start_time: order.shiftStartTime ?? null,
     shift_end_time: order.shiftEndTime ?? null,
-    subtotal: order.subtotal,
-    coupon_code: order.couponCode ?? null,
-    coupon_discount: order.couponDiscount,
-    total: order.total,
+    subtotal: serverSubtotal,
+    coupon_code: serverCouponCode,
+    coupon_discount: serverCouponDiscount,
+    total: serverTotal,
     payment_method: order.paymentMethod,
-    payment_status: order.paymentStatus,
+    payment_status: "pending",
     prescription_url: order.prescriptionUrl ?? null,
-    items: order.items.map((it, idx) => ({
+    items: serverItems.map((it, idx) => ({
       lab_test_id: it.testId,
       name_ar_snapshot: it.nameAr,
       name_en_snapshot: it.nameEn ?? null,

@@ -680,9 +680,23 @@ export function setPaymentStatus(
   );
 }
 
+// Money-flow rollback (Phase 5.1 hardening). Cash collection is the highest-
+// risk optimistic flip in the store: a stale UI showing "paid" tells the
+// nurse/admin that the wallet has been credited and unlocks "send sample to
+// lab", so a silent persist failure used to leave the field ahead of the
+// ledger until the next hydrate. We snapshot the pre-mutation row and
+// restore it if the API rejects. Other mutators are deferred — they are
+// status/UX flips, not money flips.
+function restoreOrderSnapshot(prev: Order | null) {
+  if (!prev) return;
+  _orders = _orders.map((o) => (o.id === prev.id ? prev : o));
+  emit();
+}
+
 // Phase 4.1.1 — admin office cash-collection. Use this from admin UI; never
 // flip payment_status='paid' directly.
-export function recordAdminCashPayment(orderId: string, ref: ActorRef, note?: string): Promise<{ ok: boolean; error?: string }> {
+export async function recordAdminCashPayment(orderId: string, ref: ActorRef, note?: string): Promise<{ ok: boolean; error?: string }> {
+  const prev = getOrder(orderId);
   mutateOrder(orderId, (o) =>
     o.paymentMethod === "cash" && o.paymentStatus !== "paid"
       ? { ...o, paymentStatus: "paid", updatedAt: new Date().toISOString() }
@@ -698,7 +712,9 @@ export function recordAdminCashPayment(orderId: string, ref: ActorRef, note?: st
       orderId: isUuid(order.id) ? order.id : undefined,
     });
   }
-  return persistOrderActionViaApi(orderId, async () => apiAdminRecordCashPayment(orderId, note));
+  const result = await persistOrderActionViaApi(orderId, async () => apiAdminRecordCashPayment(orderId, note));
+  if (!result.ok) restoreOrderSnapshot(prev);
+  return result;
 }
 
 // Phase 4.1 — nurse confirms they have cash in hand. Distinct from
@@ -706,7 +722,8 @@ export function recordAdminCashPayment(orderId: string, ref: ActorRef, note?: st
 // writes the canonical paid payment row + nurse wallet credit. The nurse UI
 // previously called setPaymentStatus(orderId, "paid"); that path is kept for
 // admin overrides but no longer fires from the nurse button.
-export function collectCash(orderId: string, ref: ActorRef): Promise<{ ok: boolean; error?: string }> {
+export async function collectCash(orderId: string, ref: ActorRef): Promise<{ ok: boolean; error?: string }> {
+  const prev = getOrder(orderId);
   // Optimistic flip so the UI unlocks "أرسل العينة للمخبر" immediately.
   mutateOrder(orderId, (o) =>
     o.paymentMethod === "cash" && o.paymentStatus !== "paid"
@@ -723,7 +740,9 @@ export function collectCash(orderId: string, ref: ActorRef): Promise<{ ok: boole
       orderId: isUuid(order.id) ? order.id : undefined,
     });
   }
-  return persistOrderActionViaApi(orderId, async () => apiCollectCash(orderId));
+  const result = await persistOrderActionViaApi(orderId, async () => apiCollectCash(orderId));
+  if (!result.ok) restoreOrderSnapshot(prev);
+  return result;
 }
 
 export function addNote(orderId: string, note: Omit<OrderNote, "id" | "orderId" | "createdAt">): Promise<{ ok: boolean; error?: string }> {

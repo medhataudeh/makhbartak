@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from "next";
 import { Readex_Pro } from "next/font/google";
 import "./globals.css";
 import { ToastProvider } from "@/components/ui/Toast";
+import { Agentation } from "agentation";
 
 const readex = Readex_Pro({
   subsets: ["arabic", "latin"],
@@ -68,6 +69,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <ToastProvider>
           {children}
         </ToastProvider>
+        {process.env.NODE_ENV === "development" && <Agentation />}
       </body>
     </html>
   );

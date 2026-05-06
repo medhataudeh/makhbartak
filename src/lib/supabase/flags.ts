@@ -4,6 +4,22 @@
 //
 // Set `NEXT_PUBLIC_USE_SUPABASE=true` in `.env.local` (and on Vercel)
 // to start routing supported reads/writes through Supabase.
+//
+// Production hard guard (Phase 5.1 hardening): when this flag is false in
+// a production build, `writeOrderRemote` and other USE_SUPABASE-gated
+// mutators silently no-op, so orders never reach the database. Fail loud
+// instead — `NEXT_PUBLIC_*` vars are inlined at build, so a missing env
+// var is caught before traffic lands. Mirrors the demo-credentials
+// boot guard.
+if (
+  process.env.NODE_ENV === "production" &&
+  (process.env.NEXT_PUBLIC_USE_SUPABASE ?? "").toLowerCase() !== "true"
+) {
+  throw new Error(
+    "[supabase/flags] NEXT_PUBLIC_USE_SUPABASE must be 'true' in production. Without it, writeOrderRemote and similar mutators silently no-op and orders never reach the database.",
+  );
+}
+
 export const USE_SUPABASE: boolean =
   (process.env.NEXT_PUBLIC_USE_SUPABASE ?? "").toLowerCase() === "true";
 
