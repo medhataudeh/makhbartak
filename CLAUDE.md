@@ -2,41 +2,37 @@
 
 > **Read AGENTS.md first.** This Next.js version has breaking changes from your
 > training data. Before writing Next-specific code (routing, layouts, fonts,
-> images, server/client boundaries), open `node_modules/next/dist/docs/` and
-> verify the current API. Do not trust your priors.
+> images, server/client boundaries, metadata), open `node_modules/next/dist/docs/`
+> and verify the current API. Do not trust your priors.
+
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
 ---
 
 # مختبرك (makhbartak)
 
-## Project overview
+At-home lab test ordering for Damascus and Rural Damascus. Patient picks a
+ready-made package, uploads a doctor's prescription, or builds a custom set;
+a nurse visits and collects samples; the lab uploads a PDF; the result lands
+in the patient's phone. Four apps in one repo: Customer, Nurse, Lab, Admin.
 
-At-home lab test ordering for Damascus and Rural Damascus. A patient picks a
-ready-made package, uploads a doctor's prescription, or builds a custom test
-set; a nurse visits, collects samples; the lab uploads a PDF; the result lands
-in the patient's phone. The app must feel as easy as ordering a ride and as
-trustworthy as a clinic.
-
-This repo is currently a **mock prototype**: the source of truth for every
-flow is in-memory state and `localStorage`, seeded from `src/lib/mock-data.ts`.
-Authentication, orders, results, payments, and prescription OCR are all
-simulated. Treat the codebase as a high-fidelity, clickable contract that
-designers, stakeholders, and back-end engineers work against.
-
-A Supabase schema (`supabase/migrations/*`) and partial query/RPC layer
-(`src/lib/supabase/`) exist but are **staged, not authoritative**. Wiring is
-gated on `NEXT_PUBLIC_USE_SUPABASE=true`; even when on, current calls are
-fire-and-forget and the in-memory state always wins. Real persistence (auth
-bridge, order RPCs, RLS) is intentionally out of scope this phase. See
-`### Persistence layer` below for the full mock-vs-Supabase map.
+**This is a real-Supabase production system.** Auth, orders, payments,
+results, prescriptions, notifications, finance, and Stripe online checkout
+all flow through Supabase + service-role API routes. The legacy "mock
+prototype + USE_SUPABASE flag" world is gone — assume every read/write hits
+the database.
 
 For deeper product/design context: `PRODUCT.md`, `DESIGN.md`, `AGENTS.md`.
+
+---
 
 ## Product context
 
 - Single product, four apps in one repo (see "App scope" below).
 - Arabic-first, RTL, mobile-first. Desktop layouts exist for staff portals
-  (admin, lab); customer + nurse are phone-shaped even on desktop.
+  (admin, lab); customer + nurse are phone-shaped on every viewport.
 - Brand: **Reliable · Clinical · Human.** Closer to Careem's operational
   clarity + Vezeeta's medical trust, but simpler — built for users who may
   distrust complex interfaces. Avoid e-commerce, government, and
@@ -44,10 +40,9 @@ For deeper product/design context: `PRODUCT.md`, `DESIGN.md`, `AGENTS.md`.
 
 ## Target users
 
-- **Patients & family members** in Damascus / Rural Damascus, age 25–60,
-  ordering for themselves or a relative. Mixed mobile literacy — assume the
-  user has never opened the app before. Prefer icons + short labels over
-  paragraphs.
+- **Patients & family members** in Damascus / Rural Damascus, age 25–60.
+  Mixed mobile literacy — assume the user has never opened the app before.
+  Prefer icons + short labels over paragraphs.
 - **Nurses** doing home visits — phone-shaped, glanceable, gamified.
 - **Lab technicians** — desktop, list + detail, upload PDFs to orders.
 - **Admins** — desktop dashboard with role-based access (6 roles).
@@ -59,56 +54,19 @@ For deeper product/design context: `PRODUCT.md`, `DESIGN.md`, `AGENTS.md`.
 | Framework | Next.js **16.2.4** (App Router) — APIs may differ from training data |
 | Runtime | React **19.2.4** |
 | Language | TypeScript **strict** (`@/*` → `./src/*`) |
-| Styling | Tailwind CSS **v4** (PostCSS plugin) + `tailwind.config.ts` for tokens |
+| Styling | Tailwind CSS **v4** + `tailwind.config.ts` for tokens |
 | Animation | framer-motion **12** |
-| Icons | lucide-react **1.x** (note: very early major — verify icon names exist) |
+| Icons | lucide-react **1.x** (very early major — verify icon names exist) |
 | Primitives | @radix-ui/react-dialog, @radix-ui/react-slot |
 | Utilities | clsx, tailwind-merge (use `cn()` from `@/lib/utils`) |
 | Variants | class-variance-authority |
-| Font | Readex Pro (next/font/google) — Arabic + Latin |
+| Font | Readex Pro (next/font/google) |
+| Database | Supabase (Postgres + Storage + Auth) |
+| Payments | Stripe (REST via fetch, no SDK dep). Client uses `@stripe/stripe-js` + `@stripe/react-stripe-js` |
 | Package manager | **npm** (package-lock.json committed) |
 
-No tests are configured. No state library (plain `useState` + prop drilling).
-No data fetching layer (mock arrays imported directly).
-
-## Project structure
-
-```
-src/
-  app/
-    layout.tsx           # RTL <html lang="ar" dir="rtl">, Readex Pro, theme color
-    page.tsx             # Customer app (auth + tabbed shell)
-    globals.css          # Tailwind import + .lat utility + reduced-motion + safe areas
-    admin/page.tsx       # Admin (login + dashboard, localStorage session)
-    nurse/page.tsx       # Nurse app
-    lab/page.tsx         # Lab portal
-  components/
-    ui/                  # Button, BottomSheet, FullScreenModal, Card, Badge,
-                         # StatusBadge, Input, Skeleton, BackButton
-    layout/              # BottomNav (mobile), SideNav (desktop)
-    auth/                # LoginForm + per-portal login wrappers (CustomerLogin, NurseLogin)
-    home/                # HomeScreen, HomeSlider, CustomTestBuilder, PrescriptionUploader
-    booking/             # BookingFlow (shift + address + patient)
-    cart/                # CartScreen (coupon, payment method, confirm)
-    order/               # OrdersList, OrderDetails, OrderSuccess, InstructionIcons
-    notifications/       # NotificationsScreen
-    account/             # AccountScreen
-    nurse/               # NurseApp (single big component)
-    lab/                 # LabPortal
-    admin/               # AdminDashboard (single ~2k LOC), AdminLogin, InvoiceView
-  lib/
-    types.ts             # All TS interfaces, role permissions, status unions
-    mock-data.ts         # All seed data + helpers (validateCoupon, getShiftConfigs, etc.)
-    utils.ts             # cn, formatPrice, formatDate, searchTests, relativeTime
-public/                  # static assets, manifest
-```
-
-Notes:
-- The customer app is a **single client component** (`src/app/page.tsx`) that
-  switches views via local state — no nested routes for the booking flow.
-- `AdminDashboard` is intentionally one large file with internal sub-components
-  and centralized state. Don't blow it apart "for hygiene"; do split when a
-  section grows new responsibilities.
+No tests are configured. No state library — `useSyncExternalStore` over
+module-level mutable stores in `src/lib/*`.
 
 ## Important commands
 
@@ -121,22 +79,236 @@ npm start        # serve a built app
 
 Routes: `/` (customer), `/admin`, `/nurse`, `/lab`. All four gate behind
 `useSession()` from `lib/auth.ts` and render their portal's `LoginForm`
-when there is no matching role session.
+when there is no matching role session. `/admin`, `/nurse`, `/lab`, and
+`/payment` carry `metadata.robots = { index: false }` via per-portal
+`layout.tsx` files. The customer marketing route is the only indexed page;
+`src/app/robots.ts` and `src/app/sitemap.ts` reflect that.
+
+---
+
+## Architecture — the big picture
+
+### Three-tier read/write contract
+
+Every meaningful mutation flows the same way:
+
+```
+Client component
+  → mutator in src/lib/store.ts (or sibling: profile.ts, payment-pref.ts, …)
+    → optimistic local update (useSyncExternalStore)
+    → src/lib/orders-api.ts / customer-api.ts / nurse-api.ts (apiX wrapper)
+      → POST/PATCH /api/<route>
+        → requireAuthedUser / requireAdmin / requireCustomerSelfOrAdmin / requireNurseSelfOrAdmin
+        → service-role Supabase client (lib/supabase/server-admin.ts, "server-only")
+          → SECURITY DEFINER RPC (supabase/migrations/*.sql)
+            → tables, triggers, ledger
+```
+
+Hard rules:
+
+- The **service-role client never imports from a client-reachable file**.
+  `lib/supabase/server-admin.ts` is `import "server-only"`-protected. Only
+  `app/api/**/route.ts` files import it.
+- **RPCs own state changes.** Routes are thin: validate input, check
+  ownership, call RPC, return canonical hydrated row. Don't compute
+  business state in TypeScript when the RPC can do it atomically.
+- **Idempotency is layered**: client-side debounce → API idempotency keys
+  (order creation) → DB partial unique indexes (one paid payment per
+  order, one cash_collected per order, one commission_earned per order,
+  one earning per order, one webhook event per provider event id).
+- **The webhook is the only path that flips an online payment to paid.**
+  Frontend success is advisory; the customer payment screen polls
+  `/api/orders/[id]/payment-status` until `payments.status` and
+  `orders.payment_status` both reflect the webhook's effect.
+
+### Finance ledger (Phase 4.1 → 5.2)
+
+- `payments` (one paid-ish row per order, partial unique guards): the
+  per-collection record. Provider snapshot lives here for online
+  (`provider`, `provider_ref`, `charged_amount`, `provider_currency`,
+  `exchange_rate`, `provider_metadata`).
+- `nurse_wallets` + `nurse_wallet_transactions`: nurse-side ledger.
+  Types: `cash_collected | commission_earned | settlement_paid |
+  adjustment | cash_refund | refund`. `commission_rate_snapshot` is
+  stamped at accrual.
+- `lab_wallets` + `lab_wallet_transactions`: lab-side ledger. Types:
+  `earning | settlement_paid | adjustment`. Every earning carries a
+  per-item `payout_snapshot` jsonb breakdown.
+- `lab_payout_rules`: 3-tier resolver: test-specific →
+  lab-default → `app_settings.lab_default_payout_*`. Used by
+  `accrue_lab_earning`.
+- `payment_provider_events`: webhook idempotency log keyed on Stripe
+  event id. Result tags: `received | confirmed | failed | refunded |
+  ignored | no_match | duplicate | confirm_error | failed_error |
+  refund_error`. Retryable error tags trigger re-runs on Stripe replay.
+- Currency is hard-coded SYP at the order/wallet level. Online charges
+  store the provider-currency snapshot but the SYP amount is
+  authoritative.
+
+Order status flips to `completed` are guarded by triggers:
+`tg_orders_accrue_commission` runs `accrue_nurse_commission` and
+`accrue_lab_earning`, both of which gate on `payment_status='paid'`. The
+strict payment gate (mig 029) refuses `set_order_status_admin` calls that
+try to advance an unpaid order to `sample_collected+`.
+
+### Customer-facing payment lifecycle
+
+```
+created → assigned → on_the_way → arrived
+   → (cash) nurse "تأكيد التحصيل" → POST /cash-collected
+            → payments(paid_by_nurse) + orders.payment_status=paid + wallet credit
+   → (online) StripePaymentScreen → /api/payments/stripe/create-intent
+            → Stripe Elements → confirmPayment(redirect: if_required)
+            → Stripe webhook → /api/webhooks/stripe
+            → payments(verified_by_admin) + orders.payment_status=paid
+            (NO wallet write — nurse never held the cash)
+   → sample_collected → sent_to_lab → lab_processing → completed
+```
+
+Customer-facing status strip has 6 buckets:
+`received → confirmed → on_the_way → sample_collected → in_lab → completed`.
+A 7th implicit `needs_attention` surfaces failures. Internal
+`result_ready` is mapped to `completed` for customers.
+
+### Cross-cutting infra
+
+- **Auth**: `src/lib/route-auth.ts` (`requireAuthedUser`, `requireAdmin`,
+  `requireCustomerSelfOrAdmin`, `requireNurseSelfOrAdmin`).
+  `RouteSession` carries `role`, `customerId | nurseId | labId | adminRole`,
+  and `phone`. Customer client wraps it via `useSession()` from
+  `src/lib/auth.ts`.
+- **Logger**: `src/lib/logger.ts` redacts secrets (Bearer/sk_*/whsec_*
+  patterns + a key-name allow-list) and forwards to Sentry when
+  `SENTRY_DSN` is set (dynamic import — no hard dep).
+- **Safe error responses**: `src/lib/api/safe-error.ts` — wraps RPC errors,
+  surfaces P0001 Arabic copy verbatim to clients, hides everything else.
+- **Rate limiting**: `src/lib/api/rate-limit.ts` — in-memory token bucket.
+  Single-instance only; swap to Upstash/Vercel KV before multi-replica
+  deploy. Applied to forgot-password, stripe/create-intent,
+  admin/notifications/broadcast, notifications/admin-alert.
+- **Upload safety**: `src/lib/payments/magic-bytes.ts` sniffs PNG/JPEG/
+  WebP/PDF (and detects + rejects SVG). All upload routes (admin media,
+  customer prescriptions, lab result files) sniff bytes; the browser-
+  supplied `file.type` is never trusted.
+- **Stripe**: `src/lib/payments/stripe.ts` — REST + HMAC signature
+  verification. No `stripe-node` dependency.
+- **Per-route error UI**: `src/app/error.tsx` and `src/app/not-found.tsx`
+  give Arabic-friendly fallbacks. The nurse app additionally has its own
+  `NurseErrorBoundary`.
+
+### Migrations index (read in order)
+
+- 001–005: enums, tables, indexes, RLS, storage buckets.
+- 007: `place_order_admin` RPC.
+- 010: Phase 1 demo customers seed.
+- 011: `order_public_number_seq` + `customerOrderRef`.
+- 012: `set_order_status_admin`.
+- 013: lab result files RPCs.
+- 014: nurse + lab assignment RPCs (`auto_assign_order`).
+- 015: order action RPCs (notes, coupon, cancel, reschedule, verify,
+  force-complete, payment-status).
+- 016: nurse profile + prep + shortage requests.
+- 017: lab issues + lab self-edit + settlements.
+- 018: customer profile RPCs.
+- 019: catalog admin RPCs (tests, packages, instructions, nurse_tools,
+  coupons, content_pages, sliders, app_settings).
+- 020: notifications + admin activity log.
+- 023: `arrived` order status enum value.
+- 024: nurse online status.
+- 025: branding + ratings.
+- 026/027: nurse gamification + adjust.
+- 028: Phase 3.5 hardening (Stripe settings, payment gate v1).
+- 029: strict payment gate (cash + online).
+- 030: prescription pipeline + bucket.
+- 031: nurse wallet + commission + settlement RPCs.
+- 032: P0 finance fixes (place_order seeds pending payment, refuse
+  legacy paid flips, cancel reverses paid orders, force-complete refuses
+  unpaid).
+- 033: Phase 4.2 — verification + refunds (`paid_by_nurse`,
+  `verified_by_admin`, `partially_refunded`, refund/cash_refund txns).
+- 034: online payments scaffold (`provider_*` columns, webhook RPCs,
+  payment_provider_events).
+- 035: Phase 5.1 launch blockers (provider_ref unique, app_settings
+  singleton, activity log + public_number indexes).
+- 036: Phase 5.2 lab finance (`lab_wallets`, `lab_wallet_transactions`,
+  `lab_payout_rules`, accrual trigger extension).
+
+## Project structure
+
+```
+src/
+  app/
+    layout.tsx                    # RTL <html lang="ar" dir="rtl">, Readex Pro
+    page.tsx                      # Customer app (auth + tabbed shell)
+    error.tsx, not-found.tsx      # Arabic fallbacks
+    robots.ts, sitemap.ts         # Public-only
+    admin/page.tsx + layout.tsx   # noindex
+    nurse/page.tsx + layout.tsx   # noindex
+    lab/page.tsx + layout.tsx     # noindex
+    api/                          # All server routes
+  components/
+    ui/                           # Button, BottomSheet, Card, Badge, Input, ...
+    layout/                       # BottomNav, SideNav
+    auth/                         # LoginForm + per-portal wrappers
+    home/, booking/, cart/        # Customer flow
+    payment/StripePaymentScreen   # Online checkout (Elements)
+    order/                        # OrdersList, OrderDetails, OrderSuccess
+    nurse/                        # NurseApp, NurseWallet, NurseErrorBoundary
+    lab/                          # LabPortal, LabFinanceSection
+    admin/                        # AdminDashboard, OCC, FinanceAdmin, ...
+  lib/
+    types.ts                      # All TS interfaces, status unions
+    route-auth.ts                 # Server auth guards
+    auth.ts                       # Customer-side useSession
+    store.ts                      # Module-level orders store, mutators
+    supabase/server-admin.ts      # service-role; "server-only" gated
+    supabase/queries/orders.ts    # Hydrators + signed-URL enricher
+    payments/{stripe,magic-bytes} # Provider helpers
+    api/{safe-error,rate-limit}   # Cross-cutting route helpers
+    logger.ts
+supabase/migrations/              # Source of truth for the DB
+```
+
+The customer app is a **single client component** (`src/app/page.tsx`) that
+switches views via local state — no nested routes for the booking flow.
+`AdminDashboard.tsx` is intentionally one large file with internal
+sub-components and centralized state. Don't blow it apart "for hygiene";
+do split when a section grows new responsibilities.
+
+## Environment variables
+
+Server-only (never expose to client):
+
+| Var | Used by | Notes |
+|---|---|---|
+| `SUPABASE_SERVICE_ROLE_KEY` | every API route | bypasses RLS |
+| `STRIPE_SECRET_KEY` | `lib/payments/stripe.ts` | `sk_test_*` / `sk_live_*` |
+| `STRIPE_WEBHOOK_SECRET` | `/api/webhooks/stripe` | HMAC verify |
+| `STRIPE_ONLINE_CURRENCY` | create-intent | default `USD` |
+| `STRIPE_SYP_PER_PROVIDER_UNIT` | create-intent | e.g. `13000` (1 USD = 13,000 SYP). Required when Stripe is enabled |
+| `SENTRY_DSN` | logger | optional; absent → console only |
+| `NEXT_PUBLIC_SITE_URL` | robots.ts / sitemap.ts | canonical host |
+
+Public Stripe settings (`enable_stripe`, `stripe_public_key`, `stripe_mode`)
+live in `app_settings` and are admin-editable from Settings.
+
+`NEXT_PUBLIC_SHOW_DEMO_CREDS=true` is REFUSED at boot in production —
+`src/lib/demo-credentials.ts` throws on import.
+
+---
 
 ## Design principles
 
-From `PRODUCT.md` — these are non-negotiable:
+From `PRODUCT.md` — non-negotiable:
 
-1. **Clarity over cleverness.** If a label, icon, or animation doesn't reduce
-   cognitive load, remove it.
-2. **One clear action per screen.** Each view has one dominant CTA; secondary
-   actions are quieter or live in a sheet.
-3. **Trust through restraint.** Clinical credibility comes from spacing and
-   typography, not "medical" stock icons or busy gradients.
-4. **Sheets over pages.** Bottom sheet for quick choices; full-screen modal
-   for complex inputs. Avoid pushing a new page when a sheet would do.
-5. **Human feedback at every step.** Loading, success, and error states are
-   warm and specific — never a bare spinner or "Error occurred."
+1. **Clarity over cleverness.**
+2. **One clear action per screen.**
+3. **Trust through restraint.** Clinical credibility comes from spacing
+   and typography, not "medical" stock icons or busy gradients.
+4. **Sheets over pages.** Bottom sheet for quick choices; full-screen
+   modal for complex inputs.
+5. **Human feedback at every step.** Loading, success, and error states
+   are warm and specific — never a bare spinner or "Error occurred."
 
 Color rules (full table in `DESIGN.md`):
 - Primary cyan `#0891B2` for links, active states, top-bar accent.
@@ -147,7 +319,7 @@ Color rules (full table in `DESIGN.md`):
 
 Type rules:
 - Single family: **Readex Pro**, weights 200–700.
-- Minimum on-screen size: **11px**. Body: 14–16px. Page titles: 20–21px / 700.
+- Minimum on-screen size: **11px**. Body 14–16px. Page titles 20–21px / 700.
 - Latin/English wraps in `<span class="lat">` — renders at 92% size and 400
   weight so it stays subordinate to Arabic.
 
@@ -161,10 +333,9 @@ Type rules:
 - **Back means forward in RTL**: the back button is `ChevronRight` (→), not
   `ChevronLeft`. Use the existing `<BackButton>` from `components/ui`.
 - Numbers, phone numbers, and prices stay LTR inside RTL flow:
-  - `input[type="tel"]` and `input[type="number"]` are forced `direction: ltr`
+  - `input[type="tel"]` / `input[type="number"]` are forced `direction: ltr`
     in `globals.css` — do not re-style.
-  - Format prices with `formatPrice()` from `@/lib/utils` → `"59 ل.س"` via
-    `toLocaleString("ar-SY")`.
+  - Format prices with `formatPrice()` from `@/lib/utils` → `"59 ل.س"`.
 - All primary copy (labels, CTAs, errors, empty states) is Arabic. English
   abbreviations (CBC, TSH, HbA1c) appear in `.lat` spans, smaller and lighter.
 - Dates: `formatDate()` / `formatTime()` use `ar-SY` locale; relative times
@@ -172,475 +343,201 @@ Type rules:
 
 ## Component conventions
 
-- **Always prefer existing primitives** in `components/ui/`:
-  `Button`, `BottomSheet`, `FullScreenModal`, `Card`, `Badge`, `StatusBadge`,
+- **Always prefer existing primitives** in `components/ui/`: `Button`,
+  `BottomSheet`, `FullScreenModal`, `Card`, `Badge`, `StatusBadge`,
   `Input`, `Skeleton`, `BackButton`. Don't reinvent these.
 - **`Button`** variants: `primary` (emerald), `secondary` (cyan), `outline`,
   `ghost`, `danger`. Sizes: `sm` h-9, `md` h-12, `lg` h-14. Always pass
   explicit `type` and rely on its built-in `aria-busy` while loading.
-- **`BottomSheet`**: spring slide-up (damping 32 / stiffness 320), drag handle
-  + drag-to-dismiss past 80px, `bg-black/50` backdrop (no blur — perf), max
-  height 75vh. Already includes safe-area padding.
-- **`StatusBadge`** + `ORDER_STATUS_LABELS` (in `mock-data.ts`) own all order
+- **`BottomSheet`**: spring slide-up, drag handle + drag-to-dismiss past 80px,
+  `bg-black/50` backdrop (no blur — perf), max height 75vh.
+- **`StatusBadge`** + `ORDER_STATUS_LABELS` in `lib/types.ts` own all order
   status copy and color. Don't hard-code status strings.
-- **Icons**: `lucide-react` only. SVG inline is acceptable for one-offs
-  (see `BookingFlow` shift icons). **Never use emoji** in UI.
-- **Class merging**: always use `cn(...)` from `@/lib/utils` (clsx +
-  tailwind-merge) so later classes win cleanly.
+- **Icons**: `lucide-react` only. SVG inline acceptable for one-offs.
+  **Never use emoji** in UI.
+- **Class merging**: always use `cn(...)` from `@/lib/utils`.
 - **Touch targets**: minimum 44×44px (`min-h-[44px] min-w-[44px]` or `h-12+`).
 - **Borders + radius**: cards `rounded-xl border-gray-100`; inputs
   `rounded-xl`; buttons `rounded-xl` (sm) / `rounded-2xl` (md+); pills
   `rounded-full`; sheets `rounded-t-2xl`.
-- **Client/server boundaries**: most files are `"use client"` because of
-  framer-motion + state. Only mark a file `"use client"` when it actually
-  needs hooks, browser APIs, or motion. Read the current Next docs in
-  `node_modules/next/dist/docs/` before introducing server components or
-  server actions — the API may have shifted.
 
 ## Motion / animation rules
 
-- Animate **transform and opacity only**. No `width`/`height`/`top`/`left`
-  animation. Layout-affecting properties cause jank.
-- Easing: `easeOut` for entrances, `easeIn` for exits. Use spring physics for
+- Animate **transform and opacity only**.
+- Easing: `easeOut` for entrances, `easeIn` for exits. Spring physics for
   sheets and tap interactions.
-- Standard durations:
-  - Content fade-in: 220–250ms easeOut
-  - Bottom sheet: spring damping 32 / stiffness 320
-  - Full-screen push/pop: spring damping 30 / stiffness 300
-  - Button tap: 100ms, scale to 0.97
-  - Skeleton shimmer: 1.5s loop (already in `globals.css`)
-- `prefers-reduced-motion` is honored globally by the CSS in `globals.css` —
-  do not duplicate that handling. If you add a critical motion, make sure it
-  degrades to a static state when motion is reduced.
-- **No tab-switch animations** in the customer shell — bottom-nav swaps are
-  instant (see `src/app/page.tsx`). Only push-style flows (booking → cart →
-  success) animate.
+- Standard durations: content fade-in 220–250ms easeOut; bottom sheet
+  spring damping 32 / stiffness 320; full-screen push/pop spring damping 30
+  / stiffness 300; button tap 100ms scale to 0.97; skeleton shimmer 1.5s.
+- `prefers-reduced-motion` is honored globally in `globals.css` — do not
+  duplicate that handling.
+- **No tab-switch animations** in the customer shell — bottom-nav swaps
+  are instant.
 
 ## Business rules
 
-These live in mock data + helpers; don't hard-code copies.
-
-- **Visit shifts**: morning **8:00–10:00**, evening **16:00–18:00**.
-  Configurable via `SYSTEM_SETTINGS` in `mock-data.ts`.
-- **Minimum booking notice**: 120 minutes. Enforced by `getShiftConfigs()` —
-  it returns `available: false` with an Arabic reason for shifts inside the
-  notice window. Always render that reason; never silently disable.
-- **Booking window**: customers may pick today plus
-  `SystemSettings.bookingWindowDays` additional days (default 2 → today,
-  tomorrow, day after). **Booking window is enforced in both UI and
-  business logic.** UI alone is not sufficient:
-  - UI: `BookingFlow`'s `<DateGrid>` renders **only** `bookingWindowDays + 1`
-    cells starting today — no out-of-window dates appear, even disabled.
-  - Logic: `getShiftConfigs()` marks every shift unavailable for any date
-    past the window or in the past, with the standard Arabic reason. The
-    `submit()` handler in `BookingFlow` re-checks `available` before
-    forwarding so a bypassed UI cannot push an invalid date through.
-  - Admin changes to `bookingWindowDays` propagate to live customer
-    sessions in the same tab via `useSystemSettings()` (no refresh needed).
+- **Visit shifts**: morning 8:00–10:00, evening 16:00–18:00. Configurable
+  via `SYSTEM_SETTINGS` in `mock-data.ts` (constants + Arabic labels).
+- **Minimum booking notice**: 120 minutes. Enforced by `getShiftConfigs()`.
+- **Booking window**: today + `bookingWindowDays`. Enforced in UI AND in
+  the submit handler.
 - **Supported cities**: دمشق, ريف دمشق.
 - **Currency**: Syrian Pound (ل.س). Format with `formatPrice()`.
-- **Coupons**: validated by `validateCoupon(code, total)` — covers active
-  flag, date window, usage limit, min order, max discount cap. Use it; don't
-  re-implement.
-- **Order status flow** (defined in `OrderStatus` union):
-  `created → priced → scheduled → confirmed → nurse_assigned → on_the_way →
-  arrived → sample_collected → sent_to_lab → lab_processing → result_ready →
-  completed`. Failure forks: `failed_to_collect`, `lab_issue`, `cancelled`.
-  Reasons live in `FAILED_COLLECTION_REASONS` and `LAB_ISSUE_REASONS`.
-- **Result files belong to the order, not the test.** A lab can upload many
-  PDFs per order via `OrderResultFile`. There is no per-test PDF concept —
-  don't add one. `Order.resultPdfUrl` is `@deprecated`; new code reads
-  `Order.resultFiles`.
+- **Coupons**: server-side validation only — `/api/coupons/validate`.
+- **Order status flow**: `created → priced → scheduled → confirmed →
+  nurse_assigned → on_the_way → arrived → sample_collected → sent_to_lab
+  → lab_processing → result_ready → completed`. Failure forks:
+  `failed_to_collect`, `lab_issue`, `cancelled`.
+- **Result files belong to the order, not the test** (`OrderResultFile`).
+  Lifecycle: `uploaded → replaced → archived → restored`. Never destructive.
 - **Patients/Addresses are per-user** and live inside the user profile
   drawer in admin — they are intentionally NOT standalone admin pages.
-- **Invoice generation**: `generateInvoice(order, sequence)` produces an
-  invoice on order confirmation. Numbers follow `INV-YYYY-####`.
+- **Lab confirm requires lab ownership** (Phase 5.1 P0 fix): the route
+  re-checks `auth.session.labId === order.lab_id` before flipping to
+  `completed`. Never trust the UI.
+- **Force-complete refuses unpaid orders** by default; an explicit
+  `allowUnpaid: true` exists for operational recovery and stamps
+  `[unpaid_force]` in history; commission/earning RPCs gate on
+  `payment_status='paid'` so unpaid force-completes never accrue.
+- **Lab no sell price**: by default the lab portal hides
+  `priceSnapshot` and order total; flip via `lab.revealSellPriceToLab`.
+- **Lab issue customer message**: `LabIssue.customerMessageAr` is
+  admin-editable; falls back to `DEFAULT_LAB_ISSUE_CUSTOMER_MESSAGE_AR`.
+  Internal `description` is never exposed to the customer.
 
 ## App scope
 
 ### Customer (`/` — `src/app/page.tsx`)
+
 - Tabs: home, orders, notifications, account.
 - Three entry paths to a booking: pick a Package, upload a Prescription,
   build a Custom test set.
-- Flow: Home → (entry path) → BookingFlow (shift, address, patient) →
-  CartScreen (coupon, payment) → OrderSuccess.
-- Mobile-shaped on every viewport: main column is `max-w-md md:max-w-none`
-  inside a centered container; desktop adds a `SideNav`.
+- Flow: Home → entry path → BookingFlow → CartScreen → (cash) OrderSuccess
+  / (online) StripePaymentScreen → poll until webhook confirms → OrderSuccess.
+- Mobile-shaped on every viewport.
 
 ### Nurse (`/nurse` — `components/nurse/NurseApp.tsx`)
+
 - Phone-shaped on every viewport.
-- Tabs: home (today's route + start-day prep checklist), schedule (next
-  days), settings.
-- Gamification: levels, badges, points, streaks (see `NURSE_LEVELS`,
-  `NURSE_BADGES`, `GAMIFICATION_CONFIG`).
-- Day starts when the nurse confirms the **prep checklist** (built from
-  today's tests via `buildPrepChecklist`). Persisted per day in
-  `localStorage` keys `makhbartak.nurse.prep:<date>` and
-  `makhbartak.nurse.started:<date>`.
-- Nurse notifications are a **separate inbox** (`MOCK_NURSE_NOTIFICATIONS`),
-  not the customer one.
+- Tabs: home (today's route + prep checklist), schedule, **wallet** (Phase
+  5.2), settings.
+- Day starts when the nurse confirms the prep checklist (built from
+  today's tests via `buildPrepChecklist`). Persisted per day.
+- Nurse notifications are a separate inbox.
 
 ### Lab (`/lab` — `components/lab/LabPortal.tsx`)
+
 - Desktop/tablet two-pane: order list + selected order detail.
-- Filter by status; show only orders in lab-relevant statuses
-  (`sample_collected`, `sent_to_lab`, `lab_processing`, `result_ready`,
-  `completed`).
-- Per-order: upload one or many PDFs, delete/replace, mark ready, or report
-  a lab issue with a reason from `LAB_ISSUE_REASONS`.
+- Sections: Orders / رفع النتائج / مشاكل المخبر / **المالية** (Phase 5.2)
+  / المحاسبة (legacy settlements) / إعدادات المخبر.
+- Per-order: upload one or many PDFs, delete/replace, mark ready, or
+  report a lab issue.
 
 ### Admin (`/admin` — `components/admin/AdminDashboard.tsx`)
-- Login via mock credentials in `MOCK_ADMINS`. Session in `localStorage`
-  under `makhbartak.admin.session`.
-- Six roles, gated by `ROLE_PERMISSIONS` + `canAccess(role, section)`:
-  `super_admin`, `operations_admin`, `lab_admin`, `customer_support`,
-  `finance_admin`, `content_admin`. Don't render a section a role can't
-  access.
+
+- Six roles via `ROLE_PERMISSIONS` + `canAccess(role, section)`:
+  `super_admin | operations_admin | lab_admin | customer_support |
+  finance_admin | content_admin`.
 - Sections grouped: ops, catalog, operations (field), finance, content,
-  system. Centralized mutable state lives at the top of `AdminDashboard`
-  so child sections can CRUD without prop-drilling.
+  system. Centralized mutable state at the top of `AdminDashboard` so
+  child sections CRUD without prop-drilling.
+- Finance subtabs: نظرة عامة / محافظ الممرضين / **محافظ المخابر** (Phase 5.2)
+  / **قواعد المستحقات** (Phase 5.2) / المدفوعات / التسويات / التقارير.
 
-## Persistence layer (mock vs. Supabase)
+## Storage buckets
 
-Today's source of truth is **mock + localStorage**. Supabase exists but
-is not connected to the live UI; do not assume any read or write reaches
-the database.
+All buckets are private; signed URLs are minted server-side with TTL ~1h
+via `enrichOrdersWithSignedUrls` or equivalent helpers.
 
-| Domain | Today | Where |
-|---|---|---|
-| Auth / session | mock + localStorage | `lib/auth.ts` (key: `makhbartak.session.v1`) |
-| **Order create + customer/admin order list + detail read** | **Phase 1 wired: Supabase via `/api/orders` (server route + service role)** | `app/api/orders/*`, `lib/orders-api.ts`, `lib/supabase/server-admin.ts`, RPC `place_order_admin` (migration 010); in-memory mirror in `lib/store.ts` for snappy UX; hydrate on mount in `OrdersList` + `OrdersAdmin` |
-| **Order status mutations (nurse + admin)** | **Phase 2 wired: `/api/orders/[id]/status` (server route + service role) + `set_order_status_admin` RPC (migration 012)** | nurse buttons in `components/nurse/NurseApp.tsx`, admin in `OrderControlCenter.tsx`; both go through `lib/store.ts` `setOrderStatus` which now awaits the API and merges the canonical row |
-| **Nurse + lab assignment** (auto on create + admin override) | **Stage A wired: `/api/orders/[id]/assign-nurse`, `/api/orders/[id]/assign-lab` (server route + service role) + `assign_nurse_admin` / `assign_lab_admin` / `auto_assign_order` RPCs (migration 014). `/api/orders` POST runs `auto_assign_order` after `place_order_admin`.** | admin OCC selects in `OrderControlCenter.tsx`; client wrappers in `lib/orders-api.ts`; mutators in `lib/store.ts` |
-| **Order actions: `addNote`, `applyCoupon`, `setPaymentStatus`, `cancelOrder`, `rescheduleOrder`, `verifyPatient`, `forceCompleteOrder`** | **Stage B wired: `/api/orders/[id]/{notes,coupon,payment-status,cancel,reschedule,verify-patient,force-complete}` (server route + service role) + matching `*_admin` RPCs (migration 015).** Each mutator keeps the optimistic local update + appendEvent, then awaits the server, and merges the canonical row back. | `lib/store.ts`, `lib/orders-api.ts`, `app/api/orders/[id]/*` |
-| **Lab issues + lab self-edit + settlements** | **Stage D wired: `/api/orders/[id]/lab-issues`, `/api/lab-issues/[id]/{message,resolve}`, `PATCH /api/labs/[id]`, `/api/labs/[id]/settlements`, `/api/settlements/[id]/status` (server route + service role) + `open_lab_issue_admin` / `update_lab_issue_message_admin` / `resolve_lab_issue_admin` / `upsert_lab_admin` / `generate_lab_settlement_admin` / `set_settlement_status_admin` RPCs (migration 017).** New `lab_issues` table; Phase 1 hydrate now joins `issues:lab_issues`. | `lib/lab-api.ts`, `lib/store.ts` (open/update/resolve), `lib/lab-overrides.ts`, `lib/settlements.ts`, `app/api/{orders,lab-issues,labs,settlements}/...`, `components/lab/LabPortal.tsx` |
-| **Lab result PDFs** | **Phase 3 wired: `/api/orders/[id]/lab/files{,/[fileId]/archive}`, `/api/orders/[id]/lab/confirm` (server route + service role) + `upload_result_file_admin` / `archive_result_file_admin` RPCs (migration 013). Bucket `lab-results` is private; signed URLs minted server-side at hydrate time (1h TTL).** Restore is still mock-only this phase. | `app/api/orders/[id]/lab/*`, `lib/orders-api.ts`, `lib/supabase/queries/orders.ts` (`enrichOrdersWithSignedUrls`); local optimistic mirror in `lib/store.ts` (`uploadResultFile` / `archiveResultFile` / `confirmResultsReady`) |
-| **Nurse profile + prep state + shortage requests** | **Stage C wired: `/api/nurses/[id]/profile`, `/api/nurses/[id]/prep`, `/api/nurses/[id]/shortage-requests`, `/api/shortage-requests/[id]/status` (server route + service role) + matching `*_admin` RPCs (migration 016).** New tables `nurse_prep_state`, `nurse_shortage_requests` + `_items`. Demo nurses seeded (auth.users + profiles + nurses) with deterministic UUIDs (`SEED_NURSE_*_ID`). | `lib/nurse-profile.ts`, `lib/nurse-prep.ts`, `lib/shortage-requests.ts`, `lib/nurse-api.ts`, `app/api/nurses/[id]/*`, `components/nurse/NurseApp.tsx` |
-| **Patients / addresses / payment preference** | **Stage E wired: `/api/customers/[id]/{profile,patients,addresses,payment-preference}` (server route + service role) + `upsert_patient_admin` / `delete_patient_admin` / `upsert_address_admin` / `delete_address_admin` / `set_payment_pref_admin` RPCs (migration 018).** Customer app calls `hydrateProfileForCustomer(userId)` on mount; localStorage stays as a write-through cache only. BookingFlow's submit refuses to advance with a placeholder UUID. | `lib/profile.ts`, `lib/payment-pref.ts`, `lib/customer-api.ts`, `app/api/customers/[id]/*`, `components/account/AccountScreen.tsx`, `components/booking/BookingFlow.tsx` |
-| **System settings** | **Stage F wired: `/api/admin/app-settings` + `update_app_settings_admin` RPC (migration 019).** `updateSystemSettings(patch)` returns Promise, persists snake_case patch to `app_settings`. localStorage cache for first paint. | `lib/system-settings.ts`, `app/api/admin/app-settings` |
-| **Catalog (tests, packages, instructions library, nurse tools)** | **Stage F wired: `/api/admin/{tests,packages,instructions,nurse-tools}` (server route + service role) + matching `*_admin` RPCs (migration 019).** Mutators in `lib/instruction-library.ts` / `lib/tool-library.ts` return Promises and persist to Supabase; admin UI sub-components inherit the Promise return without code changes. Catalog reads still hydrate one-shot via `lib/catalog.ts`. | `lib/instruction-library.ts`, `lib/tool-library.ts`, `app/api/admin/{tests,packages,instructions,nurse-tools}/...` |
-| **Coupons** | **Stage F wired: `/api/admin/coupons` (admin CRUD), `/api/coupons/validate` (customer cart). Cart calls the validate route when `USE_SUPABASE` is on; falls back to mock `validateCoupon` otherwise.** | `app/api/admin/coupons`, `app/api/coupons/validate`, `components/cart/CartScreen.tsx` |
-| **Home sliders** | **Stage F wired: new `home_sliders` table + `upsert_slider_admin` / `delete_slider_admin` RPCs + `/api/admin/sliders` route.** Admin UI binding pending — `BrandingAdmin` still operates in localStorage; the new table is ready for opt-in wiring. | migration 019, `app/api/admin/sliders` |
-| **Content pages** | **Stage F wired: `/api/admin/content-pages` + `upsert_content_page_admin` RPC (migration 019).** `updateContentPage(slug, patch)` returns Promise; persists the merged row server-side. | `lib/content-pages.ts`, `app/api/admin/content-pages` |
-| **Notifications (customer + nurse) + admin activity log** | **Stage G wired: `/api/customers/[id]/notifications` (GET + read-mark), `/api/nurses/[id]/notifications`, `/api/admin/notifications` (insert), `/api/admin/activity-logs` + `log_activity_admin` / `insert_notification_admin` / `mark_notification_read_admin` RPCs (migration 020).** New `admin_activity_logs` table; the existing `notifications` table is now actually written. `createOrder`, `setOrderStatus`, `openLabIssue` mirror customer notifications to Supabase. `logActivity` mirrors admin entries. Hydrate hooks: `hydrateNotificationsForCustomer`, `hydrateNotificationsForNurse`, `hydrateActivityLogs`. | `lib/store.ts`, `lib/activity-log.ts`, `app/api/{customers,nurses,admin}/...`, `app/page.tsx`, `components/nurse/NurseApp.tsx`, `components/admin/AdminDashboard.tsx` |
-
-Rules until full Supabase wiring is approved:
-- Treat in-memory writes as authoritative for non-Phase-1 flows. Do not
-  introduce code paths that need a Supabase round-trip to render correctly.
-- Do not widen RLS policies, do not add anon-write policies, do not seed
-  insecure auth bypasses.
-- Do not modify earlier `supabase/migrations/*` files. New work goes in a
-  new migration with a higher number. Phase 1 added `010_*`.
-- When adding a setting or field that the frontend cares about, add it
-  to `SystemSettings` (mock) only; the matching SQL column will be
-  added in the migration pass.
-
-### Phase 1 server-route rules
-- The service-role key (`SUPABASE_SERVICE_ROLE_KEY`) is **server-only**.
-  Never reference it from any `"use client"` module or any file
-  importable from one. `lib/supabase/server-admin.ts` enforces this with
-  `import "server-only"`.
-- `/api/orders` routes are the *only* callers of the service-role client
-  in Phase 1. The browser never invokes `place_order_admin` or any other
-  service-role RPC directly.
-- The mock session passed in the POST body is trusted at the same level
-  as today's `localStorage` — there is no stronger boundary while mock
-  auth is in charge. When real Supabase Auth lands, the route handlers
-  shrink to passthroughs (or are removed) and writes happen browser-side
-  via `place_order` against an authenticated session.
-
-## Mock data rules
-
-- **All data is in `src/lib/mock-data.ts`.** Don't fetch, don't add SDKs,
-  don't introduce a "real API" client. When a back-end engineer wires this
-  up later, they will replace the imports — keep that boundary clean.
-- **Ids are stable string slugs** (`t-1`, `pkg-2`, `ord-3`, `nur-1`,
-  `ad-1`, …). Stick to that pattern for any new fixtures.
-- **Images are Picsum** via the `img(seed, w, h)` helper at the top of
-  `mock-data.ts`. Use the helper for new fixtures so seeds stay
-  reproducible. Allowed remote hosts are listed in `next.config.ts`
-  (`picsum.photos`, `fastly.picsum.photos`, `images.unsplash.com`).
-- **Arabic copy lives next to the data** (`nameAr`, `descriptionAr`,
-  `labelAr`, `instructionsAr`). Don't add a separate i18n layer; this is
-  Arabic-first, not multilingual.
-- Helpers belong in `mock-data.ts` (`validateCoupon`, `generateInvoice`,
-  `buildPrepChecklist`, `getShiftConfigs`, `canAccess`). Extend them
-  there — don't sprinkle business logic across components.
-- Don't mutate the exported arrays in place. Components should `useState`
-  with the imported array as the initial value (the pattern used in
-  `AdminDashboard` and `LabPortal`).
+| Bucket | Contents |
+|---|---|
+| `lab-results` | Lab-uploaded PDFs (one or many per order) |
+| `prescriptions` | Customer-uploaded prescription images/PDFs |
+| `media-library` | Admin-managed marketing assets |
 
 ## Code quality standards
 
-- TypeScript **strict** is on. No `any`. Reuse the unions in `types.ts`
-  (`OrderStatus`, `Shift`, `PaymentMethod`, `AdminRole`, …) — don't widen
-  them to `string`.
+- TypeScript **strict** is on. No `any`. Reuse the unions in `types.ts`.
 - Prefer pure functions and small components. The big-component pattern
-  (AdminDashboard, NurseApp) is allowed when it keeps related state
+  (`AdminDashboard`, `NurseApp`) is allowed when it keeps related state
   co-located; new screens should still start small.
-- Class strings: keep readable. Use `cn(...)` to compose; don't inline
-  10-class ternaries when a variable would help.
-- Accessibility:
-  - Every interactive element has an `aria-label` when its label is an
-    icon-only or otherwise non-text.
-  - `aria-pressed` for toggles, `aria-current` for active nav items,
-    `aria-busy` for loading, `aria-disabled` for disabled CTAs.
-  - Visible focus state — handled globally in `globals.css`. Don't remove
-    the outline.
-  - Touch target ≥ 44×44.
-- Run `npm run lint` before declaring a task done. Warnings should be
-  treated as errors unless they're in framework-generated files.
+- Class strings: keep readable. Use `cn(...)`; don't inline 10-class
+  ternaries when a variable would help.
+- Accessibility: aria-label on icon-only controls, aria-pressed for
+  toggles, aria-current for active nav, aria-busy for loading. Visible
+  focus state lives in `globals.css`.
+- Run `npm run lint` and `npm run build` before declaring a task done.
 
 ## What not to do
 
-- **Don't trust your Next.js training data.** APIs in 16.x may be renamed,
-  removed, or behave differently. Cross-check against
-  `node_modules/next/dist/docs/` and any deprecation notices in build
-  output before writing routing, layout, font, image, server-action, or
-  middleware code.
-- **Don't introduce a real API, database, auth provider, or state library.**
-  Mock data only. If you need persistence beyond `localStorage`, ask first.
-- **Don't add emojis to the UI.** Use lucide-react icons or inline SVG.
-- **Don't add gradients, drop shadows, or colored backgrounds beyond the
-  approved palette.** One hero gradient max; no decorative shadows on cards.
-- **Don't push a new page where a `BottomSheet` or `FullScreenModal` works.**
+- **Don't trust your Next.js training data.** APIs in 16.x may be
+  renamed, removed, or behave differently. Cross-check
+  `node_modules/next/dist/docs/` and any deprecation notices.
+- **Don't add emojis, gradients, or drop shadows beyond the approved
+  palette.** One hero gradient max.
+- **Don't push a new page where a `BottomSheet` or `FullScreenModal`
+  works.**
 - **Don't translate or i18n the app.** Arabic is the product, not a locale.
 - **Don't hard-code status strings, role names, or shift hours.** Use the
   unions, label maps, and helpers in `lib/`.
-- **Don't add per-test result PDFs** — files belong to the order
-  (`OrderResultFile`).
-- **Don't add comments that restate what the code does.** Only comment the
-  *why* (a constraint, an invariant, a workaround). Multi-paragraph
-  docstrings are forbidden.
-- **Don't add backwards-compat shims, dead exports, or "// removed"
+- **Don't add per-test result PDFs** — files belong to the order.
+- **Don't add comments that restate what the code does.** Only the *why*.
+- **Don't add backwards-compat shims, dead exports, or `// removed`
   placeholders.** Just delete what's unused.
 - **Don't bypass `cn()`** — concatenated class strings make conflicting
   Tailwind utilities silently win in the wrong order.
 - **Don't override RTL or `dir="rtl"`** at the component level.
+- **Don't import `lib/supabase/server-admin.ts` from any client-reachable
+  module.** It's `server-only`-protected for a reason.
+- **Don't accept `image/svg+xml` on uploads.** SVG carries inline scripts;
+  `lib/payments/magic-bytes.ts` already rejects it on every upload route.
+- **Don't add new admin-broadcast paths.** Operational alerts go through
+  `/api/notifications/admin-alert` (allow-listed types, rate-limited);
+  `/api/admin/notifications/broadcast` is admin-authored only.
+- **Don't return raw `error.message` from a Supabase call.** Use
+  `safeApiError` from `lib/api/safe-error.ts`.
 
-## How to test before finishing
+## QA checklist
 
-This repo has no automated tests. Verify your change manually:
+Run before declaring a substantive change done:
 
-1. **Lint + build must pass**:
-   ```bash
-   npm run lint
-   npm run build
-   ```
-2. **Run the dev server** and exercise the affected app(s):
-   ```bash
-   npm run dev
-   ```
-   - `/` — sign in as `customer1 / customer123`, walk through Home →
-     Package (or Prescription / Custom) → BookingFlow → Cart → Success.
-     Confirm bottom-nav switches feel instant; flow transitions feel
-     spring-y; back button arrow points the right direction (→ in RTL).
-   - `/admin` — log in as `admin / admin123` (super_admin) and as a
-     scoped role (e.g. `content / content123`) to confirm permission
-     gating actually hides sections.
-   - `/nurse` — sign in as `nurse1 / nurse123`. Confirm the prep
-     checklist gates "Start Day" and that localStorage keys
-     (`makhbartak.nurse.prep:<date>`, `makhbartak.nurse.started:<date>`)
-     clear on logout / across days.
-   - `/lab` — sign in as `sham-admin / sham123`. Confirm filtering,
-     status changes, and PDF upload/delete on an order persist in
-     component state.
-3. **Mobile + desktop**: resize down to ~375px width; the customer and
-   nurse apps must stay phone-shaped, the lab and admin apps must reflow
-   to the desktop layout.
-4. **RTL sanity**: numbers/prices/phones stay LTR; back arrows point
-   right; no clipped text against the wrong edge; logical-property
-   utilities (`ms-*`, `me-*`, `text-start/end`) used over directional
-   ones.
-5. **Reduced motion**: in DevTools, emulate `prefers-reduced-motion:
-   reduce` and confirm the affected screen still works (no animation
-   stuck mid-state, content visible).
-6. **Accessibility quick pass**: tab through the new UI — visible focus
-   ring, every icon-only control has a label, touch targets feel ≥ 44px.
+1. **Lint + build pass**: `npm run lint && npm run build`.
+2. **Customer flow**: sign in, walk through Home → Package (or
+   Prescription / Custom) → BookingFlow → Cart → Success (cash) and
+   StripePaymentScreen → Success (online). Online payment must NOT
+   complete until the webhook confirms — frontend success only triggers
+   the polling phase.
+3. **Wrong-portal login is blocked**: signing into `/admin` with a
+   customer account shows "لا تملك صلاحية الوصول…".
+4. **Logout returns to login screen** for the active portal, no stale
+   state.
+5. **Refresh keeps session** (Supabase cookie).
+6. **Order numbers**: `HL-YYYY-NNNNNN` shows on success and in `طلباتي`.
+7. **Nurse**: arrived → تأكيد التحصيل → wallet credit; subsequent retries
+   refused with the Arabic gate message; advance to sample_collected
+   succeeds only after collection.
+8. **Lab confirm**: a lab user signed into Lab A cannot confirm Lab B's
+   order (403 «لا تملك صلاحية تأكيد نتائج هذا الطلب»).
+9. **Multi-PDF upload**: lab portal accepts multiple files; per-row
+   استبدال + استعادة work.
+10. **Auto-complete on confirm**: customer flips to "مكتمل" with PDFs at
+    top; commission and lab earning rows appear in the respective
+    ledgers (gated on `payment_status='paid'`).
+11. **Force-complete**: refuses unpaid; `allowUnpaid:true` succeeds
+    without accruing commission/earning.
+12. **Refund**: partial → row goes `partially_refunded`; second refund
+    closes it; second-after-full → 409.
+13. **Webhook idempotency**: replay a `payment_intent.succeeded` event →
+    second delivery returns `duplicate: true`. Force a transient RPC
+    failure → second delivery completes the side effect.
+14. **Admin Finance numbers reconcile**: net-collected matches the SQL
+    sum of `payments(amount − refunded_amount) WHERE status IN paid-ish`.
+15. **Mobile + desktop**: resize down to ~375px; customer + nurse stay
+    phone-shaped, lab + admin reflow to desktop.
+16. **RTL sanity**: numbers/prices stay LTR; back arrows point right;
+    logical-property utilities used over directional ones.
+17. **Reduced motion**: emulate `prefers-reduced-motion: reduce`; no
+    animation stuck mid-state.
 
 If you can't actually run the UI (e.g. headless), say so explicitly in
 your hand-off rather than claiming the change works.
-
----
-
-## Stage 6 — Critical product rules
-
-These rules **supersede** anything earlier in this file when they conflict.
-They reflect the current state of the prototype and must be honored on any
-new work.
-
-### Customer status (six buckets, no `result_ready`)
-- The customer-facing strip has **6** steps:
-  `received → confirmed → on_the_way → sample_collected → in_lab → completed`.
-- A 7th implicit state, **`needs_attention`**, surfaces failures
-  (`failed_to_collect`, `lab_issue`, `cancelled`).
-- Internal `result_ready` exists in `OrderStatus` but is **never** rendered
-  to the customer. `toCustomerStatus("result_ready")` returns `"completed"`.
-- Lab confirms uploads → order auto-completes → customer sees "مكتمل" with
-  PDFs as the dominant element. Use `confirmResultsReady(orderId, ref)` to
-  trigger the auto-complete; it refuses if no active result file exists.
-- A single "اكتمل طلبك" customer notification fires on `completed`.
-
-### Public order numbers
-- Every order has a customer-facing **`publicNumber`** (`HL-YYYY-XXXXXX`).
-- Customer surfaces (Orders list, OrderDetails, OrderSuccess, notifications,
-  invoices the customer sees) **must** render `customerOrderRef(order)`,
-  never the internal `id`.
-- Admin and lab portals may show both. Helpers live in `lib/order-utils.ts`
-  (`generateOrderNumber`, `customerOrderRef`).
-
-### Payment-gated workflow
-- `isOrderActionable(order, settings)` from `lib/order-utils.ts` is the
-  single rule:
-  - `paymentMethod === "cash"` → actionable when `settings.allowCashOrders`
-    is `true` (default).
-  - `paymentMethod === "online"` → actionable only when
-    `paymentStatus === "paid"`.
-- Nurse route stops, admin nurse-assignment, and any auto-progression must
-  gate on this rule. **Unpaid online orders never appear to the nurse.**
-- Toggle for `allowCashOrders` lives in admin Settings and is persisted via
-  `lib/system-settings.ts`.
-
-### Result file lifecycle (no destructive deletes)
-- `OrderResultFile` has `isActive` + `archivedAt` + `archivedBy` +
-  `replacedById`. Files are archived, never deleted.
-- Mutators in `lib/store.ts`:
-  - `uploadResultFile(orderId, { …, replacesFileId? })` — atomic
-    upload-and-replace when `replacesFileId` is set.
-  - `archiveResultFile(orderId, fileId, ref)` — sets `isActive=false`.
-  - `restoreResultFile(orderId, fileId, ref)` — flips it back.
-- Customer reads only **active** files. Admin sees archived rows muted with
-  a "استعادة" action.
-- Every change emits an `OrderFileEvent` (`uploaded` / `replaced` /
-  `archived` / `restored`). Both lab portal and admin OCC render the file
-  activity log per order.
-- Multi-PDF upload: lab portal uses `<input multiple>` and creates one
-  `OrderResultFile` per selected file. Replace flow uses a single-file
-  picker.
-
-### Instruction dedup
-- Tests share instructions ("صيام 8 ساعات" appears across blood panels).
-  Use `dedupeInstructions(instructions)` from `lib/order-utils.ts` whenever
-  rendering instructions on order success / order details / nurse visit.
-- Dedup key = `Instruction.id` (preferred) or `icon|textAr` fallback.
-
-### Customer auth — username/password, no guest browsing
-- The customer app requires sign-in before any screen renders. There is
-  no guest mode and no OTP / phone / email flow. `app/page.tsx` checks
-  `useSession()` and renders `<CustomerLogin />` until the session role
-  is `"customer"`.
-- All four portals (customer, nurse, lab, admin) share `LoginForm` from
-  `components/auth/LoginForm.tsx`. The unified credential store lives
-  in `lib/auth.ts`; per-role mock seed lists are
-  `MOCK_CUSTOMER_USERS`, `MOCK_NURSE_USERS`, `MOCK_ADMINS`,
-  `MOCK_LAB_USERS`.
-- Demo credentials are surfaced under a collapsible on each login
-  screen (prototype only — remove when real auth lands).
-- Logout is a single call to `logout()` from `lib/auth.ts`. It clears
-  the session key `makhbartak.session.v1`; all four portals re-render
-  to their login screen via `useSession()`.
-
-### Admin "no popups" rule
-- Heavy details belong in **inline pages** or full-height side drawers,
-  not in modal dialogs. Existing OCC and User Profile remain modals for
-  now (legacy); new admin detail surfaces must be inline pages.
-- Quick edits (lab user CRUD, address edit, password reset, single
-  confirmations) stay as modals or sheets — they are short, focused, and
-  benefit from preserving page context.
-
-### Lab portal rules
-- Username/password auth via the unified store in `lib/auth.ts`
-  (seeded from `MOCK_LAB_USERS`). Inactive users can't log in.
-- Sections in the sidebar: Orders / رفع النتائج / مشاكل المخبر / المحاسبة
-  (lab_admin or lab_accounting only) / إعدادات المخبر (lab_admin only).
-- **Lab never sees customer sell prices** unless `lab.revealSellPriceToLab`
-  is true. Accounting view always shows the lab's agreed amount via
-  `computeOrderLabAmount`, never platform margin.
-- **Critical lab fields** — only main admin may edit:
-  `officialName`, `registrationNumber`, `licenseNumber`, `taxNumber`,
-  `addressFull`, `lat`, `lng`, `revealSellPriceToLab`. Defined as
-  `CRITICAL_LAB_FIELDS` in `lib/lab-overrides.ts`. `updateLabSelf` strips
-  these from any incoming patch.
-- Lab admin may edit name (AR/EN), logo, contact phones/email/whatsapp,
-  working hours, sample types, supported cities, and branding.
-
-### Nurse rules
-- Nurse profile is editable from Settings tab (name, photo via file
-  picker → `data:` URL, city). Phone and `isActive` are admin-only.
-  Persistence via `lib/nurse-profile.ts`.
-- Today's stops filter through `isOrderActionable`. Unpaid online orders
-  never reach the nurse list.
-
-### Toast feedback
-- Every save / update / delete / upload action in admin / lab / nurse /
-  customer **must** call `useToast()` with one of:
-  - `toast.success("تم الحفظ بنجاح")` / `"تم الحذف"` / `"تم رفع الملف بنجاح"`
-  - `toast.error("حدث خطأ، حاول مرة أخرى")`
-- Provider mounted at root layout; works across every app surface.
-- Loading/success-error already standardized on `Button.loading` (sets
-  `aria-busy` and disables the button).
-
-### Package items in admin
-- When an order's `packageSnapshot` is present, the admin OCC Items tab
-  renders a **package parent card** + an **expandable child list** of
-  included tests for operations.
-- Customer cart and OrderDetails always show the package as **one item**.
-
-### Lab issue customer message
-- `LabIssue.customerMessageAr` is admin-editable from `LabsAdmin → orders →
-  issues card`. Customer banner reads this; falls back to
-  `DEFAULT_LAB_ISSUE_CUSTOMER_MESSAGE_AR`.
-- Never expose internal `description` to the customer.
-
----
-
-## Stage 6 — Extended QA checklist
-
-Manual checks before declaring a Stage 6+ change done:
-
-- [ ] **Customer login required**: `/` shows the customer login screen on
-      first load. Sign in as `customer1 / customer123`; Home / package
-      details / custom builder / prescription / Orders / Account all
-      become reachable.
-- [ ] **Wrong-portal login is blocked**: trying to sign into `/admin` with
-      `customer1 / customer123` shows "لا تملك صلاحية الوصول…"; the same
-      account works on `/`.
-- [ ] **Logout returns to login screen**: calling logout from any portal
-      drops the user to that portal's `LoginForm`, no stale state.
-- [ ] **Refresh keeps session**: after sign-in, hard-refreshing the page
-      keeps the user signed in (session persists via
-      `makhbartak.session.v1`).
-- [ ] **Order number consistency**: order success page shows e.g.
-      `HL-2026-000007`. Same number appears in `طلباتي → details`.
-- [ ] **Add patient / address**: "+ إضافة مريض جديد" and "+ إضافة عنوان
-      جديد" inside BookingFlow open inline forms; saving toasts and
-      auto-selects the new entry.
-- [ ] **Nurse profile**: edit name + upload a photo. Save → toast → reload
-      `/nurse` → photo persists. Phone is locked.
-- [ ] **Payment gate**: in admin Settings, switch off "السماح بالطلبات
-      نقداً" → ord-3 (cash, pending) disappears from `/nurse`. Switch back
-      on → reappears.
-- [ ] **Multi-PDF upload**: lab portal → ord-4 → "رفع ملفات PDF" → pick 2
-      PDFs → both appear as separate active rows.
-- [ ] **Replace + archive**: per-row "استبدال" picks one file, the old row
-      becomes muted (archived). Per-row `×` archives without deleting.
-      "استعادة" in admin OCC restores it.
-- [ ] **Auto-complete on confirm**: lab "تأكيد إرسال النتائج" with at
-      least one active file flips order to `completed`; customer sees
-      "مكتمل" with PDF CTAs at top.
-- [ ] **Force-complete**: admin OCC "إغلاق دون نتائج" requires a reason;
-      logged in timeline.
-- [ ] **Instruction dedup**: an order with multiple fasting tests shows
-      "صيام 8 ساعات" once.
-- [ ] **Package parent/child in admin**: ord-1 (package) → OCC Items tab
-      shows the package card + expandable children list. Customer cart
-      shows the package as one row.
-- [ ] **Lab no sell price**: by default lab portal hides `priceSnapshot`
-      and order total. Admin edits `revealSellPriceToLab` → re-login lab
-      → prices appear.
-- [ ] **Lab settings**: lab_admin sees "إعدادات المخبر". Save edits to
-      portal name + branding colors → reflects on lab sidebar header.
-      Critical fields show as read-only.
-- [ ] **Lab accounting hidden for uploader**: create a `lab_uploader`
-      user from admin → log in → no Accounting tab.
-- [ ] **Toast everywhere**: every admin save/edit/delete and lab
-      upload/archive/replace shows a toast.
