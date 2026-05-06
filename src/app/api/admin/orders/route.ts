@@ -5,6 +5,7 @@ import { tsStatusToSql } from "@/lib/supabase/order-status";
 import { isUuid } from "@/lib/supabase/uuid";
 import { requireAdmin } from "@/lib/route-auth";
 import { logger } from "@/lib/logger";
+import { validateCouponServer } from "@/lib/server/coupons";
 import type { Order, OrderStatus, PaymentMethod, Shift } from "@/lib/types";
 
 interface CreateAdminOrderBody {
@@ -162,28 +163,26 @@ export async function POST(req: NextRequest) {
     serverSubtotal = serverItems.reduce((s, i) => s + i.priceSnapshot, 0);
   }
 
+  // Coupon re-validation through the shared SSoT module
+  // (`validateCouponServer`). Same authoritative pricing rules as the
+  // public preview and the customer-side /api/orders POST. Silent drop on
+  // invalid coupons (and on transient DB read errors) is preserved per
+  // the C1 audit.
   let serverCouponCode: string | null = null;
   let serverCouponDiscount = 0;
-  const couponInput = (order.couponCode ?? "").trim().toUpperCase();
-  if (couponInput) {
-    const { data: c } = await sb
-      .from("coupons")
-      .select("code, type, value, min_order_amount, max_discount, usage_limit, used_count, start_date, expiry_date, is_active")
-      .eq("code", couponInput)
-      .maybeSingle();
-    if (c && c.is_active) {
-      const today = new Date().toISOString().split("T")[0];
-      const dateOk = today >= (c.start_date as string) && today <= (c.expiry_date as string);
-      const usageOk = !((c.usage_limit ?? 0) > 0 && (c.used_count ?? 0) >= (c.usage_limit ?? 0));
-      const minOk = serverSubtotal >= Number(c.min_order_amount ?? 0);
-      if (dateOk && usageOk && minOk) {
-        const raw = c.type === "percentage"
-          ? (serverSubtotal * Number(c.value ?? 0)) / 100
-          : Number(c.value ?? 0);
-        const cap = Number(c.max_discount ?? 0);
-        serverCouponDiscount = Math.round((cap > 0 ? Math.min(raw, cap) : raw) * 100) / 100;
-        serverCouponCode = c.code as string;
+  if (order.couponCode) {
+    try {
+      const couponResult = await validateCouponServer(sb, order.couponCode, serverSubtotal);
+      if (couponResult.valid) {
+        serverCouponCode = couponResult.code;
+        serverCouponDiscount = couponResult.discount;
       }
+      // invalid → silently drop.
+    } catch (err) {
+      logger.warn("admin orders POST: coupon validation threw; silently dropping", {
+        route: "api/admin/orders",
+        error: err instanceof Error ? err.message : String(err),
+      });
     }
   }
 

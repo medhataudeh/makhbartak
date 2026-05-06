@@ -1,10 +1,18 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabase/server-admin";
+import { validateCouponServer } from "@/lib/server/coupons";
+import { safeApiError } from "@/lib/api/safe-error";
 
-// Customer-facing coupon validation. The server checks the coupons table
-// (active flag, date window, usage limit, min-order amount), computes the
-// discount with the cap, and returns a snapshot the cart writes onto the
-// order at confirm time. No session required.
+// Customer-facing coupon validation. Single source of truth lives in
+// `validateCouponServer` (lib/server/coupons.ts) — the same function the
+// authoritative order-creation routes use, so preview and submit always
+// agree on the math (modulo the cart→submit time window, which remains
+// silent-drop by design — see the C1 audit).
+//
+// Public (no session): every cart, including unauthenticated guests, hits
+// this endpoint while applying a code. The route stays public to preserve
+// today's contract; rate-limiting is a separate roadmap item (E4) and is
+// not introduced here.
 export async function GET(req: NextRequest) {
   const url = new URL(req.url);
   const code = (url.searchParams.get("code") ?? "").trim().toUpperCase();
@@ -15,39 +23,30 @@ export async function GET(req: NextRequest) {
   }
 
   const sb = getSupabaseAdmin();
-  const { data: c, error } = await sb
-    .from("coupons")
-    .select("id, code, type, value, min_order_amount, max_discount, usage_limit, used_count, start_date, expiry_date, is_active")
-    .eq("code", code)
-    .maybeSingle();
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
-  if (!c || !c.is_active) {
-    return NextResponse.json({ valid: false, message: "الكوبون غير صالح" });
-  }
 
-  const today = new Date().toISOString().split("T")[0];
-  if (today < c.start_date || today > c.expiry_date) {
-    return NextResponse.json({ valid: false, message: "انتهت صلاحية الكوبون" });
+  try {
+    const result = await validateCouponServer(sb, code, total);
+    if (!result.valid) {
+      return NextResponse.json({ valid: false, message: result.messageAr });
+    }
+    return NextResponse.json({
+      valid: true,
+      coupon: {
+        id: result.coupon.id,
+        code: result.coupon.code,
+        type: result.coupon.type,
+        value: result.coupon.value,
+        maxDiscount: result.coupon.maxDiscount,
+        minOrderAmount: result.coupon.minOrderAmount,
+      },
+      discount: result.discount,
+      message: result.messageAr,
+    });
+  } catch (err) {
+    const safe = safeApiError(err, {
+      route: "api/coupons/validate",
+      fallback: "تعذر التحقق من الكوبون",
+    });
+    return NextResponse.json(safe.body, { status: safe.status });
   }
-  if (c.usage_limit > 0 && c.used_count >= c.usage_limit) {
-    return NextResponse.json({ valid: false, message: "الكوبون غير صالح" });
-  }
-  if (total < Number(c.min_order_amount)) {
-    return NextResponse.json({ valid: false, message: "الطلب لا يحقق الحد الأدنى لاستخدام الكوبون" });
-  }
-
-  const raw = c.type === "percentage"
-    ? (total * Number(c.value)) / 100
-    : Number(c.value);
-  const cap = Number(c.max_discount);
-  const discount = cap > 0 ? Math.min(raw, cap) : raw;
-  return NextResponse.json({
-    valid: true,
-    coupon: {
-      id: c.id, code: c.code, type: c.type, value: Number(c.value),
-      maxDiscount: cap, minOrderAmount: Number(c.min_order_amount),
-    },
-    discount: Math.round(discount * 100) / 100,
-    message: "تم تطبيق الخصم",
-  });
 }

@@ -80,8 +80,9 @@ export function CartScreen({ tests, pkg, shift, address, patient, onConfirm, onB
     let valid = false;
     let discount = 0;
     let message = "";
-    // Phase 3: coupons are validated server-side only. The flag-off mock
-    // fallback (validateCoupon from mock-data) has been removed.
+    // Coupons are validated server-side only — both the preview here and
+    // the authoritative recompute at order placement run through the same
+    // shared module (lib/server/coupons.ts).
     try {
       const res = await fetch(`/api/coupons/validate?code=${encodeURIComponent(code)}&total=${encodeURIComponent(subtotal)}`, { cache: "no-store" });
       const body = await res.json().catch(() => ({}));

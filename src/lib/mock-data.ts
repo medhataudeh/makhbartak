@@ -574,26 +574,6 @@ export const ADMIN_STATS: AdminStats = {
   todayOrders: 14, pendingOrders: 5, completedToday: 7, revenue: 1240,
 };
 
-// ─── Validate Coupon ─────────────────────────────────────────────────────────
-export function validateCoupon(
-  code: string,
-  orderTotal: number
-): { valid: boolean; coupon?: Coupon; discount?: number; message: string } {
-  const coupon = MOCK_COUPONS.find((c) => c.code.toLowerCase() === code.toLowerCase());
-  if (!coupon) return { valid: false, message: "الكوبون غير صالح" };
-  if (!coupon.isActive) return { valid: false, message: "الكوبون غير صالح" };
-  const now = new Date().toISOString().split("T")[0];
-  if (now < coupon.startDate || now > coupon.expiryDate)
-    return { valid: false, message: "انتهت صلاحية الكوبون" };
-  if (coupon.usedCount >= coupon.usageLimit)
-    return { valid: false, message: "الكوبون غير صالح" };
-  if (orderTotal < coupon.minOrderAmount)
-    return { valid: false, message: "الطلب لا يحقق الحد الأدنى لاستخدام الكوبون" };
-  const raw = coupon.type === "percentage" ? (orderTotal * coupon.value) / 100 : coupon.value;
-  const discount = Math.min(raw, coupon.maxDiscount);
-  return { valid: true, coupon, discount, message: "تم تطبيق الخصم" };
-}
-
 // ─── Order Status Labels ─────────────────────────────────────────────────────
 export const ORDER_STATUS_LABELS: Record<string, { ar: string; color: string }> = {
   created: { ar: "تم الإنشاء", color: "bg-gray-100 text-gray-600" },
