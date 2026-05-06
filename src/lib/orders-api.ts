@@ -217,6 +217,68 @@ export async function apiCollectCash(
   return res.json();
 }
 
+// Phase 4.4 — fetch the current payment lifecycle state for the customer
+// payment page poller. Customer-self or admin.
+export interface OrderPaymentState {
+  order: { id: string; paymentMethod: "cash" | "online"; paymentStatus: string; total: number };
+  payment: {
+    id: string;
+    status: string;
+    method: string;
+    amount: number;
+    currency: string;
+    provider: string | null;
+    providerRef: string | null;
+    chargedAmount: number | null;
+    providerCurrency: string | null;
+    exchangeRate: number | null;
+    paidAt: string | null;
+    refundedAmount: number;
+  } | null;
+}
+
+export async function apiGetOrderPaymentState(
+  orderId: string,
+): Promise<{ ok: true; state: OrderPaymentState } | { ok: false; error: string }> {
+  const res = await fetch(`/api/orders/${encodeURIComponent(orderId)}/payment-status`, { cache: "no-store" });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    return { ok: false, error: (body as { error?: string }).error ?? `HTTP ${res.status}` };
+  }
+  const json = (await res.json()) as OrderPaymentState;
+  return { ok: true, state: json };
+}
+
+// Phase 4.4 — create or reuse a Stripe PaymentIntent for an online order.
+// The route is idempotent on the order id (Stripe-side) and the wallet row
+// (DB-side); duplicate calls return the same client_secret.
+export interface CreateIntentResult {
+  paymentId: string;
+  intentId: string;
+  clientSecret: string | null;
+  provider: "stripe";
+  providerCurrency?: string;
+  chargedAmount?: number;
+  amountSyp?: number;
+  exchangeRate?: number;
+  reused?: boolean;
+}
+
+export async function apiCreateStripeIntent(
+  orderId: string,
+): Promise<{ ok: true; intent: CreateIntentResult } | { ok: false; error: string }> {
+  const res = await fetch(`/api/payments/stripe/create-intent`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ orderId }),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    return { ok: false, error: (body as { error?: string }).error ?? `HTTP ${res.status}` };
+  }
+  return { ok: true, intent: (await res.json()) as CreateIntentResult };
+}
+
 // Phase 4.1.1 — admin office-collection. Same on-ledger contract as
 // apiCollectCash; the RPC writes the paid payment row + history + (if a
 // nurse is assigned) wallet credit in one transaction.

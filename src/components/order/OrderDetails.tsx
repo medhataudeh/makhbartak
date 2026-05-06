@@ -18,9 +18,13 @@ import { OrderRatingCard } from "@/components/order/OrderRatingCard";
 interface OrderDetailsProps {
   order: Order;
   onClose: () => void;
+  /** Phase 4.4 — when set, an "ادفع الآن" button is shown for online
+   *  orders that are pending or failed. The host page is responsible for
+   *  rendering the StripePaymentScreen. */
+  onPayOnline?: (orderId: string) => void;
 }
 
-export function OrderDetails({ order, onClose }: OrderDetailsProps) {
+export function OrderDetails({ order, onClose, onPayOnline }: OrderDetailsProps) {
   const customer = toCustomerStatus(order.status);
   const stepIdx = customerStatusIndex(customer);
   const isAttention = customer === "needs_attention";
@@ -247,6 +251,11 @@ export function OrderDetails({ order, onClose }: OrderDetailsProps) {
           )}
         </div>
 
+        {/* Phase 4.4 — payment block. Cash and online both surface the
+            method + status; online additionally exposes "ادفع الآن" /
+            "جاري التحقق من الدفع" depending on the lifecycle position. */}
+        <PaymentBlock order={order} onPayOnline={onPayOnline} />
+
         {/* Instructions — aggregated from per-test customerInstructions
             (deduped by key), with legacy fallback handled by the helper. */}
         <InstructionsBlock order={order} />
@@ -292,6 +301,65 @@ export function OrderDetails({ order, onClose }: OrderDetailsProps) {
         </div>
       </div>
     </motion.div>
+  );
+}
+
+// Phase 4.4 — customer-facing payment block. Surfaces method + status, and
+// for online orders gates the "ادفع الآن" button on the actual payment row
+// state (not just orders.payment_status, so a webhook-pending order shows
+// "جاري التحقق" instead of inviting another payment).
+function PaymentBlock({ order, onPayOnline }: { order: Order; onPayOnline?: (orderId: string) => void }) {
+  const isCash = order.paymentMethod === "cash";
+  const isOnline = order.paymentMethod === "online";
+  const status = order.paymentStatus;
+
+  const methodLabel = isCash ? "نقداً عند الاستلام" : "إلكتروني";
+  const statusLabel: string =
+    status === "paid"     ? "تم الدفع"
+    : status === "failed" ? "فشل الدفع"
+    : status === "refunded" ? "تم الاسترجاع"
+    : "بانتظار الدفع";
+
+  const showPayNow = isOnline && (status === "pending" || status === "failed") && !!onPayOnline;
+
+  return (
+    <div className="px-4 pb-4">
+      <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">الدفع</h3>
+      <div className="bg-white rounded-xl border border-gray-100 overflow-hidden">
+        <div className="px-4 py-3 flex items-center justify-between">
+          <span className="text-xs text-gray-500">طريقة الدفع</span>
+          <span className="text-sm font-semibold text-[#164E63]">{methodLabel}</span>
+        </div>
+        <div className="px-4 py-3 flex items-center justify-between border-t border-gray-50">
+          <span className="text-xs text-gray-500">حالة الدفع</span>
+          <span className={`text-sm font-semibold ${status === "paid" ? "text-emerald-700" : status === "failed" ? "text-rose-600" : status === "refunded" ? "text-gray-500" : "text-amber-700"}`}>
+            {statusLabel}
+          </span>
+        </div>
+        {showPayNow && (
+          <div className="px-4 py-3 border-t border-gray-50">
+            <Button
+              size="md"
+              variant="primary"
+              className="w-full"
+              onClick={() => onPayOnline!(order.id)}
+            >
+              ادفع الآن — {formatPrice(order.total)}
+            </Button>
+            {status === "failed" && (
+              <p className="text-[11px] text-rose-600 text-center mt-2">
+                فشلت محاولة الدفع السابقة. حاول مرة أخرى.
+              </p>
+            )}
+          </div>
+        )}
+        {isOnline && status === "pending" && !showPayNow && (
+          <div className="px-4 py-3 border-t border-gray-50 text-xs text-amber-700 text-center">
+            جاري التحقق من الدفع…
+          </div>
+        )}
+      </div>
+    </div>
   );
 }
 

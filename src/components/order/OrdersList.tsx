@@ -14,9 +14,11 @@ import { OrderDetails } from "./OrderDetails";
 interface OrdersListProps {
   onOpenNotifications?: () => void;
   unreadNotifications?: number;
+  /** Phase 4.4 — relayed to OrderDetails for the "ادفع الآن" action. */
+  onPayOnline?: (orderId: string) => void;
 }
 
-export function OrdersList({ onOpenNotifications, unreadNotifications = 0 }: OrdersListProps = {}) {
+export function OrdersList({ onOpenNotifications, unreadNotifications = 0, onPayOnline }: OrdersListProps = {}) {
   const orders = useOrders();
   const session = useSession();
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -70,7 +72,11 @@ export function OrdersList({ onOpenNotifications, unreadNotifications = 0 }: Ord
 
       <AnimatePresence>
         {selectedOrder && (
-          <OrderDetails order={selectedOrder} onClose={() => setSelectedId(null)} />
+          <OrderDetails
+            order={selectedOrder}
+            onClose={() => setSelectedId(null)}
+            onPayOnline={onPayOnline}
+          />
         )}
       </AnimatePresence>
     </>

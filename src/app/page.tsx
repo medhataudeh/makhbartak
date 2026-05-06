@@ -17,17 +17,19 @@ import { PrescriptionUploader } from "@/components/home/PrescriptionUploader";
 import { BookingFlow } from "@/components/booking/BookingFlow";
 import { CartScreen } from "@/components/cart/CartScreen";
 import { OrderSuccess } from "@/components/order/OrderSuccess";
+import { StripePaymentScreen } from "@/components/payment/StripePaymentScreen";
 import { OrdersList } from "@/components/order/OrdersList";
 import { NotificationsScreen } from "@/components/notifications/NotificationsScreen";
 import { AccountScreen } from "@/components/account/AccountScreen";
 import { ShoppingCart, ChevronLeft } from "lucide-react";
 
 import type { Test, Package, Shift, Address, Patient, PaymentMethod } from "@/lib/types";
-import { useCustomerNotifications, createOrder, useOrderByIdempotencyKey, hydrateNotificationsForCustomer, awaitOrderRemote } from "@/lib/store";
+import { useCustomerNotifications, createOrder, useOrderByIdempotencyKey, hydrateNotificationsForCustomer, awaitOrderRemote, useOrders } from "@/lib/store";
 import { COMMON_INSTRUCTIONS } from "@/lib/mock-data";
 import { dedupeInstructions, generateOrderNumber } from "@/lib/order-utils";
 import { useToast } from "@/components/ui/Toast";
 import { useSession, useAuthStatus, logout } from "@/lib/auth";
+import { useSystemSettings } from "@/lib/system-settings";
 
 type AppView =
   | "home"
@@ -36,6 +38,7 @@ type AppView =
   | "prescription"
   | "booking"
   | "cart"
+  | "payment"         // online checkout — Phase 4.4
   | "success"
   | "notifications"   // opened from header, not the bottom nav
   | "login";          // shown only when a transactional action requires it
@@ -165,6 +168,14 @@ function CustomerApp() {
   // hook re-renders with the server values.
   const lastOrder = useOrderByIdempotencyKey(lastIdempotencyKey);
   const lastOrderPublicNumber = lastOrder?.publicNumber ?? null;
+  const systemSettings = useSystemSettings();
+  // Phase 4.4 — when the customer hits "ادفع الآن" from OrdersList, we
+  // route into the same StripePaymentScreen but against an existing order
+  // (not the one we just created via cart).
+  const [payOrderId, setPayOrderId] = useState<string | null>(null);
+  const allOrders = useOrders();
+  const payOrder = payOrderId ? allOrders.find((o) => o.id === payOrderId) ?? null : null;
+  const activePayOrder = payOrder ?? lastOrder ?? null;
 
   const unread = useCustomerNotifications().filter((n) => !n.isRead).length;
 
@@ -232,6 +243,13 @@ function CustomerApp() {
       toast.error(remote.error ?? "تعذر إتمام الطلب. حاول مرة أخرى.");
       return;
     }
+    // Phase 4.4 — online orders go through the Stripe checkout screen
+    // before showing success. The success view is gated on the webhook
+    // flipping payment_status='paid'. Cash flow is unchanged.
+    if (snapshot.paymentMethod === "online") {
+      setView("payment");
+      return;
+    }
     setView("success");
   };
 
@@ -275,7 +293,13 @@ function CustomerApp() {
             onLogin={() => setView("login")}
           />;
         }
-        return <OrdersList onOpenNotifications={openNotifications} unreadNotifications={unread} />;
+        return (
+          <OrdersList
+            onOpenNotifications={openNotifications}
+            unreadNotifications={unread}
+            onPayOnline={(orderId) => { setPayOrderId(orderId); setView("payment"); }}
+          />
+        );
       }
       if (activeTab === "account") {
         if (authStatus === "loading") return <AuthLoading />;
@@ -385,6 +409,38 @@ function CustomerApp() {
             onBack={() => setView("booking")}
           />
         );
+      case "payment":
+        // Phase 4.4 — online checkout. The webhook is the only path that
+        // flips payment_status='paid'; this screen polls until that
+        // happens, then transitions to success.
+        if (!activePayOrder?.id) {
+          // Defensive — should be unreachable because we wait for the
+          // server hydrate before entering this view.
+          setView("home");
+          return null;
+        }
+        return (
+          <StripePaymentScreen
+            orderId={activePayOrder.id}
+            orderTotalSyp={activePayOrder.total ?? 0}
+            publicNumber={activePayOrder.publicNumber ?? null}
+            allowCash={!!systemSettings.allowCashOrders}
+            onPaid={() => {
+              // From cart → success screen; from OrdersList → back to orders.
+              setPayOrderId(null);
+              if (payOrder) {
+                setActiveTab("orders"); setView("home");
+              } else {
+                setView("success");
+              }
+            }}
+            onBack={() => {
+              setPayOrderId(null);
+              setActiveTab("orders"); setView("home");
+              setBooking({}); setPendingPackage(null);
+            }}
+          />
+        );
       case "success":
         return (
           <OrderSuccess
@@ -416,7 +472,7 @@ function CustomerApp() {
   };
 
   const showNav =
-    view !== "login" && (
+    view !== "login" && view !== "payment" && (
       view === "notifications" ||
       view === "home" ||
       (activeTab !== "home" && view !== "success")

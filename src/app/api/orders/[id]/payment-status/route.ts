@@ -4,6 +4,69 @@ import { enrichOrdersWithSignedUrls, fetchOrderById } from "@/lib/supabase/queri
 import { isUuid } from "@/lib/supabase/uuid";
 import { requireAuthedUser } from "@/lib/route-auth";
 
+// Phase 4.4 — GET payment-status for the customer payment page poller.
+// Returns the current payment_status on the order plus the latest payment
+// row (provider, status, charged amount) so the UI can render the right
+// state without parsing the whole order. Customer-self / admin only.
+export async function GET(
+  _req: NextRequest,
+  ctx: { params: Promise<{ id: string }> },
+) {
+  const { id: orderId } = await ctx.params;
+  if (!isUuid(orderId)) return NextResponse.json({ error: "order id must be a uuid" }, { status: 400 });
+  const auth = await requireAuthedUser();
+  if (!auth.ok) return NextResponse.json({ error: auth.error }, { status: auth.status });
+
+  const sb = getSupabaseAdmin();
+  const { data: order, error: oErr } = await sb
+    .from("orders")
+    .select("id, customer_id, payment_method, payment_status, total")
+    .eq("id", orderId)
+    .maybeSingle();
+  if (oErr) return NextResponse.json({ error: oErr.message }, { status: 500 });
+  if (!order) return NextResponse.json({ error: "الطلب غير موجود" }, { status: 404 });
+
+  // Authorization: customer must own this order; admin and (rarely) nurse-on-the-order may also read.
+  if (auth.session.role === "customer") {
+    if (order.customer_id !== auth.session.customerId) {
+      return NextResponse.json({ error: "الطلب غير مرتبط بهذا الحساب" }, { status: 403 });
+    }
+  } else if (auth.session.role !== "admin") {
+    return NextResponse.json({ error: "غير مصرح" }, { status: 403 });
+  }
+
+  const { data: pay } = await sb
+    .from("payments")
+    .select("id, status, method, amount, currency, provider, provider_ref, charged_amount, provider_currency, exchange_rate, paid_at, refunded_amount")
+    .eq("order_id", orderId)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  return NextResponse.json({
+    order: {
+      id: order.id,
+      paymentMethod: order.payment_method,
+      paymentStatus: order.payment_status,
+      total: Number(order.total ?? 0),
+    },
+    payment: pay ? {
+      id: pay.id,
+      status: pay.status,
+      method: pay.method,
+      amount: Number(pay.amount ?? 0),
+      currency: pay.currency ?? "SYP",
+      provider: pay.provider,
+      providerRef: pay.provider_ref,
+      chargedAmount: pay.charged_amount === null || pay.charged_amount === undefined ? null : Number(pay.charged_amount),
+      providerCurrency: pay.provider_currency,
+      exchangeRate: pay.exchange_rate === null || pay.exchange_rate === undefined ? null : Number(pay.exchange_rate),
+      paidAt: pay.paid_at,
+      refundedAmount: Number(pay.refunded_amount ?? 0),
+    } : null,
+  });
+}
+
 // Phase 4.1.1 — `paid` is no longer accepted here. The canonical paths are:
 //   * Nurse  → POST /api/orders/[id]/cash-collected (RPC nurse_collect_cash)
 //   * Admin  → POST /api/admin/orders/[id]/record-cash-payment (RPC admin_record_cash_payment)
