@@ -4,6 +4,19 @@
 // before any real pilot starts.
 import type { Role } from "@/lib/types";
 
+// Phase 5.1 hard guard: refuse to ship with the demo banner in production.
+// This module is imported by the LoginForm; the assertion runs at build time
+// for client bundles and at boot time on the server. NEXT_PUBLIC_* vars are
+// inlined at build, so a misconfiguration is caught before traffic lands.
+if (
+  process.env.NODE_ENV === "production" &&
+  (process.env.NEXT_PUBLIC_SHOW_DEMO_CREDS ?? "").toLowerCase() === "true"
+) {
+  throw new Error(
+    "[demo-credentials] NEXT_PUBLIC_SHOW_DEMO_CREDS must not be 'true' in production",
+  );
+}
+
 export interface DemoCredential {
   label: string;
   email: string;

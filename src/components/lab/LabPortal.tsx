@@ -19,6 +19,7 @@ import { AuthLoading } from "@/components/auth/AuthLoading";
 import { LoginForm } from "@/components/auth/LoginForm";
 import { ForgotPasswordForm } from "@/components/auth/ForgotPasswordForm";
 import { DEMO_LAB_CREDENTIALS } from "@/lib/demo-credentials";
+import { LabFinanceSection } from "@/components/lab/LabFinanceSection";
 
 const SHOW_DEMO = process.env.NEXT_PUBLIC_SHOW_DEMO_CREDS === "true";
 import { useSettlementsForLab, useSettlementItems, hydrateSettlementsForLab } from "@/lib/settlements";
@@ -234,7 +235,7 @@ function LabSetupError({ message, onLogout }: { message: string; onLogout: () =>
 }
 
 // ─── Main shell with section nav ─────────────────────────────────────────────
-type LabSection = "orders" | "results" | "issues" | "accounting" | "lab_settings";
+type LabSection = "orders" | "results" | "issues" | "finance" | "accounting" | "lab_settings";
 
 function LabPortalShell({ lab, labUser, onLogout }: { lab: Lab; labUser: LabUser; onLogout: () => void }) {
   // Phase 3.6: platform branding fallback when the lab has no logo of its own.
@@ -258,7 +259,8 @@ function LabPortalShell({ lab, labUser, onLogout }: { lab: Lab; labUser: LabUser
     { id: "orders",     labelAr: "الطلبات",       Icon: ClipboardList },
     { id: "results",    labelAr: "رفع النتائج",   Icon: Upload },
     { id: "issues",     labelAr: "مشاكل المخبر",  Icon: AlertTriangle },
-    ...(canAccount ? [{ id: "accounting" as LabSection, labelAr: "المحاسبة", Icon: DollarSign }] : []),
+    ...(canAccount ? [{ id: "finance" as LabSection, labelAr: "المالية", Icon: DollarSign }] : []),
+    ...(canAccount ? [{ id: "accounting" as LabSection, labelAr: "المحاسبة (تسويات)", Icon: DollarSign }] : []),
     ...(isLabAdmin ? [{ id: "lab_settings" as LabSection, labelAr: "إعدادات المخبر", Icon: Building2 }] : []),
   ];
 
@@ -370,6 +372,7 @@ function LabPortalShell({ lab, labUser, onLogout }: { lab: Lab; labUser: LabUser
         {section === "orders"     && <OrdersSection lab={lab} labUser={labUser} labOrders={labOrders} brand={brand} />}
         {section === "results"    && <OrdersSection lab={lab} labUser={labUser} labOrders={labOrders.filter((o) => o.status !== "lab_issue")} brand={brand} resultsFocus />}
         {section === "issues"     && <IssuesSection lab={lab} labOrders={labOrders.filter((o) => o.status === "lab_issue" || (o.issues?.length ?? 0) > 0)} brand={brand} />}
+        {section === "finance"    && (canAccount ? <LabFinanceSection labId={lab.id} brand={brand} /> : <NoAccess />)}
         {section === "accounting" && (canAccount ? <AccountingSection lab={lab} brand={brand} /> : <NoAccess />)}
         {section === "lab_settings" && (isLabAdmin ? <LabSettingsSection lab={lab} /> : <NoAccess />)}
       </main>

@@ -45,7 +45,11 @@ export async function GET(req: NextRequest) {
   if (to)   q = q.lte("collected_at", `${to}T23:59:59.999Z`);
 
   const { data, error } = await q;
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  if (error) {
+    const { logger } = await import("@/lib/logger");
+    logger.error("admin/finance/reports failed", { route: "api/admin/finance/reports", code: error.code });
+    return NextResponse.json({ error: "تعذر تشغيل التقرير" }, { status: 500 });
+  }
 
   type Row = {
     id: string; status: string;

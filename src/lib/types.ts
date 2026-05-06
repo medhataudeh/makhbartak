@@ -787,7 +787,45 @@ export const ROLE_PERMISSIONS: Record<AdminRole, string[]> = {
   content_admin: ["overview", "tests", "packages", "sliders", "icons", "branding", "content", "libraries", "media", "settings"],
 };
 
+// Phase 5.1 — full payment lifecycle on the payments table. Order-level
+// `Order.paymentStatus` stays narrow (pending | paid | failed | refunded)
+// because the orders.payment_status column itself is collapsed: any
+// successful collection (nurse OR admin OR webhook) flips it to 'paid'.
+// The granular view lives on the payments row and is exposed here for
+// admin/finance UI components.
+export type PaymentRowStatus =
+  | "pending"
+  | "paid"                 // legacy + admin-confirmed shorthand
+  | "paid_by_nurse"        // mig 033: nurse collected, awaiting admin verify
+  | "verified_by_admin"    // mig 033: admin (or webhook) verified
+  | "partially_refunded"   // mig 033: at least one refund txn, balance > 0
+  | "refunded"             // fully refunded
+  | "failed"
+  | "cancelled";
+
+// Customer-side / invoice-side narrow union (legacy callers).
 export type PaymentStatus = "pending" | "paid" | "refunded" | "cancelled";
+
+// Wallet ledger types — must match the SQL enum public.nurse_wallet_txn_type.
+// Migrations 031 → 033 added cash_refund and refund.
+export type NurseWalletTxnType =
+  | "cash_collected"
+  | "commission_earned"
+  | "settlement_paid"
+  | "adjustment"
+  | "cash_refund"
+  | "refund";
+
+export type NurseWalletTxnDirection = "credit" | "debit";
+
+// Convenience: which payment-row statuses count as "the order received money".
+export const PAID_PAYMENT_ROW_STATUSES: ReadonlySet<PaymentRowStatus> = new Set([
+  "paid", "paid_by_nurse", "verified_by_admin", "partially_refunded",
+]);
+
+export function isPaymentRowPaid(status: string | null | undefined): boolean {
+  return !!status && (PAID_PAYMENT_ROW_STATUSES as ReadonlySet<string>).has(status);
+}
 
 export interface InvoiceItem {
   id: string;

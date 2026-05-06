@@ -459,14 +459,17 @@ async function notifyAdminsViaApi(payload: {
   if (!USE_SUPABASE) return;
   const session = (await import("./auth")).getStoredSession();
   if (!session) return;
+  // Phase 5.1: operational alerts go through /api/notifications/admin-alert
+  // which is auth-any but allow-listed + rate-limited. The /admin/broadcast
+  // route is now admin-only for admin-authored announcements.
   try {
-    await fetch("/api/admin/notifications/broadcast", {
+    await fetch("/api/notifications/admin-alert", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(payload),
     });
   } catch (err) {
-    console.warn("[api/admin/notifications/broadcast] failed", err);
+    console.warn("[notifications/admin-alert] failed", err);
   }
 }
 

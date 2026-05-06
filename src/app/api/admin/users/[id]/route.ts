@@ -2,6 +2,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabase/server-admin";
 import { isUuid } from "@/lib/supabase/uuid";
 import { requireAdmin } from "@/lib/route-auth";
+import { logger } from "@/lib/logger";
 
 const ADMIN_SUB_ROLES = [
   "super_admin", "operations_admin", "lab_admin",
@@ -38,7 +39,10 @@ export async function PATCH(
   const sb = getSupabaseAdmin();
   const { data: profile, error: pErr } = await sb
     .from("profiles").select("role").eq("id", id).maybeSingle();
-  if (pErr) return NextResponse.json({ error: pErr.message }, { status: 500 });
+  if (pErr) {
+    logger.error("admin/users profile lookup failed", { route: "api/admin/users/[id]", id, code: pErr.code });
+    return NextResponse.json({ error: "تعذر قراءة المستخدم" }, { status: 500 });
+  }
   if (!profile) return NextResponse.json({ error: "user not found" }, { status: 404 });
 
   // Profile-level updates.
@@ -55,7 +59,10 @@ export async function PATCH(
   }
   if (Object.keys(profilePatch).length) {
     const { error } = await sb.from("profiles").update(profilePatch).eq("id", id);
-    if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+    if (error) {
+      logger.error("admin/users patch failed", { route: "api/admin/users/[id]", id, code: error.code });
+      return NextResponse.json({ error: "تعذر حفظ بيانات المستخدم" }, { status: 500 });
+    }
   }
 
   // Role-specific updates.
@@ -65,13 +72,27 @@ export async function PATCH(
     if (body.isActive != null) nursePatch.is_active = body.isActive;
     if (Object.keys(nursePatch).length) {
       const { error } = await sb.from("nurses").update(nursePatch).eq("profile_id", id);
-      if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+      if (error) {
+      logger.error("admin/users patch failed", { route: "api/admin/users/[id]", id, code: error.code });
+      return NextResponse.json({ error: "تعذر حفظ بيانات المستخدم" }, { status: 500 });
+    }
     }
   } else if (profile.role === "lab") {
     const labUserPatch: Record<string, unknown> = {};
     if (body.labId != null) {
       if (!isUuid(body.labId)) {
         return NextResponse.json({ error: "labId must be a uuid" }, { status: 400 });
+      }
+      // Phase 5.1 — verify the target lab actually exists and is not soft-deleted
+      // before reassigning a lab user. Previously the column would update blindly.
+      const { data: targetLab, error: labErr } = await sb
+        .from("labs").select("id").eq("id", body.labId).is("deleted_at", null).maybeSingle();
+      if (labErr) {
+        logger.error("admin/users lab lookup failed", { route: "api/admin/users/[id]", code: labErr.code });
+        return NextResponse.json({ error: "تعذر التحقق من المختبر" }, { status: 500 });
+      }
+      if (!targetLab) {
+        return NextResponse.json({ error: "المختبر المستهدف غير موجود" }, { status: 404 });
       }
       labUserPatch.lab_id = body.labId;
     }
@@ -84,7 +105,10 @@ export async function PATCH(
     if (body.isActive != null) labUserPatch.is_active = body.isActive;
     if (Object.keys(labUserPatch).length) {
       const { error } = await sb.from("lab_users").update(labUserPatch).eq("profile_id", id);
-      if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+      if (error) {
+      logger.error("admin/users patch failed", { route: "api/admin/users/[id]", id, code: error.code });
+      return NextResponse.json({ error: "تعذر حفظ بيانات المستخدم" }, { status: 500 });
+    }
     }
   }
 
@@ -108,6 +132,9 @@ export async function DELETE(
 
   const sb = getSupabaseAdmin();
   const { error } = await sb.auth.admin.deleteUser(id);
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  if (error) {
+    logger.error("admin/users delete failed", { route: "api/admin/users/[id]", id, code: error.code });
+    return NextResponse.json({ error: "تعذر حذف المستخدم" }, { status: 500 });
+  }
   return NextResponse.json({ ok: true });
 }

@@ -43,13 +43,13 @@ export function arabicAuthError(raw: string | undefined): string {
 export async function sendCustomerOtp(phone: string): Promise<AuthResult> {
   const sb = getSupabaseBrowser();
   if (!sb) {
-    if (USE_DEV_OTP) { console.log("Using DEV OTP fallback"); return { ok: true }; }
+    if (USE_DEV_OTP) { /* dev-only OTP fallback active */ return { ok: true }; }
     return { ok: false, error: { message: "الخدمة غير متاحة، تحقق من إعدادات Supabase" } };
   }
   const { error } = await sb.auth.signInWithOtp({ phone });
   if (error) {
     console.error("Supabase OTP error:", error);
-    if (USE_DEV_OTP) { console.log("Using DEV OTP fallback"); return { ok: true }; }
+    if (USE_DEV_OTP) { /* dev-only OTP fallback active */ return { ok: true }; }
     return { ok: false, error: { message: arabicAuthError(error.message), code: error.code } };
   }
   return { ok: true };
@@ -60,7 +60,7 @@ export async function verifyCustomerOtp(
   token: string
 ): Promise<AuthResult> {
   if (USE_DEV_OTP && token === DEV_OTP_CODE) {
-    console.log("Using DEV OTP fallback");
+    /* dev-only OTP fallback active */
     clearCustomerIdCache();
     return {
       ok: true,

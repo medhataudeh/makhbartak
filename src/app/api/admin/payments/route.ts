@@ -34,7 +34,11 @@ export async function GET(req: NextRequest) {
   if (nurseId) q = q.eq("collected_by_nurse_id", nurseId);
 
   const { data, error } = await q;
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  if (error) {
+    const { logger } = await import("@/lib/logger");
+    logger.error("admin/payments list failed", { route: "api/admin/payments", code: error.code });
+    return NextResponse.json({ error: "تعذر قراءة المدفوعات، حاول مرة أخرى" }, { status: 500 });
+  }
 
   type Row = {
     id: string; order_id: string; method: string; status: string;

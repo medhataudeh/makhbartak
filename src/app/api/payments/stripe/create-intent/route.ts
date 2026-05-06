@@ -3,6 +3,8 @@ import { getSupabaseAdmin } from "@/lib/supabase/server-admin";
 import { isUuid } from "@/lib/supabase/uuid";
 import { requireAuthedUser } from "@/lib/route-auth";
 import { createPaymentIntent, isStripeConfigured } from "@/lib/payments/stripe";
+import { rateLimit } from "@/lib/api/rate-limit";
+import { logger } from "@/lib/logger";
 
 // Phase 4.3 — customer-facing create-intent for online checkout.
 //
@@ -40,6 +42,15 @@ export async function POST(req: NextRequest) {
   if (auth.session.role !== "customer" || !auth.session.customerId) {
     return NextResponse.json({ error: "هذه العملية متاحة للعميل فقط" }, { status: 403 });
   }
+  // Cap intent creation at 10 per minute per customer. The route is
+  // idempotent on order id so legitimate retry flows reuse the same
+  // PaymentIntent; a higher rate is almost always abuse.
+  const rl = rateLimit(req, {
+    bucket: "stripe:create-intent",
+    max: 10, windowMs: 60_000,
+    keyFor: () => auth.session.customerId ?? "anon",
+  });
+  if (!rl.ok) return rl.response!;
 
   let body: Body;
   try { body = await req.json(); } catch {
@@ -138,7 +149,10 @@ export async function POST(req: NextRequest) {
     idempotencyKey: `mk_intent_${order.id}`,
   });
   if (!created.ok) {
-    console.error("[create-intent] stripe failed", { orderId, error: created.error });
+    logger.error("stripe create-intent failed", {
+      route: "api/payments/stripe/create-intent",
+      orderId, providerCurrency,
+    });
     return NextResponse.json({ error: "تعذر إنشاء الدفع الإلكتروني، حاول مرة أخرى" }, { status: 502 });
   }
   const intent = created.intent;
@@ -164,7 +178,10 @@ export async function POST(req: NextRequest) {
       msg.includes("مسبقاً")
     );
     if (isBusiness) return NextResponse.json({ error: msg }, { status: 409 });
-    console.error("[create-intent] rpc failed", { orderId, code: rpcErr.code, message: msg });
+    logger.error("create-intent rpc failed", {
+      route: "api/payments/stripe/create-intent",
+      orderId, code: rpcErr.code,
+    });
     return NextResponse.json({ error: "تعذر حفظ سجل الدفع، حاول مرة أخرى" }, { status: 500 });
   }
 

@@ -6,8 +6,9 @@ import {
   Home as HomeIcon, Calendar, Settings as SettingsIcon, Bell, MapPin, Phone,
   CheckCircle2, AlertCircle, Navigation, Clock, ChevronRight, Trophy, Flame,
   Star, Award, TrendingUp, Target, BadgeCheck, ListChecks, ArrowLeft, Package,
-  XCircle, Wrench, Droplets,
+  XCircle, Wrench, Droplets, Wallet,
 } from "lucide-react";
+import { NurseWallet } from "@/components/nurse/NurseWallet";
 import {
   buildPrepChecklist, FAILED_COLLECTION_REASONS, NURSE_BADGES,
 } from "@/lib/mock-data";
@@ -39,7 +40,7 @@ import { hydratePrep, setPrep, usePrep } from "@/lib/nurse-prep";
 import { hydrateNurseOnline, setNurseOnline, useNurseOnline } from "@/lib/nurse-online";
 import { hydrateShortageRequestsForNurse } from "@/lib/shortage-requests";
 
-type NurseTab = "home" | "schedule" | "settings";
+type NurseTab = "home" | "schedule" | "wallet" | "settings";
 
 // Compose the nurse-visible address string. Spec: don't show the "label"
 // (e.g. "المنزل") — show area/city + description so the nurse sees where
@@ -371,6 +372,8 @@ function NurseAppInner({ nurseId, onLogout }: { nurseId: string; onLogout: () =>
           />
         )}
 
+        {tab === "wallet" && <NurseWallet nurseId={nurse.id} />}
+
         {tab === "settings" && <NurseSettings nurse={nurse} game={game} onLogout={onLogout} isOnline={isOnline} onToggleOnline={async () => {
           const r = await setNurseOnline(nurse.id, !isOnline);
           if (!r.ok) toast.error(r.error ?? "تعذر تحديث وضع العمل");
@@ -382,10 +385,11 @@ function NurseAppInner({ nurseId, onLogout }: { nurseId: string; onLogout: () =>
         className="fixed bottom-0 inset-x-0 bg-white border-t border-gray-100 safe-bottom-sm z-30 max-w-md mx-auto"
         aria-label="التنقل"
       >
-        <div className="grid grid-cols-3 h-16">
+        <div className="grid grid-cols-4 h-16">
           {([
             { id: "home" as const,     Icon: HomeIcon,   label: "الرئيسية" },
             { id: "schedule" as const, Icon: Calendar,   label: "الجدول" },
+            { id: "wallet" as const,   Icon: Wallet,     label: "المحفظة" },
             { id: "settings" as const, Icon: SettingsIcon, label: "الإعدادات" },
           ]).map((t) => {
             const isActive = tab === t.id;

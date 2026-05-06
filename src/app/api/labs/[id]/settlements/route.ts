@@ -38,7 +38,11 @@ export async function GET(
     `)
     .eq("lab_id", labId)
     .order("period_end", { ascending: false });
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  if (error) {
+    const { logger } = await import("@/lib/logger");
+    logger.error("api/labs/settlements failed", { route: "api/labs/settlements", code: error.code });
+    return NextResponse.json({ error: "تعذر قراءة التسويات" }, { status: 500 });
+  }
   return NextResponse.json({ settlements: data ?? [] });
 }
 

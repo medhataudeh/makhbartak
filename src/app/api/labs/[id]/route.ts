@@ -76,8 +76,9 @@ export async function GET(
   const { data: lab, error } = await sb
     .from("labs").select("*").eq("id", labId).is("deleted_at", null).maybeSingle();
   if (error) {
-    console.error("[api/labs/[id]] read failed", { labId, code: error.code, message: error.message });
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    const { logger } = await import("@/lib/logger");
+    logger.error("api/labs read failed", { route: "api/labs/[id]", labId, code: error.code });
+    return NextResponse.json({ error: "تعذر قراءة بيانات المختبر" }, { status: 500 });
   }
   if (!lab) {
     console.error("[api/labs/[id]] no lab row for authorized session", { labId, role: auth.session.role });

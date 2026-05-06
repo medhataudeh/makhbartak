@@ -4,6 +4,7 @@ import { fetchOrdersForAdmin, fetchOrdersForCustomer, fetchOrdersForNurse, fetch
 import { tsStatusToSql } from "@/lib/supabase/order-status";
 import { isUuid } from "@/lib/supabase/uuid";
 import { requireAuthedUser } from "@/lib/route-auth";
+import { logger } from "@/lib/logger";
 import type { Order, OrderStatus, PaymentMethod, Shift } from "@/lib/types";
 
 interface CreateOrderBody {
@@ -129,10 +130,14 @@ export async function POST(req: NextRequest) {
   // can still set it manually — order creation is not blocked.
   const { data: assigned, error: autoErr } = await sb.rpc("auto_assign_order", { p_order_id: orderId });
   if (autoErr) {
-    console.error("[auto-assign] failed", { orderId, code: autoErr.code, message: autoErr.message });
+    logger.error("auto-assign failed", {
+      route: "api/orders",
+      orderId, code: autoErr.code,
+    });
   } else {
     const row = Array.isArray(assigned) ? assigned[0] : assigned;
-    console.log("[auto-assign]", {
+    logger.info("auto-assign", {
+      route: "api/orders",
       orderId,
       nurseId: row?.nurse_id ?? null,
       labId: row?.lab_id ?? null,

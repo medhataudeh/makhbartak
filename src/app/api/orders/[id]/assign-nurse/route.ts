@@ -3,6 +3,7 @@ import { getSupabaseAdmin } from "@/lib/supabase/server-admin";
 import { enrichOrdersWithSignedUrls, fetchOrderById } from "@/lib/supabase/queries/orders";
 import { isUuid } from "@/lib/supabase/uuid";
 import { requireAdmin } from "@/lib/route-auth";
+import { logger } from "@/lib/logger";
 
 interface AssignNurseBody {
   nurseId?: string | null;
@@ -34,7 +35,7 @@ export async function POST(
     const { data: assigned, error: autoErr } = await sb.rpc("auto_assign_order", { p_order_id: orderId });
     if (autoErr) return NextResponse.json({ error: autoErr.message }, { status: 500 });
     const row = Array.isArray(assigned) ? assigned[0] : assigned;
-    console.log("[auto-assign:nurse]", { orderId, nurseId: row?.nurse_id ?? null });
+    logger.info("auto-assign nurse", { route: "api/orders/assign-nurse", orderId, nurseId: row?.nurse_id ?? null });
   } else {
     const { error: rpcErr } = await sb.rpc("assign_nurse_admin", {
       p_order_id: orderId,

@@ -14,7 +14,11 @@ export async function GET() {
     .from("nurse_finance_summary")
     .select("nurse_id, nurse_name, total_collected, total_commission, total_settled, total_adjustments, net_due")
     .order("net_due", { ascending: false });
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  if (error) {
+    const { logger } = await import("@/lib/logger");
+    logger.error("admin/finance/nurse-wallets failed", { route: "api/admin/finance/nurse-wallets", code: error.code });
+    return NextResponse.json({ error: "تعذر قراءة محافظ الممرضين" }, { status: 500 });
+  }
 
   type Row = {
     nurse_id: string; nurse_name: string | null;

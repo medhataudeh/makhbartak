@@ -33,7 +33,11 @@ export async function GET(req: NextRequest) {
   if (nurseId) q = q.eq("nurse_id", nurseId);
 
   const { data, error } = await q;
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  if (error) {
+    const { logger } = await import("@/lib/logger");
+    logger.error("admin/finance/settlements GET failed", { route: "api/admin/finance/settlements", code: error.code });
+    return NextResponse.json({ error: "تعذر قراءة التسويات" }, { status: 500 });
+  }
 
   type Row = {
     id: string; nurse_id: string; type: string; direction: string;

@@ -2,6 +2,9 @@ import { NextResponse, type NextRequest } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabase/server-admin";
 import { requireAdmin } from "@/lib/route-auth";
 import { ensureMediaInfra, MEDIA_BUCKET } from "@/lib/supabase/ensure-media-infra";
+import { detectImageOrPdf, mimeOf, extOf, SAFE_FORMATS } from "@/lib/payments/magic-bytes";
+import { logger } from "@/lib/logger";
+import { safeApiError } from "@/lib/api/safe-error";
 
 const BUCKET = MEDIA_BUCKET;
 
@@ -63,33 +66,43 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "file is empty" }, { status: 400 });
   }
   if (file.size > 10 * 1024 * 1024) {
-    return NextResponse.json({ error: "file exceeds 10MB" }, { status: 413 });
+    return NextResponse.json({ error: "حجم الملف أكبر من 10MB" }, { status: 413 });
   }
-  const allowed = new Set(["image/jpeg", "image/png", "image/webp", "image/gif", "image/svg+xml"]);
-  if (file.type && !allowed.has(file.type)) {
-    return NextResponse.json({ error: `unsupported mime: ${file.type}` }, { status: 415 });
+
+  // Phase 5.1 — server-side magic-byte sniff. Browser-supplied Content-Type
+  // is trivially spoofed; SVG is rejected because it can carry inline scripts.
+  const buf = Buffer.from(await file.arrayBuffer());
+  const detected = detectImageOrPdf(buf);
+  if (!SAFE_FORMATS.rasterOrGif.has(detected)) {
+    return NextResponse.json(
+      { error: "صيغة الملف غير مدعومة. الرجاء رفع PNG أو JPG أو WEBP." },
+      { status: 415 },
+    );
   }
 
   // Storage path: deterministic prefix per day so the bucket browser stays
   // organized. UUID component avoids collisions when two admins upload
-  // files with the same name on the same day.
-  const safeName = file.name.replace(/[^a-zA-Z0-9._-]+/g, "-");
+  // files with the same name on the same day. We deliberately use the
+  // magic-byte-derived extension, not the user-supplied filename's tail.
+  const baseName = file.name.replace(/[^a-zA-Z0-9._-]+/g, "-").replace(/\.[a-zA-Z0-9]+$/, "");
+  const ext = extOf(detected);
   const now = new Date();
   const prefix = `${now.getFullYear()}/${String(now.getMonth() + 1).padStart(2, "0")}`;
   const random = crypto.randomUUID();
-  const storagePath = `${prefix}/${random}-${safeName}`;
+  const storagePath = `${prefix}/${random}-${baseName}.${ext}`;
+  const trustedMime = mimeOf(detected);
 
   const sb = getSupabaseAdmin();
-  const buf = Buffer.from(await file.arrayBuffer());
   const { error: upErr } = await sb.storage
     .from(BUCKET)
-    .upload(storagePath, buf, {
-      contentType: file.type || "application/octet-stream",
-      upsert: false,
-    });
+    .upload(storagePath, buf, { contentType: trustedMime, upsert: false });
   if (upErr) {
-    console.error("[api/admin/media] upload failed", upErr.message);
-    return NextResponse.json({ error: upErr.message }, { status: 500 });
+    const safe = safeApiError(upErr, {
+      route: "api/admin/media",
+      fallback: "تعذر رفع الملف، حاول مرة أخرى",
+      context: { storagePath },
+    });
+    return NextResponse.json(safe.body, { status: safe.status });
   }
 
   const { error: insErr, data: row } = await sb
@@ -97,7 +110,7 @@ export async function POST(req: NextRequest) {
     .insert({
       storage_path: storagePath,
       file_name: file.name,
-      mime_type: file.type || null,
+      mime_type: trustedMime,
       size_bytes: file.size,
       alt_text_ar: altTextAr,
       uploaded_by: auth.session.userId,
@@ -105,10 +118,9 @@ export async function POST(req: NextRequest) {
     .select("id, storage_path, file_name, mime_type, size_bytes, alt_text_ar, created_at")
     .single();
   if (insErr) {
-    // Best-effort cleanup: don't leave a Storage object orphaned by a failed insert.
     await sb.storage.from(BUCKET).remove([storagePath]).catch(() => null);
-    console.error("[api/admin/media] metadata insert failed", insErr.message);
-    return NextResponse.json({ error: insErr.message }, { status: 500 });
+    logger.error("api/admin/media metadata insert failed", { route: "api/admin/media", code: insErr.code });
+    return NextResponse.json({ error: "تعذر حفظ بيانات الملف" }, { status: 500 });
   }
   const { data: pub } = sb.storage.from(BUCKET).getPublicUrl(storagePath);
   return NextResponse.json({ asset: { ...row, public_url: pub.publicUrl } });

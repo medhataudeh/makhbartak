@@ -22,7 +22,15 @@ interface Overview {
   totalSettlements: number;
   totalAdjustments: number;
   pendingCashWithNurses: number;
+  // Phase 5.2 — lab side.
+  totalLabEarnings?: number;
+  totalLabSettlements?: number;
+  totalLabAdjustments?: number;
+  pendingLabBalances?: number;
+  platformNetAfterLabs?: number;
   netProfit: number;
+  topNurses?: { nurseId: string; nurseName: string; totalCollected: number; netDue: number }[];
+  topLabs?: { labId: string; labName: string; totalEarnings: number; completedOrders: number; netDue: number }[];
 }
 
 interface NurseWallet {
@@ -106,7 +114,7 @@ const METHOD_LABELS_AR: Record<PaymentRow["method"], string> = {
 
 export function FinanceAdmin({ adminId, adminName, adminRole }: Props) {
   const toast = useToast();
-  const [tab, setTab] = useState<"overview" | "nurses" | "payments" | "settlements" | "reports">("overview");
+  const [tab, setTab] = useState<"overview" | "nurses" | "labs" | "payouts" | "payments" | "settlements" | "reports">("overview");
 
   const [overview, setOverview] = useState<Overview | null>(null);
   const [wallets, setWallets] = useState<NurseWallet[]>([]);
@@ -199,6 +207,8 @@ export function FinanceAdmin({ adminId, adminName, adminRole }: Props) {
         {([
           { v: "overview" as const,    label: "نظرة عامة" },
           { v: "nurses" as const,      label: "محافظ الممرضين" },
+          { v: "labs" as const,        label: "محافظ المخابر" },
+          { v: "payouts" as const,     label: "قواعد المستحقات" },
           { v: "payments" as const,    label: "المدفوعات" },
           { v: "settlements" as const, label: "التسويات" },
           { v: "reports" as const,     label: "التقارير" },
@@ -218,6 +228,8 @@ export function FinanceAdmin({ adminId, adminName, adminRole }: Props) {
 
       {tab === "overview" && <OverviewPane overview={overview} loading={loading} />}
       {tab === "nurses" && <NursesPane wallets={wallets} loading={loading} onPay={setCreating} />}
+      {tab === "labs" && <LabsPane adminId={adminId} adminName={adminName} adminRole={adminRole} />}
+      {tab === "payouts" && <PayoutRulesPane />}
       {tab === "payments" && (
         <PaymentsPane
           rows={payments}
@@ -304,16 +316,66 @@ export function FinanceAdmin({ adminId, adminName, adminRole }: Props) {
 function OverviewPane({ overview, loading }: { overview: Overview | null; loading: boolean }) {
   if (loading && !overview) return <SkeletonGrid />;
   if (!overview) return <p className="text-sm text-gray-400 text-center py-10">لا توجد بيانات مالية</p>;
-  const { totalRevenue, totalCollected, totalRefunded, totalCommission, totalSettlements, pendingCashWithNurses, netProfit } = overview;
+  const {
+    totalRevenue, totalCollected, totalRefunded, totalCommission, totalSettlements,
+    pendingCashWithNurses, netProfit,
+    totalLabEarnings = 0, totalLabSettlements = 0, pendingLabBalances = 0, platformNetAfterLabs = 0,
+    topNurses = [], topLabs = [],
+  } = overview;
   return (
-    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-      <Card icon={<Receipt size={18} className="text-[#0891B2]" />} label="إجمالي الإيرادات" value={formatPrice(totalRevenue)} sub="الطلبات غير الملغاة وغير المُستردة" />
-      <Card icon={<Banknote size={18} className="text-emerald-600" />} label="إجمالي المقبوضات" value={formatPrice(totalCollected)} sub="صافي بعد الاسترجاعات" />
-      <Card icon={<ArrowUpRight size={18} className="text-amber-600" />} label="الرصيد عند الممرضين" value={formatPrice(pendingCashWithNurses)} sub="رصيد المحافظ الإجمالي" />
-      <Card icon={<ArrowDownRight size={18} className="text-purple-600" />} label="إجمالي العمولات" value={formatPrice(totalCommission)} />
-      <Card icon={<Wallet size={18} className="text-cyan-700" />} label="إجمالي التسويات" value={formatPrice(totalSettlements)} />
-      <Card icon={<RotateCcw size={18} className="text-rose-600" />} label="إجمالي الاسترجاعات" value={formatPrice(totalRefunded)} />
-      <Card icon={<BarChart3 size={18} className="text-emerald-700" />} label="صافي الربح" value={formatPrice(netProfit)} sub="العمولات − الاسترجاعات" />
+    <div className="space-y-5">
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+        <Card icon={<Receipt size={18} className="text-[#0891B2]" />} label="إجمالي الإيرادات" value={formatPrice(totalRevenue)} sub="الطلبات غير الملغاة وغير المُستردة" />
+        <Card icon={<Banknote size={18} className="text-emerald-600" />} label="إجمالي المقبوضات" value={formatPrice(totalCollected)} sub="صافي بعد الاسترجاعات" />
+        <Card icon={<ArrowUpRight size={18} className="text-amber-600" />} label="الرصيد عند الممرضين" value={formatPrice(pendingCashWithNurses)} sub="رصيد المحافظ الإجمالي" />
+        <Card icon={<ArrowDownRight size={18} className="text-purple-600" />} label="إجمالي العمولات" value={formatPrice(totalCommission)} />
+        <Card icon={<Wallet size={18} className="text-cyan-700" />} label="إجمالي التسويات" value={formatPrice(totalSettlements)} />
+        <Card icon={<RotateCcw size={18} className="text-rose-600" />} label="إجمالي الاسترجاعات" value={formatPrice(totalRefunded)} />
+      </div>
+
+      {/* Phase 5.2 — lab side */}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
+        <Card icon={<Receipt size={18} className="text-emerald-700" />} label="إجمالي مستحقات المخابر" value={formatPrice(totalLabEarnings)} />
+        <Card icon={<Wallet size={18} className="text-cyan-700" />} label="تسويات المخابر" value={formatPrice(totalLabSettlements)} />
+        <Card icon={<ArrowUpRight size={18} className="text-amber-600" />} label="الرصيد المستحق للمخابر" value={formatPrice(pendingLabBalances)} sub="ما يلزم تسويته" />
+        <Card icon={<BarChart3 size={18} className="text-emerald-700" />} label="صافي المنصة بعد المخابر" value={formatPrice(platformNetAfterLabs)} sub="المُحصَّل − الاسترجاعات − مستحقات المخابر" />
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+        <Card icon={<BarChart3 size={18} className="text-emerald-700" />} label="صافي الربح" value={formatPrice(netProfit)} sub="العمولات − الاسترجاعات" />
+      </div>
+
+      {/* Top earners */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+        <TopList title="أعلى الممرضين تحصيلاً" rows={topNurses.map((n) => ({ id: n.nurseId, name: n.nurseName, primary: n.totalCollected, secondaryLabel: "الرصيد", secondary: n.netDue }))} />
+        <TopList title="أعلى المخابر مستحقاتٍ"  rows={topLabs.map((l) => ({ id: l.labId, name: l.labName, primary: l.totalEarnings, secondaryLabel: "طلبات", secondary: l.completedOrders, secondaryCount: true }))} />
+      </div>
+    </div>
+  );
+}
+
+function TopList({ title, rows }: { title: string; rows: { id: string; name: string; primary: number; secondaryLabel: string; secondary: number; secondaryCount?: boolean }[] }) {
+  return (
+    <div className="bg-white rounded-2xl border border-gray-100 overflow-hidden">
+      <header className="px-4 py-2 border-b border-gray-100">
+        <h3 className="text-sm font-semibold text-[#164E63]">{title}</h3>
+      </header>
+      {rows.length === 0 ? (
+        <p className="text-sm text-gray-400 text-center py-6">لا توجد بيانات مالية</p>
+      ) : (
+        <ul>
+          {rows.map((r, i) => (
+            <li key={r.id} className="flex items-center gap-3 px-4 py-2.5 border-b border-gray-50 last:border-0">
+              <span className="text-xs text-gray-400 w-5 lat" dir="ltr">{i + 1}</span>
+              <span className="text-sm font-semibold text-[#164E63] flex-1 truncate">{r.name}</span>
+              <span className="text-xs text-gray-400 me-3">
+                {r.secondaryLabel}: {r.secondaryCount ? r.secondary : formatPrice(r.secondary)}
+              </span>
+              <span className="text-sm font-bold text-emerald-700">{formatPrice(r.primary)}</span>
+            </li>
+          ))}
+        </ul>
+      )}
     </div>
   );
 }
@@ -829,6 +891,412 @@ function RefundModal({ payment, onClose, onSubmitted }: {
             }}
           >
             تأكيد الاسترجاع
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Phase 5.2 — Labs pane (per-lab rollup + create-settlement) ───────────
+
+interface LabRow {
+  labId: string;
+  labName: string;
+  totalEarnings: number;
+  totalSettled: number;
+  totalAdjustments: number;
+  completedOrders: number;
+  avgEarning: number;
+  netDue: number;
+  currency: "SYP";
+}
+
+function LabsPane({ adminId, adminName, adminRole }: { adminId: string; adminName: string; adminRole: AdminRole }) {
+  const toast = useToast();
+  const [labs, setLabs] = useState<LabRow[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [paying, setPaying] = useState<LabRow | null>(null);
+
+  const refresh = async () => {
+    setLoading(true);
+    try {
+      const res = await fetch("/api/admin/finance/labs", { cache: "no-store" });
+      if (res.ok) {
+        const body = await res.json();
+        setLabs((body.labs ?? []) as LabRow[]);
+      }
+    } finally { setLoading(false); }
+  };
+
+  useEffect(() => {
+    const ctrl = new AbortController();
+    (async () => {
+      try {
+        const res = await fetch("/api/admin/finance/labs", { cache: "no-store", signal: ctrl.signal });
+        if (ctrl.signal.aborted) return;
+        if (res.ok) {
+          const body = await res.json();
+          setLabs((body.labs ?? []) as LabRow[]);
+        }
+      } catch { /* aborted */ }
+      finally { if (!ctrl.signal.aborted) setLoading(false); }
+    })();
+    return () => ctrl.abort();
+  }, []);
+
+  if (loading && labs.length === 0) return <SkeletonGrid />;
+  if (labs.length === 0) return <p className="text-sm text-gray-400 text-center py-10">لا توجد بيانات مالية</p>;
+
+  return (
+    <div className="space-y-3">
+      <div className="bg-white rounded-2xl border border-gray-100 overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="text-[11px] text-gray-400 uppercase tracking-wide border-b border-gray-100">
+              <th className="text-start py-2 px-3 font-semibold">المخبر</th>
+              <th className="text-start py-2 px-3 font-semibold">المستحقات</th>
+              <th className="text-start py-2 px-3 font-semibold">التسويات</th>
+              <th className="text-start py-2 px-3 font-semibold">الرصيد</th>
+              <th className="text-start py-2 px-3 font-semibold">الطلبات</th>
+              <th className="text-start py-2 px-3 font-semibold">المتوسط</th>
+              <th className="text-end py-2 px-3 font-semibold">إجراء</th>
+            </tr>
+          </thead>
+          <tbody>
+            {labs.map((l) => (
+              <tr key={l.labId} className="border-b border-gray-50 last:border-0">
+                <td className="py-2 px-3 font-semibold text-[#164E63]">{l.labName}</td>
+                <td className="py-2 px-3 text-emerald-700">{formatPrice(l.totalEarnings)}</td>
+                <td className="py-2 px-3 text-cyan-700">{formatPrice(l.totalSettled)}</td>
+                <td className="py-2 px-3 font-bold">{formatPrice(l.netDue)}</td>
+                <td className="py-2 px-3">{l.completedOrders}</td>
+                <td className="py-2 px-3 text-xs text-gray-500">{formatPrice(l.avgEarning)}</td>
+                <td className="py-2 px-3 text-end">
+                  <Button size="sm" variant="primary" disabled={l.netDue <= 0} onClick={() => setPaying(l)}>
+                    <Plus size={12} aria-hidden="true" /> تسوية
+                  </Button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      {paying && (
+        <SettleLabModal
+          lab={paying}
+          onClose={() => setPaying(null)}
+          onSubmitted={async (amount, note) => {
+            try {
+              const res = await fetch(`/api/admin/finance/labs/${encodeURIComponent(paying.labId)}/settlements`, {
+                method: "POST",
+                headers: { "content-type": "application/json" },
+                body: JSON.stringify({ amount, note }),
+              });
+              if (!res.ok) {
+                const body = await res.json().catch(() => ({}));
+                toast.error((body as { error?: string }).error ?? "تعذر تسجيل التسوية");
+                return false;
+              }
+              toast.success("تم تسجيل التسوية");
+              logActivity({
+                adminId, adminName, role: adminRole,
+                action: "settings_change", entity: "lab_settlement", entityId: paying.labId,
+                details: `تسوية ${paying.labName}: ${formatPrice(amount)}`,
+              });
+              setPaying(null);
+              await refresh();
+              return true;
+            } catch (err) {
+              toast.error((err as Error).message);
+              return false;
+            }
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+function SettleLabModal({ lab, onClose, onSubmitted }: {
+  lab: LabRow;
+  onClose: () => void;
+  onSubmitted: (amount: number, note: string) => Promise<boolean>;
+}) {
+  const [amount, setAmount] = useState(String(lab.netDue || 0));
+  const [note, setNote] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const numeric = Number(amount);
+  const valid = Number.isFinite(numeric) && numeric > 0 && numeric <= lab.netDue + 0.01;
+  return (
+    <div className="fixed inset-0 z-50 bg-black/50 flex items-end md:items-center justify-center p-4">
+      <div className="bg-white rounded-2xl w-full max-w-md p-5 space-y-4">
+        <div>
+          <h3 className="text-base font-bold text-[#164E63]">تسجيل تسوية المختبر</h3>
+          <p className="text-xs text-gray-500 mt-0.5">{lab.labName} — الرصيد المستحق {formatPrice(lab.netDue)}</p>
+        </div>
+        <label className="block">
+          <span className="text-[11px] text-gray-500 font-medium">المبلغ (ل.س)</span>
+          <input
+            type="number" inputMode="decimal" min={0} value={amount}
+            onChange={(e) => setAmount(e.target.value)}
+            className="w-full h-10 px-3 rounded-xl border border-gray-200 text-sm mt-1 outline-none focus:border-[#0891B2]"
+          />
+        </label>
+        <label className="block">
+          <span className="text-[11px] text-gray-500 font-medium">ملاحظة (اختياري)</span>
+          <textarea
+            value={note} onChange={(e) => setNote(e.target.value)} rows={3}
+            className="w-full p-3 rounded-xl border border-gray-200 text-sm mt-1 outline-none focus:border-[#0891B2] resize-y"
+          />
+        </label>
+        <div className="flex justify-end gap-2">
+          <Button variant="outline" onClick={onClose} disabled={submitting}>إلغاء</Button>
+          <Button
+            variant="primary" loading={submitting} disabled={!valid || submitting}
+            onClick={async () => {
+              setSubmitting(true);
+              const ok = await onSubmitted(numeric, note.trim());
+              if (!ok) setSubmitting(false);
+            }}
+          >
+            حفظ التسوية
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Phase 5.2 — Payout rules pane ────────────────────────────────────────
+
+interface PayoutRule {
+  id: string;
+  labId: string | null;
+  labName: string;
+  labTestId: string | null;
+  labTestNameAr: string | null;
+  labTestNameEn: string | null;
+  payoutType: "fixed" | "percentage";
+  payoutValue: number;
+  isActive: boolean;
+  notes: string | null;
+}
+
+function PayoutRulesPane() {
+  const toast = useToast();
+  const [rules, setRules] = useState<PayoutRule[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [creating, setCreating] = useState(false);
+
+  const refresh = async () => {
+    setLoading(true);
+    try {
+      const res = await fetch("/api/admin/lab-payout-rules", { cache: "no-store" });
+      if (res.ok) setRules(((await res.json()).rules ?? []) as PayoutRule[]);
+    } finally { setLoading(false); }
+  };
+
+  useEffect(() => {
+    const ctrl = new AbortController();
+    (async () => {
+      try {
+        const res = await fetch("/api/admin/lab-payout-rules", { cache: "no-store", signal: ctrl.signal });
+        if (ctrl.signal.aborted) return;
+        if (res.ok) setRules(((await res.json()).rules ?? []) as PayoutRule[]);
+      } catch { /* aborted */ }
+      finally { if (!ctrl.signal.aborted) setLoading(false); }
+    })();
+    return () => ctrl.abort();
+  }, []);
+
+  const remove = async (id: string) => {
+    if (!confirm("حذف القاعدة؟")) return;
+    const res = await fetch(`/api/admin/lab-payout-rules?id=${encodeURIComponent(id)}`, { method: "DELETE" });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      toast.error((body as { error?: string }).error ?? "تعذر الحذف");
+      return;
+    }
+    toast.success("تم الحذف");
+    await refresh();
+  };
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center justify-between">
+        <p className="text-xs text-gray-500">
+          الأولوية: قاعدة خاصة بالاختبار &gt; قاعدة افتراضية للمخبر &gt; القاعدة العامة في الإعدادات.
+          <br />
+          سيتم استخدام الإعداد الافتراضي في حال عدم وجود قاعدة خاصة.
+        </p>
+        <Button size="sm" variant="primary" onClick={() => setCreating(true)}>
+          <Plus size={13} aria-hidden="true" /> قاعدة جديدة
+        </Button>
+      </div>
+
+      {loading && rules.length === 0 ? <SkeletonGrid /> : rules.length === 0 ? (
+        <p className="text-sm text-gray-400 text-center py-10">لا توجد قواعد مخصصة. تُستخدم القاعدة العامة من الإعدادات.</p>
+      ) : (
+        <div className="bg-white rounded-2xl border border-gray-100 overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="text-[11px] text-gray-400 uppercase tracking-wide border-b border-gray-100">
+                <th className="text-start py-2 px-3 font-semibold">المختبر</th>
+                <th className="text-start py-2 px-3 font-semibold">التحليل</th>
+                <th className="text-start py-2 px-3 font-semibold">النوع</th>
+                <th className="text-start py-2 px-3 font-semibold">القيمة</th>
+                <th className="text-start py-2 px-3 font-semibold">الحالة</th>
+                <th className="text-end py-2 px-3 font-semibold">إجراء</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rules.map((r) => (
+                <tr key={r.id} className="border-b border-gray-50 last:border-0">
+                  <td className="py-2 px-3 font-semibold text-[#164E63]">{r.labName}</td>
+                  <td className="py-2 px-3 text-xs">
+                    {r.labTestId
+                      ? <>{r.labTestNameAr ?? "—"}{r.labTestNameEn && <span className="text-[11px] text-gray-400 lat ms-1" dir="ltr">{r.labTestNameEn}</span>}</>
+                      : <span className="text-gray-500">قاعدة افتراضية للمخبر</span>}
+                  </td>
+                  <td className="py-2 px-3 text-xs">{r.payoutType === "fixed" ? "مبلغ ثابت" : "نسبة مئوية"}</td>
+                  <td className="py-2 px-3 font-bold">
+                    {r.payoutType === "fixed" ? formatPrice(r.payoutValue) : `${r.payoutValue}%`}
+                  </td>
+                  <td className="py-2 px-3 text-xs">{r.isActive ? "مفعّلة" : "موقوفة"}</td>
+                  <td className="py-2 px-3 text-end">
+                    <Button size="sm" variant="outline" onClick={() => remove(r.id)}>حذف</Button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {creating && (
+        <PayoutRuleModal
+          onClose={() => setCreating(false)}
+          onSubmitted={async (form) => {
+            const res = await fetch("/api/admin/lab-payout-rules", {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify(form),
+            });
+            if (!res.ok) {
+              const body = await res.json().catch(() => ({}));
+              toast.error((body as { error?: string }).error ?? "تعذر حفظ القاعدة");
+              return false;
+            }
+            toast.success("تم حفظ القاعدة");
+            setCreating(false);
+            await refresh();
+            return true;
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+interface RuleFormValues {
+  labId: string;
+  labTestId: string | null;
+  payoutType: "fixed" | "percentage";
+  payoutValue: number;
+}
+
+function PayoutRuleModal({ onClose, onSubmitted }: {
+  onClose: () => void;
+  onSubmitted: (form: RuleFormValues) => Promise<boolean>;
+}) {
+  const [labs, setLabs] = useState<{ id: string; nameAr: string }[]>([]);
+  const [tests, setTests] = useState<{ id: string; nameAr: string; nameEn: string | null }[]>([]);
+  const [labId, setLabId] = useState("");
+  const [labTestId, setLabTestId] = useState<string | "default">("default");
+  const [payoutType, setPayoutType] = useState<"fixed" | "percentage">("percentage");
+  const [payoutValue, setPayoutValue] = useState("60");
+  const [submitting, setSubmitting] = useState(false);
+
+  useEffect(() => {
+    const ctrl = new AbortController();
+    (async () => {
+      try {
+        const [labsRes, testsRes] = await Promise.all([
+          fetch("/api/admin/labs", { cache: "no-store", signal: ctrl.signal }),
+          fetch("/api/admin/tests", { cache: "no-store", signal: ctrl.signal }),
+        ]);
+        if (ctrl.signal.aborted) return;
+        if (labsRes.ok) {
+          const body = await labsRes.json();
+          const list = (body.labs ?? []) as { id: string; nameAr?: string; name_ar?: string }[];
+          setLabs(list.map((l) => ({ id: l.id, nameAr: l.nameAr ?? l.name_ar ?? "—" })));
+        }
+        if (testsRes.ok) {
+          const body = await testsRes.json();
+          const list = (body.tests ?? []) as { id: string; nameAr?: string; name_ar?: string; nameEn?: string | null; name_en?: string | null }[];
+          setTests(list.map((t) => ({ id: t.id, nameAr: t.nameAr ?? t.name_ar ?? "—", nameEn: t.nameEn ?? t.name_en ?? null })));
+        }
+      } catch { /* aborted */ }
+    })();
+    return () => ctrl.abort();
+  }, []);
+
+  const v = Number(payoutValue);
+  const valid = !!labId && Number.isFinite(v) && v >= 0 && (payoutType !== "percentage" || v <= 100);
+
+  return (
+    <div className="fixed inset-0 z-50 bg-black/50 flex items-end md:items-center justify-center p-4">
+      <div className="bg-white rounded-2xl w-full max-w-md p-5 space-y-4 max-h-[90vh] overflow-y-auto">
+        <div>
+          <h3 className="text-base font-bold text-[#164E63]">قاعدة مستحقات جديدة</h3>
+        </div>
+        <label className="block">
+          <span className="text-[11px] text-gray-500 font-medium">المختبر</span>
+          <select value={labId} onChange={(e) => setLabId(e.target.value)} className="w-full h-10 px-3 rounded-xl border border-gray-200 text-sm mt-1">
+            <option value="">— اختر —</option>
+            {labs.map((l) => <option key={l.id} value={l.id}>{l.nameAr}</option>)}
+          </select>
+        </label>
+        <label className="block">
+          <span className="text-[11px] text-gray-500 font-medium">التحليل (اختياري)</span>
+          <select value={labTestId} onChange={(e) => setLabTestId(e.target.value as string | "default")} className="w-full h-10 px-3 rounded-xl border border-gray-200 text-sm mt-1">
+            <option value="default">قاعدة افتراضية لكل التحاليل في هذا المختبر</option>
+            {tests.map((t) => <option key={t.id} value={t.id}>{t.nameAr}{t.nameEn ? ` — ${t.nameEn}` : ""}</option>)}
+          </select>
+        </label>
+        <label className="block">
+          <span className="text-[11px] text-gray-500 font-medium">نوع المستحقات</span>
+          <select value={payoutType} onChange={(e) => setPayoutType(e.target.value as "fixed" | "percentage")} className="w-full h-10 px-3 rounded-xl border border-gray-200 text-sm mt-1">
+            <option value="percentage">نسبة مئوية</option>
+            <option value="fixed">مبلغ ثابت</option>
+          </select>
+        </label>
+        <label className="block">
+          <span className="text-[11px] text-gray-500 font-medium">{payoutType === "fixed" ? "المبلغ (ل.س)" : "النسبة (%)"}</span>
+          <input
+            type="number" inputMode="decimal" min={0} max={payoutType === "percentage" ? 100 : undefined}
+            value={payoutValue} onChange={(e) => setPayoutValue(e.target.value)}
+            className="w-full h-10 px-3 rounded-xl border border-gray-200 text-sm mt-1"
+          />
+        </label>
+        <div className="flex justify-end gap-2">
+          <Button variant="outline" onClick={onClose} disabled={submitting}>إلغاء</Button>
+          <Button
+            variant="primary" loading={submitting} disabled={!valid || submitting}
+            onClick={async () => {
+              setSubmitting(true);
+              const ok = await onSubmitted({
+                labId,
+                labTestId: labTestId === "default" ? null : labTestId,
+                payoutType,
+                payoutValue: v,
+              });
+              if (!ok) setSubmitting(false);
+            }}
+          >
+            حفظ
           </Button>
         </div>
       </div>

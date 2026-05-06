@@ -1,23 +1,33 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabase/server-admin";
 import { verifyStripeSignature } from "@/lib/payments/stripe";
+import { logger } from "@/lib/logger";
 
-// Phase 4.3 — Stripe webhook.
+// Phase 4.3 + 5.1 — Stripe webhook.
 //
 // The webhook is the ONLY path that flips an online payment to verified.
 // Frontend success callbacks are advisory.
 //
-// Idempotency: every event is recorded in payment_provider_events with the
-// Stripe event id as primary key; INSERT … ON CONFLICT DO NOTHING short-
-// circuits replays. We always return 200 once the signature is valid so
-// Stripe doesn't keep retrying after our side-effects landed.
+// Idempotency (Phase 5.1 replay-safe):
+//   * Each event row in payment_provider_events stores a `result` tag.
+//   * Successful side-effects ⇒ result in {processed, confirmed, failed,
+//     refunded, ignored, no_match}. A retry sees these and returns 200
+//     with `duplicate: true` without re-running the side effect.
+//   * Failed side-effects ⇒ result in {confirm_error, failed_error,
+//     refund_error}. A Stripe retry hits the existing row, recognises an
+//     "unfinished" tag, and re-runs the RPC. This closes the prior bug
+//     where the event log was inserted before the side effect succeeded
+//     and a retry was treated as a no-op.
+//   * The 23505 unique-violation on first insert means a concurrent webhook
+//     delivery is racing with us; we read the row's current result and
+//     follow the same logic.
 //
 // Handled events:
 //   payment_intent.succeeded     → confirm_online_payment_admin
 //   payment_intent.payment_failed → mark_online_payment_failed
 //   charge.refunded              → record_provider_refund
 //
-// Anything else returns 200 with `ignored: true`.
+// Anything else is recorded with result='ignored' and returns 200.
 
 export const runtime = "nodejs";
 
@@ -47,21 +57,32 @@ interface StripeEventEnvelope {
   data: { object: IntentObject | ChargeObject };
 }
 
+const RETRYABLE_RESULTS = new Set([
+  "received", "confirm_error", "failed_error", "refund_error",
+]);
+const TERMINAL_RESULTS = new Set([
+  "processed", "confirmed", "failed", "refunded", "ignored", "no_match", "duplicate",
+]);
+
 export async function POST(req: NextRequest) {
-  // Stripe signature validation requires the raw body bytes — no JSON parse.
   const raw = await req.text();
   const sig = req.headers.get("stripe-signature");
   const verified = verifyStripeSignature(raw, sig);
   if (!verified.ok || !verified.event) {
-    console.warn("[webhooks/stripe] signature failed", { error: verified.error });
-    return NextResponse.json({ error: verified.error ?? "signature failed" }, { status: 400 });
+    logger.warn("webhooks/stripe signature failed", {
+      route: "api/webhooks/stripe",
+      error: verified.error ?? "unknown",
+    });
+    return NextResponse.json({ error: "signature failed" }, { status: 400 });
   }
   const event = verified.event as StripeEventEnvelope;
 
   const sb = getSupabaseAdmin();
 
-  // Idempotency: insert the event row first. Conflict means we've handled
-  // this event already — short-circuit.
+  // Insert-or-fetch the event row. On 23505 we look up the existing row to
+  // decide whether the prior attempt finished or not.
+  let priorResult: string | null = null;
+  let priorPaymentId: string | null = null;
   const { error: insertErr } = await sb.from("payment_provider_events").insert({
     id:        event.id,
     provider:  "stripe",
@@ -71,17 +92,33 @@ export async function POST(req: NextRequest) {
     payment_id: null,
   });
   if (insertErr && insertErr.code !== "23505") {
-    // 23505 = unique violation; anything else is a real failure.
-    console.error("[webhooks/stripe] event log insert failed", { id: event.id, code: insertErr.code, message: insertErr.message });
-    return NextResponse.json({ error: insertErr.message }, { status: 500 });
+    logger.error("webhooks/stripe event log insert failed", {
+      route: "api/webhooks/stripe",
+      eventId: event.id, code: insertErr.code,
+    });
+    // We don't tell Stripe to retry on infrastructure errors? Actually we
+    // do — return 500 so Stripe re-delivers, since we never had a chance
+    // to attempt the side effect.
+    return NextResponse.json({ error: "event log insert failed" }, { status: 500 });
   }
   if (insertErr?.code === "23505") {
-    // Already processed.
-    return NextResponse.json({ received: true, duplicate: true });
+    const { data: existing } = await sb.from("payment_provider_events")
+      .select("result, payment_id").eq("id", event.id).maybeSingle();
+    priorResult    = (existing?.result as string | null) ?? null;
+    priorPaymentId = (existing?.payment_id as string | null) ?? null;
+
+    if (priorResult && TERMINAL_RESULTS.has(priorResult)) {
+      // Already handled — ack the replay and bail.
+      return NextResponse.json({ received: true, duplicate: true, priorResult });
+    }
+    // priorResult is null OR a retryable error tag — continue and re-run.
+    logger.info("webhooks/stripe replay re-running", {
+      route: "api/webhooks/stripe",
+      eventId: event.id, priorResult,
+    });
   }
 
-  // Resolve the local payment row. For payment_intent.* events the intent
-  // id IS our provider_ref. For charge.refunded we read charge.payment_intent.
+  // Resolve / fast-path the payment row.
   const obj = event.data.object;
   const providerRef =
     event.type.startsWith("payment_intent.")
@@ -90,8 +127,8 @@ export async function POST(req: NextRequest) {
         ? (obj as ChargeObject).payment_intent ?? null
         : null;
 
-  let paymentId: string | null = null;
-  if (providerRef) {
+  let paymentId: string | null = priorPaymentId;
+  if (!paymentId && providerRef) {
     const { data: pid } = await sb.rpc("find_payment_by_provider_ref", { p_provider_ref: providerRef });
     paymentId = (pid as string | null) ?? null;
     if (paymentId) {
@@ -100,12 +137,16 @@ export async function POST(req: NextRequest) {
   }
 
   if (!paymentId) {
-    console.warn("[webhooks/stripe] no matching payment row", { eventId: event.id, type: event.type, providerRef });
+    logger.warn("webhooks/stripe no matching payment row", {
+      route: "api/webhooks/stripe",
+      eventId: event.id, type: event.type, providerRef,
+    });
     await sb.from("payment_provider_events").update({ result: "no_match" }).eq("id", event.id);
     return NextResponse.json({ received: true, matched: false });
   }
 
-  let resultTag = "ignored";
+  // Run the side effect. On RPC failure tag the event for retry; the next
+  // Stripe delivery will re-enter this branch and retry.
   if (event.type === "payment_intent.succeeded") {
     const intent = obj as IntentObject;
     const { error } = await sb.rpc("confirm_online_payment_admin", {
@@ -117,12 +158,19 @@ export async function POST(req: NextRequest) {
       p_metadata:          { latest_charge: intent.latest_charge ?? null, intent_status: intent.status ?? null },
     });
     if (error) {
-      console.error("[webhooks/stripe] confirm rpc failed", { paymentId, code: error.code, message: error.message });
+      logger.error("webhooks/stripe confirm rpc failed", {
+        route: "api/webhooks/stripe",
+        paymentId, code: error.code,
+      });
       await sb.from("payment_provider_events").update({ result: "confirm_error" }).eq("id", event.id);
-      return NextResponse.json({ error: error.message }, { status: 500 });
+      // 5xx so Stripe retries.
+      return NextResponse.json({ error: "confirm failed; will retry" }, { status: 500 });
     }
-    resultTag = "confirmed";
-  } else if (event.type === "payment_intent.payment_failed") {
+    await sb.from("payment_provider_events").update({ result: "confirmed" }).eq("id", event.id);
+    return NextResponse.json({ received: true, result: "confirmed" });
+  }
+
+  if (event.type === "payment_intent.payment_failed") {
     const intent = obj as IntentObject;
     const reason = intent.last_payment_error?.message ?? null;
     const { error } = await sb.rpc("mark_online_payment_failed", {
@@ -131,15 +179,18 @@ export async function POST(req: NextRequest) {
       p_metadata:   { intent_status: intent.status ?? null, last_payment_error: intent.last_payment_error ?? null },
     });
     if (error) {
-      console.error("[webhooks/stripe] failed rpc failed", { paymentId, code: error.code, message: error.message });
+      logger.error("webhooks/stripe failed-rpc failed", {
+        route: "api/webhooks/stripe",
+        paymentId, code: error.code,
+      });
       await sb.from("payment_provider_events").update({ result: "failed_error" }).eq("id", event.id);
-      return NextResponse.json({ error: error.message }, { status: 500 });
+      return NextResponse.json({ error: "mark-failed failed; will retry" }, { status: 500 });
     }
-    resultTag = "failed";
-  } else if (event.type === "charge.refunded") {
-    // Stripe sends amount_refunded in minor units of the charge currency.
-    // We re-derive the SYP amount via the payment row's exchange_rate so the
-    // ledger stays in SYP.
+    await sb.from("payment_provider_events").update({ result: "failed" }).eq("id", event.id);
+    return NextResponse.json({ received: true, result: "failed" });
+  }
+
+  if (event.type === "charge.refunded") {
     const charge = obj as ChargeObject;
     const minor = Number(charge.amount_refunded ?? 0);
     const { data: payRow } = await sb.from("payments")
@@ -148,7 +199,6 @@ export async function POST(req: NextRequest) {
     const exchangeRate = Number(payRow?.exchange_rate ?? 0);
     let sypAmount = 0;
     if (charge.currency && exchangeRate > 0) {
-      // minor → major in provider currency, then * exchange_rate (SYP per unit).
       const major = minor / 100;
       sypAmount = +(major * exchangeRate).toFixed(2);
     }
@@ -160,13 +210,20 @@ export async function POST(req: NextRequest) {
       p_metadata:   { charge_id: charge.id ?? null, amount_refunded_minor: minor, currency: charge.currency ?? null },
     });
     if (error) {
-      console.error("[webhooks/stripe] refund rpc failed", { paymentId, code: error.code, message: error.message });
+      logger.error("webhooks/stripe refund-rpc failed", {
+        route: "api/webhooks/stripe",
+        paymentId, code: error.code,
+      });
       await sb.from("payment_provider_events").update({ result: "refund_error" }).eq("id", event.id);
-      return NextResponse.json({ error: error.message }, { status: 500 });
+      return NextResponse.json({ error: "refund failed; will retry" }, { status: 500 });
     }
-    resultTag = "refunded";
+    await sb.from("payment_provider_events").update({ result: "refunded" }).eq("id", event.id);
+    return NextResponse.json({ received: true, result: "refunded" });
   }
 
-  await sb.from("payment_provider_events").update({ result: resultTag }).eq("id", event.id);
-  return NextResponse.json({ received: true, result: resultTag });
+  // Unknown event type — record and ack.
+  await sb.from("payment_provider_events").update({ result: "ignored" }).eq("id", event.id);
+  return NextResponse.json({ received: true, result: "ignored" });
 }
+// Suppress unused warning if a future tag list is referenced elsewhere.
+void RETRYABLE_RESULTS;
