@@ -1,7 +1,8 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabase/server-admin";
 import { isUuid } from "@/lib/supabase/uuid";
-import { requireAdmin } from "@/lib/route-auth";
+import { requireAdminCap } from "@/lib/route-auth";
+import { logAdminActivity } from "@/lib/admin-activity";
 
 // GET — list nurse settlement transactions (settlement_paid + adjustment).
 // POST — admin records a settlement payment to a nurse via the
@@ -16,7 +17,7 @@ interface PostBody {
 }
 
 export async function GET(req: NextRequest) {
-  const auth = await requireAdmin();
+  const auth = await requireAdminCap("finance.read");
   if (!auth.ok) return NextResponse.json({ error: auth.error }, { status: auth.status });
   const url = new URL(req.url);
   const nurseId = url.searchParams.get("nurseId");
@@ -68,7 +69,7 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
-  const auth = await requireAdmin();
+  const auth = await requireAdminCap("finance.settlement.write");
   if (!auth.ok) return NextResponse.json({ error: auth.error }, { status: auth.status });
 
   let body: PostBody;
@@ -101,5 +102,15 @@ export async function POST(req: NextRequest) {
     console.error("[api/admin/finance/settlements] rpc failed", { code: error.code, message: msg });
     return NextResponse.json({ error: msg }, { status: 500 });
   }
+
+  await logAdminActivity(
+    sb,
+    auth.session,
+    "settings_change",
+    "nurse_settlement",
+    nurseId,
+    `${forceAdjustment ? "adjustment" : "settlement"}:${numericAmount}${note ? `:${note}` : ""}`,
+  );
+
   return NextResponse.json({ ok: true, transactionId: data });
 }

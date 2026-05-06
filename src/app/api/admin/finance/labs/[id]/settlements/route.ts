@@ -1,7 +1,8 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabase/server-admin";
 import { isUuid } from "@/lib/supabase/uuid";
-import { requireAdmin } from "@/lib/route-auth";
+import { requireAdminCap } from "@/lib/route-auth";
+import { logAdminActivity } from "@/lib/admin-activity";
 import { logger } from "@/lib/logger";
 
 // Phase 5.2 — admin settlement creation for a lab.
@@ -20,7 +21,7 @@ export async function GET(
 ) {
   const { id: labId } = await ctx.params;
   if (!isUuid(labId)) return NextResponse.json({ error: "lab id must be a uuid" }, { status: 400 });
-  const auth = await requireAdmin();
+  const auth = await requireAdminCap("finance.read");
   if (!auth.ok) return NextResponse.json({ error: auth.error }, { status: auth.status });
 
   const sb = getSupabaseAdmin();
@@ -44,7 +45,7 @@ export async function POST(
 ) {
   const { id: labId } = await ctx.params;
   if (!isUuid(labId)) return NextResponse.json({ error: "lab id must be a uuid" }, { status: 400 });
-  const auth = await requireAdmin();
+  const auth = await requireAdminCap("finance.settlement.write");
   if (!auth.ok) return NextResponse.json({ error: auth.error }, { status: auth.status });
 
   let body: PostBody;
@@ -73,5 +74,15 @@ export async function POST(
     logger.error("admin/finance/labs/settlements POST failed", { route: "api/admin/finance/labs/settlements", labId, code: error.code });
     return NextResponse.json({ error: "تعذر تسجيل التسوية" }, { status: 500 });
   }
+
+  await logAdminActivity(
+    sb,
+    auth.session,
+    "settings_change",
+    "lab_settlement",
+    labId,
+    `${body.forceAdjustment ? "adjustment" : "settlement"}:${numericAmount}${body.note ? `:${body.note}` : ""}`,
+  );
+
   return NextResponse.json({ ok: true, transactionId: data });
 }

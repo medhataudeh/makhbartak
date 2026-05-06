@@ -2,6 +2,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Banknote, Wallet, Receipt, ArrowUpRight, ArrowDownRight, Plus, Loader2, CheckCircle2, RotateCcw, BarChart3 } from "lucide-react";
 import type { AdminRole } from "@/lib/types";
+import { adminHas } from "@/lib/admin-permissions";
 import { formatPrice, relativeTime } from "@/lib/utils";
 import { Button } from "@/components/ui/Button";
 import { useToast } from "@/components/ui/Toast";
@@ -237,6 +238,7 @@ export function FinanceAdmin({ adminId, adminName, adminRole }: Props) {
           verifyingId={verifyingId}
           onVerify={verifyPayment}
           onRefund={setRefunding}
+          adminRole={adminRole}
         />
       )}
       {tab === "settlements" && <SettlementsPane rows={settlements} loading={loading} />}
@@ -417,10 +419,13 @@ function NursesPane({ wallets, loading, onPay }: { wallets: NurseWallet[]; loadi
   );
 }
 
-function PaymentsPane({ rows, loading, verifyingId, onVerify, onRefund }: {
+function PaymentsPane({ rows, loading, verifyingId, onVerify, onRefund, adminRole }: {
   rows: PaymentRow[]; loading: boolean; verifyingId: string | null;
   onVerify: (p: PaymentRow) => Promise<void>; onRefund: (p: PaymentRow) => void;
+  adminRole: AdminRole;
 }) {
+  const showVerify = adminHas(adminRole, "finance.verify");
+  const showRefund = adminHas(adminRole, "finance.refund");
   const [statusFilter, setStatusFilter] = useState<"all" | PaymentStatus>("all");
   const [methodFilter, setMethodFilter] = useState<"all" | PaymentRow["method"]>("all");
   const filtered = useMemo(() =>
@@ -513,26 +518,34 @@ function PaymentsPane({ rows, loading, verifyingId, onVerify, onRefund }: {
                     {r.collectedAt ? relativeTime(r.collectedAt) : r.paidAt ? relativeTime(r.paidAt) : relativeTime(r.createdAt)}
                   </td>
                   <td className="py-2 px-3 text-end">
-                    <div
-                      className="inline-flex gap-1.5"
-                      title={isOnline ? "الدفع الإلكتروني يُحقَّق ويُسترد عبر مزود الدفع" : undefined}
-                    >
-                      <Button
-                        size="sm" variant="outline"
-                        disabled={!canVerify || verifyingId === r.id}
-                        loading={verifyingId === r.id}
-                        onClick={() => onVerify(r)}
+                    {(showVerify || showRefund) ? (
+                      <div
+                        className="inline-flex gap-1.5"
+                        title={isOnline ? "الدفع الإلكتروني يُحقَّق ويُسترد عبر مزود الدفع" : undefined}
                       >
-                        <CheckCircle2 size={12} aria-hidden="true" /> تحقق
-                      </Button>
-                      <Button
-                        size="sm" variant="outline"
-                        disabled={!canRefund}
-                        onClick={() => onRefund(r)}
-                      >
-                        <RotateCcw size={12} aria-hidden="true" /> استرجاع
-                      </Button>
-                    </div>
+                        {showVerify && (
+                          <Button
+                            size="sm" variant="outline"
+                            disabled={!canVerify || verifyingId === r.id}
+                            loading={verifyingId === r.id}
+                            onClick={() => onVerify(r)}
+                          >
+                            <CheckCircle2 size={12} aria-hidden="true" /> تحقق
+                          </Button>
+                        )}
+                        {showRefund && (
+                          <Button
+                            size="sm" variant="outline"
+                            disabled={!canRefund}
+                            onClick={() => onRefund(r)}
+                          >
+                            <RotateCcw size={12} aria-hidden="true" /> استرجاع
+                          </Button>
+                        )}
+                      </div>
+                    ) : (
+                      <span className="text-xs text-gray-400">—</span>
+                    )}
                   </td>
                 </tr>
               );

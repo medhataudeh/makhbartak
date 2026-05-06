@@ -2,7 +2,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabase/server-admin";
 import { enrichOrdersWithSignedUrls, fetchOrderById } from "@/lib/supabase/queries/orders";
 import { isUuid } from "@/lib/supabase/uuid";
-import { requireAdmin } from "@/lib/route-auth";
+import { requireAdminCap } from "@/lib/route-auth";
 
 // Phase 4.1.1 — admin office-collection. The atomic body lives in
 // admin_record_cash_payment (mig 032). On the order's nurse the wallet
@@ -19,7 +19,7 @@ export async function POST(
   if (!isUuid(orderId)) {
     return NextResponse.json({ error: "order id must be a uuid" }, { status: 400 });
   }
-  const auth = await requireAdmin();
+  const auth = await requireAdminCap("finance.cash");
   if (!auth.ok) return NextResponse.json({ error: auth.error }, { status: auth.status });
 
   let body: Body = {};

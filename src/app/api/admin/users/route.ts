@@ -1,7 +1,8 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabase/server-admin";
 import { isUuid } from "@/lib/supabase/uuid";
-import { requireAdmin } from "@/lib/route-auth";
+import { requireAdminCap } from "@/lib/route-auth";
+import { logAdminActivity } from "@/lib/admin-activity";
 
 const ROLES = ["customer", "nurse", "lab", "admin"] as const;
 type UserRole = (typeof ROLES)[number];
@@ -31,13 +32,22 @@ interface CreateUserBody {
 
 // GET /api/admin/users?role=admin|customer|nurse|lab
 // Returns the unified listing the AdminDashboard sub-sections render.
+//
+// Cap is chosen per the `role` query so an operations_admin / customer_support
+// can still see customer/nurse/lab listings, while only super_admin can list
+// admin staff.
 export async function GET(req: NextRequest) {
-  const auth = await requireAdmin();
-  if (!auth.ok) return NextResponse.json({ error: auth.error }, { status: auth.status });
   const role = new URL(req.url).searchParams.get("role") as UserRole | null;
   if (!role || !ROLES.includes(role)) {
+    // Auth-light validation runs first so we don't 403 before telling the
+    // caller their query is malformed. Both cases are pre-mutation.
+    const probe = await requireAdminCap("users.read");
+    if (!probe.ok) return NextResponse.json({ error: probe.error }, { status: probe.status });
     return NextResponse.json({ error: "role query param required" }, { status: 400 });
   }
+  const cap = role === "admin" ? "users.read.admins" : "users.read";
+  const auth = await requireAdminCap(cap);
+  if (!auth.ok) return NextResponse.json({ error: auth.error }, { status: auth.status });
 
   const sb = getSupabaseAdmin();
   if (role === "admin") {
@@ -81,13 +91,18 @@ export async function GET(req: NextRequest) {
 }
 
 // POST /api/admin/users — create a new auth user + role-specific row.
+//
+// Cap is chosen per `body.role`: creating an admin user requires
+// `users.write.admins` (super only); creating a customer/nurse/lab user
+// requires `users.write` (super, ops, support — see admin-permissions.ts).
 export async function POST(req: NextRequest) {
-  const auth = await requireAdmin();
-  if (!auth.ok) return NextResponse.json({ error: auth.error }, { status: auth.status });
   let body: CreateUserBody;
   try { body = await req.json(); } catch {
     return NextResponse.json({ error: "invalid json" }, { status: 400 });
   }
+  const cap = body?.role === "admin" ? "users.write.admins" : "users.write";
+  const auth = await requireAdminCap(cap);
+  if (!auth.ok) return NextResponse.json({ error: auth.error }, { status: auth.status });
   if (!ROLES.includes(body.role)) {
     return NextResponse.json({ error: "role must be customer | nurse | lab | admin" }, { status: 400 });
   }
@@ -175,6 +190,15 @@ export async function POST(req: NextRequest) {
   }
   // customer — already exists from the trigger.
   // admin — no role-specific table.
+
+  await logAdminActivity(
+    sb,
+    auth.session,
+    "user_edit",
+    "user",
+    userId,
+    `create:${body.role}${body.role === "admin" && body.adminRole ? `:${body.adminRole}` : ""}`,
+  );
 
   return NextResponse.json({ id: userId, ok: true });
 }

@@ -2,6 +2,8 @@ import { NextResponse, type NextRequest } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabase/server-admin";
 import { isUuid } from "@/lib/supabase/uuid";
 import { requireAdmin } from "@/lib/route-auth";
+import { adminHas, type AdminCapability } from "@/lib/admin-permissions";
+import { logAdminActivity } from "@/lib/admin-activity";
 import { logger } from "@/lib/logger";
 
 const ADMIN_SUB_ROLES = [
@@ -44,6 +46,21 @@ export async function PATCH(
     return NextResponse.json({ error: "تعذر قراءة المستخدم" }, { status: 500 });
   }
   if (!profile) return NextResponse.json({ error: "user not found" }, { status: 404 });
+
+  // Cap depends on the target's role: editing an admin user requires
+  // users.write.admins (super only); editing a customer/nurse/lab user
+  // requires users.write (super, ops, support today).
+  const cap: AdminCapability = profile.role === "admin" ? "users.write.admins" : "users.write";
+  if (!adminHas(auth.session.adminRole, cap)) {
+    logger.warn("admin-cap denied", {
+      route: "api/admin/users/[id]",
+      cap, userId: auth.session.userId, adminRole: auth.session.adminRole,
+    });
+    return NextResponse.json(
+      { error: "لا تملك صلاحية الوصول إلى هذه العملية" },
+      { status: 403 },
+    );
+  }
 
   // Profile-level updates.
   const profilePatch: Record<string, unknown> = {};
@@ -112,6 +129,18 @@ export async function PATCH(
     }
   }
 
+  const changedKeys = [
+    ...Object.keys(body ?? {}).filter((k) => (body as Record<string, unknown>)[k] != null),
+  ];
+  await logAdminActivity(
+    sb,
+    auth.session,
+    "user_edit",
+    "user",
+    id,
+    `update:${profile.role}${changedKeys.length ? `:${changedKeys.join(",")}` : ""}`,
+  );
+
   return NextResponse.json({ ok: true });
 }
 
@@ -131,10 +160,43 @@ export async function DELETE(
   }
 
   const sb = getSupabaseAdmin();
+
+  // Cap depends on the target's role — same rule as PATCH.
+  const { data: targetProfile, error: tpErr } = await sb
+    .from("profiles").select("role").eq("id", id).maybeSingle();
+  if (tpErr) {
+    logger.error("admin/users target lookup failed", { route: "api/admin/users/[id]", id, code: tpErr.code });
+    return NextResponse.json({ error: "تعذر قراءة المستخدم" }, { status: 500 });
+  }
+  if (!targetProfile) {
+    return NextResponse.json({ error: "user not found" }, { status: 404 });
+  }
+  const cap: AdminCapability = targetProfile.role === "admin" ? "users.write.admins" : "users.write";
+  if (!adminHas(auth.session.adminRole, cap)) {
+    logger.warn("admin-cap denied", {
+      route: "api/admin/users/[id]",
+      cap, userId: auth.session.userId, adminRole: auth.session.adminRole,
+    });
+    return NextResponse.json(
+      { error: "لا تملك صلاحية الوصول إلى هذه العملية" },
+      { status: 403 },
+    );
+  }
+
   const { error } = await sb.auth.admin.deleteUser(id);
   if (error) {
     logger.error("admin/users delete failed", { route: "api/admin/users/[id]", id, code: error.code });
     return NextResponse.json({ error: "تعذر حذف المستخدم" }, { status: 500 });
   }
+
+  await logAdminActivity(
+    sb,
+    auth.session,
+    "user_edit",
+    "user",
+    id,
+    `delete:${targetProfile.role}`,
+  );
+
   return NextResponse.json({ ok: true });
 }

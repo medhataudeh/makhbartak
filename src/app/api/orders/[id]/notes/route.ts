@@ -28,6 +28,36 @@ export async function POST(
   }
 
   const sb = getSupabaseAdmin();
+
+  // Ownership pre-flight for non-admin actors. A nurse may only annotate
+  // their own assigned orders; a lab may only annotate orders assigned to
+  // its own lab. Admin is unrestricted.
+  if (auth.session.role === "nurse" || auth.session.role === "lab") {
+    const { data: row, error: rowErr } = await sb
+      .from("orders").select("id, nurse_id, lab_id").eq("id", orderId).maybeSingle();
+    if (rowErr) {
+      return NextResponse.json({ error: "تعذر قراءة الطلب من قاعدة البيانات" }, { status: 500 });
+    }
+    if (!row) {
+      return NextResponse.json({ error: "الطلب غير موجود" }, { status: 404 });
+    }
+    if (auth.session.role === "nurse") {
+      if (!auth.session.nurseId || row.nurse_id !== auth.session.nurseId) {
+        return NextResponse.json(
+          { error: "هذا الطلب غير مخصص لك" },
+          { status: 403 },
+        );
+      }
+    } else {
+      if (!auth.session.labId || row.lab_id !== auth.session.labId) {
+        return NextResponse.json(
+          { error: "لا تملك صلاحية إضافة ملاحظة على هذا الطلب" },
+          { status: 403 },
+        );
+      }
+    }
+  }
+
   const { error: rpcErr } = await sb.rpc("add_order_note_admin", {
     p_order_id: orderId,
     p_text: body.text,

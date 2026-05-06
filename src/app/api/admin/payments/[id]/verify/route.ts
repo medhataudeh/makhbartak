@@ -1,7 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabase/server-admin";
 import { isUuid } from "@/lib/supabase/uuid";
-import { requireAdmin } from "@/lib/route-auth";
+import { requireAdminCap } from "@/lib/route-auth";
 
 // Phase 4.2 — admin verification of a nurse-collected payment.
 // payments.status: paid_by_nurse → verified_by_admin.
@@ -14,7 +14,7 @@ export async function POST(
   if (!isUuid(paymentId)) {
     return NextResponse.json({ error: "payment id must be a uuid" }, { status: 400 });
   }
-  const auth = await requireAdmin();
+  const auth = await requireAdminCap("finance.verify");
   if (!auth.ok) return NextResponse.json({ error: auth.error }, { status: auth.status });
 
   const sb = getSupabaseAdmin();

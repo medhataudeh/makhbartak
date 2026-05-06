@@ -1,7 +1,8 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabase/server-admin";
 import { isUuid } from "@/lib/supabase/uuid";
-import { requireAdmin } from "@/lib/route-auth";
+import { requireAdminCap } from "@/lib/route-auth";
+import { logAdminActivity } from "@/lib/admin-activity";
 
 interface ResetBody {
   password: string;
@@ -15,7 +16,7 @@ export async function POST(
   if (!isUuid(id)) {
     return NextResponse.json({ error: "user id must be a uuid" }, { status: 400 });
   }
-  const auth = await requireAdmin();
+  const auth = await requireAdminCap("users.reset_password");
   if (!auth.ok) return NextResponse.json({ error: auth.error }, { status: auth.status });
   let body: ResetBody;
   try { body = await req.json(); } catch {
@@ -28,5 +29,15 @@ export async function POST(
   const sb = getSupabaseAdmin();
   const { error } = await sb.auth.admin.updateUserById(id, { password: body.password });
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+
+  await logAdminActivity(
+    sb,
+    auth.session,
+    "user_edit",
+    "user",
+    id,
+    "reset_password",
+  );
+
   return NextResponse.json({ ok: true });
 }

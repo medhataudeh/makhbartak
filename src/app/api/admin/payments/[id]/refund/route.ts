@@ -1,7 +1,8 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabase/server-admin";
 import { isUuid } from "@/lib/supabase/uuid";
-import { requireAdmin } from "@/lib/route-auth";
+import { requireAdminCap } from "@/lib/route-auth";
+import { logAdminActivity } from "@/lib/admin-activity";
 
 // Phase 4.2 — admin-initiated refund (full or partial). Atomic via
 // refund_payment_admin: writes wallet refund debit on the original collector,
@@ -19,7 +20,7 @@ export async function POST(
   if (!isUuid(paymentId)) {
     return NextResponse.json({ error: "payment id must be a uuid" }, { status: 400 });
   }
-  const auth = await requireAdmin();
+  const auth = await requireAdminCap("finance.refund");
   if (!auth.ok) return NextResponse.json({ error: auth.error }, { status: auth.status });
 
   let body: RefundBody;
@@ -57,5 +58,15 @@ export async function POST(
     console.error("[api/admin/payments/refund] rpc failed", { paymentId, code: rpcErr.code, message: msg });
     return NextResponse.json({ error: `تعذر تسجيل الاسترجاع: ${msg}` }, { status: 500 });
   }
+
+  await logAdminActivity(
+    sb,
+    auth.session,
+    "invoice_status",
+    "payment",
+    paymentId,
+    `refund:${amount === null ? "full" : amount}:${reason}`,
+  );
+
   return NextResponse.json({ ok: true });
 }

@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabase/server-admin";
-import { requireAdmin } from "@/lib/route-auth";
+import { requireAdminCap } from "@/lib/route-auth";
+import { logAdminActivity } from "@/lib/admin-activity";
 import type { SystemSettings } from "@/lib/types";
 
 // Admin-only PATCH for app_settings. Mirrors the legacy POST at
@@ -29,7 +30,7 @@ const KEY_MAP: Partial<Record<keyof SystemSettings, string>> = {
 };
 
 export async function PATCH(req: NextRequest) {
-  const auth = await requireAdmin();
+  const auth = await requireAdminCap("system.app_settings.write");
   if (!auth.ok) return NextResponse.json({ error: auth.error }, { status: auth.status });
   const body = (await req.json().catch(() => null)) as PatchBody | null;
   if (!body || !body.patch || typeof body.patch !== "object") {
@@ -48,5 +49,15 @@ export async function PATCH(req: NextRequest) {
   const sb = getSupabaseAdmin();
   const { error } = await sb.rpc("update_app_settings_admin", { p_patch: wire });
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+
+  await logAdminActivity(
+    sb,
+    auth.session,
+    "settings_change",
+    "app_settings",
+    "1",
+    `keys:${Object.keys(wire).join(",")}`,
+  );
+
   return NextResponse.json({ ok: true });
 }

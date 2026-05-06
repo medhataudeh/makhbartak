@@ -632,7 +632,18 @@ export interface BrandingConfig {
 }
 
 // Admin types
-export interface SystemSettings {
+
+/**
+ * Public system settings — exposed by /api/system/settings to ALL clients
+ * (customer, nurse, lab, admin, unauthenticated guests). Anything finance-
+ * sensitive, internal, or operational-intelligence-only must NOT live here.
+ *
+ * Splitting this from {@link AdminSystemSettings} is the type-side of the
+ * public/private settings split. The runtime narrowing happens at the API
+ * boundary (/api/system/settings drops admin-only keys); this type makes
+ * the contract explicit so future additions are forced to choose a side.
+ */
+export interface PublicSystemSettings {
   minBookingNoticeMinutes: number;
   morningShiftStart: string;
   morningShiftEnd: string;
@@ -648,21 +659,42 @@ export interface SystemSettings {
    * cells; getShiftConfigs() rejects dates outside that range.
    */
   bookingWindowDays: number;
-  /** Hard cap on confirmed orders per shift per date. 0 = unlimited. */
+  /**
+   * Hard cap on confirmed orders per shift per date. 0 = unlimited.
+   * Kept public deliberately: backend enforces the cap at order creation; the
+   * client value drives the date-picker grey-out as a UX courtesy. Disclosure
+   * risk is negligible.
+   */
   maxOrdersPerShift: number;
   // ─── Phase 3.5 finance preparation (Stripe) ─────────────────────────────
   /** When true, the customer cart will route online payments through Stripe. */
   enableStripe?: boolean;
-  /** Publishable key — safe to ship to the browser. */
+  /** Publishable key — safe to ship to the browser by Stripe's design. */
   stripePublicKey?: string;
   /** "test" or "live" — guards the cart from using a test key in production. */
   stripeMode?: "test" | "live";
+}
+
+/**
+ * Admin system settings — superset of {@link PublicSystemSettings}, served
+ * only by /api/admin/system/settings GET behind requireAdminCap. Carries
+ * fields that operational/finance staff need but customers must never see.
+ */
+export interface AdminSystemSettings extends PublicSystemSettings {
   // ─── Phase 4.1 commission ───────────────────────────────────────────────
   /** Percentage (0–100) of order.total accrued as platform commission when an
    *  order completes. 0 disables the accrual. Persisted as
-   *  app_settings.nurse_commission_percentage. */
+   *  app_settings.nurse_commission_percentage. Finance-sensitive — admin only. */
   nurseCommissionPercentage?: number;
 }
+
+/**
+ * Backward-compat alias. Existing imports of `SystemSettings` resolve to the
+ * admin (full) shape. Public consumers should narrow to
+ * {@link PublicSystemSettings} as a follow-up cleanup; the API boundary is
+ * the load-bearing strictness, not the type alias.
+ */
+export type SystemSettings = AdminSystemSettings;
 
 export interface AdminStats {
   todayOrders: number;

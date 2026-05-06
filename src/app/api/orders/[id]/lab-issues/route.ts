@@ -36,6 +36,32 @@ export async function POST(
   }
 
   const sb = getSupabaseAdmin();
+
+  // Ownership pre-flight: a lab session may only open issues against orders
+  // assigned to its lab. Admin is unrestricted.
+  if (auth.session.role === "lab") {
+    if (!auth.session.labId) {
+      return NextResponse.json(
+        { error: "حساب المختبر غير مكتمل. تواصل مع الإدارة." },
+        { status: 403 },
+      );
+    }
+    const { data: row, error: rowErr } = await sb
+      .from("orders").select("id, lab_id").eq("id", orderId).maybeSingle();
+    if (rowErr) {
+      return NextResponse.json({ error: "تعذر قراءة الطلب من قاعدة البيانات" }, { status: 500 });
+    }
+    if (!row) {
+      return NextResponse.json({ error: "الطلب غير موجود" }, { status: 404 });
+    }
+    if (row.lab_id !== auth.session.labId) {
+      return NextResponse.json(
+        { error: "لا تملك صلاحية فتح مشكلة على هذا الطلب" },
+        { status: 403 },
+      );
+    }
+  }
+
   const { data: issueId, error: rpcErr } = await sb.rpc("open_lab_issue_admin", {
     p_order_id: orderId,
     p_type: body.type,

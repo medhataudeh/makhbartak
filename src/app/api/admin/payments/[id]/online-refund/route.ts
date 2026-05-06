@@ -1,5 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { requireAdmin } from "@/lib/route-auth";
+import { requireAdminCap } from "@/lib/route-auth";
 
 // Phase 4.3 placeholder. Online refund-issuance lives in Phase 4.4 (admin
 // triggers a refund on Stripe → webhook charge.refunded reconciles our
@@ -14,7 +14,7 @@ export async function POST(
   ctx: { params: Promise<{ id: string }> },
 ) {
   await ctx.params;
-  const auth = await requireAdmin();
+  const auth = await requireAdminCap("finance.refund");
   if (!auth.ok) return NextResponse.json({ error: auth.error }, { status: auth.status });
   return NextResponse.json(
     { error: "استرداد الدفع الإلكتروني سيكون عبر مزود الدفع" },

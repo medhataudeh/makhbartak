@@ -2,7 +2,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabase/server-admin";
 import { enrichOrdersWithSignedUrls, fetchOrderById } from "@/lib/supabase/queries/orders";
 import { isUuid } from "@/lib/supabase/uuid";
-import { requireAdmin } from "@/lib/route-auth";
+import { requireAdminCap } from "@/lib/route-auth";
 
 interface CancelBody { reason?: string }
 
@@ -12,7 +12,7 @@ export async function POST(
 ) {
   const { id: orderId } = await ctx.params;
   if (!isUuid(orderId)) return NextResponse.json({ error: "order id must be a uuid" }, { status: 400 });
-  const auth = await requireAdmin();
+  const auth = await requireAdminCap("operations.cancel");
   if (!auth.ok) return NextResponse.json({ error: auth.error }, { status: auth.status });
   let body: CancelBody;
   try { body = await req.json(); } catch {

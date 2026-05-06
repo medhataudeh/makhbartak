@@ -1,7 +1,8 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabase/server-admin";
 import { isUuid } from "@/lib/supabase/uuid";
-import { requireAdmin } from "@/lib/route-auth";
+import { requireAdminCap } from "@/lib/route-auth";
+import { logAdminActivity } from "@/lib/admin-activity";
 
 const ALLOWED = ["pending", "partially_paid", "paid"] as const;
 type Status = (typeof ALLOWED)[number];
@@ -19,7 +20,7 @@ export async function POST(
   if (!isUuid(settlementId)) {
     return NextResponse.json({ error: "settlement id must be a uuid" }, { status: 400 });
   }
-  const auth = await requireAdmin();
+  const auth = await requireAdminCap("finance.settlement.write");
   if (!auth.ok) return NextResponse.json({ error: auth.error }, { status: auth.status });
   let body: SetStatusBody;
   try { body = await req.json(); } catch {
@@ -37,5 +38,15 @@ export async function POST(
     p_total_paid: typeof totalPaid === "number" ? totalPaid : null,
   });
   if (rpcErr) return NextResponse.json({ error: rpcErr.message }, { status: 500 });
+
+  await logAdminActivity(
+    sb,
+    auth.session,
+    "invoice_status",
+    "settlement",
+    settlementId,
+    `status:${status}${typeof totalPaid === "number" ? `:total_paid=${totalPaid}` : ""}`,
+  );
+
   return NextResponse.json({ ok: true });
 }

@@ -25,6 +25,33 @@ export async function POST(
   }
 
   const sb = getSupabaseAdmin();
+
+  // Ownership pre-flight. The RPC takes a bare file id and would happily
+  // archive a file from a different order or a different lab. Refuse here
+  // before any state change.
+  const { data: file, error: fileErr } = await sb
+    .from("lab_result_files")
+    .select("id, order_id, lab_id")
+    .eq("id", fileId)
+    .maybeSingle();
+  if (fileErr) {
+    return NextResponse.json({ error: "تعذر قراءة ملف النتيجة" }, { status: 500 });
+  }
+  if (!file) {
+    return NextResponse.json({ error: "ملف النتيجة غير موجود" }, { status: 404 });
+  }
+  if (file.order_id !== orderId) {
+    return NextResponse.json({ error: "الملف لا يتبع هذا الطلب" }, { status: 400 });
+  }
+  if (auth.session.role === "lab") {
+    if (!auth.session.labId || file.lab_id !== auth.session.labId) {
+      return NextResponse.json(
+        { error: "لا تملك صلاحية أرشفة ملفات هذا الطلب" },
+        { status: 403 },
+      );
+    }
+  }
+
   const { error: rpcErr } = await sb.rpc("archive_result_file_admin", {
     p_file_id: fileId,
     p_actor_role: auth.session.role,

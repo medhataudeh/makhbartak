@@ -2,7 +2,8 @@ import { NextResponse, type NextRequest } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabase/server-admin";
 import { enrichOrdersWithSignedUrls, fetchOrderById } from "@/lib/supabase/queries/orders";
 import { isUuid } from "@/lib/supabase/uuid";
-import { requireAdmin } from "@/lib/route-auth";
+import { requireAdminCap } from "@/lib/route-auth";
+import { logAdminActivity } from "@/lib/admin-activity";
 
 interface ForceCompleteBody { reason: string; allowUnpaid?: boolean }
 
@@ -12,7 +13,7 @@ export async function POST(
 ) {
   const { id: orderId } = await ctx.params;
   if (!isUuid(orderId)) return NextResponse.json({ error: "order id must be a uuid" }, { status: 400 });
-  const auth = await requireAdmin();
+  const auth = await requireAdminCap("operations.force_complete");
   if (!auth.ok) return NextResponse.json({ error: auth.error }, { status: auth.status });
   let body: ForceCompleteBody;
   try { body = await req.json(); } catch {
@@ -40,6 +41,15 @@ export async function POST(
     if (isBusiness) return NextResponse.json({ error: msg }, { status: 409 });
     return NextResponse.json({ error: msg }, { status: 500 });
   }
+
+  await logAdminActivity(
+    sb,
+    auth.session,
+    "order_update",
+    "order",
+    orderId,
+    `force_complete:${body.reason}${body.allowUnpaid ? " [unpaid]" : ""}`,
+  );
 
   const hydrated = await fetchOrderById(sb, orderId);
   const [enriched] = hydrated ? await enrichOrdersWithSignedUrls(sb, [hydrated]) : [null];

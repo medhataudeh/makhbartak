@@ -1,7 +1,8 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabase/server-admin";
 import { isUuid } from "@/lib/supabase/uuid";
-import { requireAdmin } from "@/lib/route-auth";
+import { requireAdminCap } from "@/lib/route-auth";
+import { logAdminActivity } from "@/lib/admin-activity";
 import { logger } from "@/lib/logger";
 
 // Phase 5.2 — admin CRUD for lab_payout_rules.
@@ -19,7 +20,9 @@ interface UpsertBody {
 }
 
 export async function GET() {
-  const auth = await requireAdmin();
+  // Lab-scoped finance read; lab_admin holds finance.read.labs and so do
+  // super_admin / finance_admin / operations_admin.
+  const auth = await requireAdminCap("finance.read.labs");
   if (!auth.ok) return NextResponse.json({ error: auth.error }, { status: auth.status });
   const sb = getSupabaseAdmin();
   const { data, error } = await sb
@@ -66,7 +69,7 @@ export async function GET() {
 }
 
 export async function POST(req: NextRequest) {
-  const auth = await requireAdmin();
+  const auth = await requireAdminCap("finance.payout_rules");
   if (!auth.ok) return NextResponse.json({ error: auth.error }, { status: auth.status });
 
   let body: UpsertBody;
@@ -110,6 +113,14 @@ export async function POST(req: NextRequest) {
       logger.error("lab-payout-rules update failed", { route: "api/admin/lab-payout-rules", code: error.code });
       return NextResponse.json({ error: "تعذر تحديث القاعدة" }, { status: 500 });
     }
+    await logAdminActivity(
+      sb,
+      auth.session,
+      "settings_change",
+      "lab_payout_rule",
+      existing.id,
+      `update:${body.labId}:${body.labTestId ?? "default"}:${body.payoutType}=${v}`,
+    );
     return NextResponse.json({ ok: true, id: existing.id });
   }
 
@@ -129,11 +140,21 @@ export async function POST(req: NextRequest) {
     logger.error("lab-payout-rules insert failed", { route: "api/admin/lab-payout-rules", code: error.code });
     return NextResponse.json({ error: "تعذر إنشاء القاعدة" }, { status: 500 });
   }
+
+  await logAdminActivity(
+    sb,
+    auth.session,
+    "settings_change",
+    "lab_payout_rule",
+    inserted.id,
+    `create:${body.labId}:${body.labTestId ?? "default"}:${body.payoutType}=${v}`,
+  );
+
   return NextResponse.json({ ok: true, id: inserted.id });
 }
 
 export async function DELETE(req: NextRequest) {
-  const auth = await requireAdmin();
+  const auth = await requireAdminCap("finance.payout_rules");
   if (!auth.ok) return NextResponse.json({ error: auth.error }, { status: auth.status });
   const url = new URL(req.url);
   const id = url.searchParams.get("id");
@@ -144,5 +165,15 @@ export async function DELETE(req: NextRequest) {
     logger.error("lab-payout-rules delete failed", { route: "api/admin/lab-payout-rules", code: error.code });
     return NextResponse.json({ error: "تعذر حذف القاعدة" }, { status: 500 });
   }
+
+  await logAdminActivity(
+    sb,
+    auth.session,
+    "settings_change",
+    "lab_payout_rule",
+    id,
+    "delete",
+  );
+
   return NextResponse.json({ ok: true });
 }

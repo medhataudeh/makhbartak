@@ -15,6 +15,7 @@ import {
   NURSE_LEVELS, NURSE_BADGES, GAMIFICATION_CONFIG, canAccess,
 } from "@/lib/mock-data";
 import { ROLE_LABELS, ACTIVITY_LABELS } from "@/lib/types";
+import { adminHas } from "@/lib/admin-permissions";
 import type {
   AdminUser, AdminRole, Order,
   Test, Package, Coupon, Nurse, SliderItem, SvgIcon, Notification,
@@ -1056,6 +1057,8 @@ function UserProfilePanel({ user, orders, onBack }: {
 // save button while in flight.
 function UserProfileForm({ user }: { user: { id: string; profileId: string; name: string; phone: string; isActive: boolean } }) {
   const toast = useToast();
+  const me = useCurrentAdmin();
+  const canWrite = adminHas(me.role, "users.write");
   const [name, setName] = useState(user.name);
   const [phone, setPhone] = useState(user.phone);
   const [isActive, setIsActive] = useState(user.isActive);
@@ -1080,22 +1083,34 @@ function UserProfileForm({ user }: { user: { id: string; profileId: string; name
 
   return (
     <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+      {!canWrite && (
+        <p className="md:col-span-2 text-xs text-gray-500 bg-gray-50 border border-gray-100 rounded-lg px-3 py-2">
+          البيانات معروضة للقراءة فقط ضمن صلاحياتك الحالية.
+        </p>
+      )}
       <Field label="ID"><TextInput value={user.id} disabled /></Field>
-      <Field label="الاسم"><TextInput value={name} onChange={(e) => setName(e.target.value)} /></Field>
-      <Field label="الهاتف"><TextInput type="tel" value={phone} onChange={(e) => setPhone(e.target.value)} /></Field>
+      <Field label="الاسم">
+        <TextInput value={name} onChange={(e) => setName(e.target.value)} disabled={!canWrite} />
+      </Field>
+      <Field label="الهاتف">
+        <TextInput type="tel" value={phone} onChange={(e) => setPhone(e.target.value)} disabled={!canWrite} />
+      </Field>
       <Field label="حالة الحساب">
         <select
           value={isActive ? "active" : "blocked"}
           onChange={(e) => setIsActive(e.target.value === "active")}
-          className="w-full h-10 px-3 rounded-xl border border-gray-200 text-sm cursor-pointer"
+          disabled={!canWrite}
+          className="w-full h-10 px-3 rounded-xl border border-gray-200 text-sm cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed"
         >
           <option value="active">نشط</option>
           <option value="blocked">موقوف</option>
         </select>
       </Field>
-      <div className="md:col-span-2 flex justify-end">
-        <Button size="md" loading={saving} disabled={!dirty || saving} onClick={save}>حفظ</Button>
-      </div>
+      {canWrite && (
+        <div className="md:col-span-2 flex justify-end">
+          <Button size="md" loading={saving} disabled={!dirty || saving} onClick={save}>حفظ</Button>
+        </div>
+      )}
     </div>
   );
 }
@@ -2866,6 +2881,9 @@ function SettingsAdmin() {
   const me = useCurrentAdmin();
   const toast = useToast();
   const live = useSystemSettings();
+  // F7: app-settings PATCH is super_admin-only at the API. Render the screen
+  // read-only for any other role so the form doesn't invite saves that 403.
+  const canWrite = adminHas(me.role, "system.app_settings.write");
   // Draft mirrors the live store; controlled inputs write here, "حفظ" persists
   // through updateSystemSettings(). The cash-orders toggle stays live (no
   // draft) so the workflow rule reflects immediately.
@@ -2954,7 +2972,12 @@ function SettingsAdmin() {
   const removeCity = (c: string) => set("supportedCities", draft.supportedCities.filter((x) => x !== c));
 
   return (
-    <div className="space-y-4">
+    <fieldset disabled={!canWrite} className="space-y-4 min-w-0">
+      {!canWrite && (
+        <p className="text-xs text-gray-500 bg-gray-50 border border-gray-100 rounded-lg px-3 py-2">
+          الإعدادات معروضة للقراءة فقط ضمن صلاحياتك الحالية.
+        </p>
+      )}
       <Section title="إعدادات النظام">
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <Field label="الحد الأدنى للحجز (دقائق)">
@@ -3169,11 +3192,13 @@ function SettingsAdmin() {
 
       <div className="flex items-center justify-end gap-3">
         {savedAt && !dirty && <span className="text-xs text-emerald-600">تم الحفظ {savedAt}</span>}
-        <Button size="md" loading={saving} disabled={!dirty} onClick={save}>
-          حفظ الإعدادات
-        </Button>
+        {canWrite && (
+          <Button size="md" loading={saving} disabled={!dirty} onClick={save}>
+            حفظ الإعدادات
+          </Button>
+        )}
       </div>
-    </div>
+    </fieldset>
   );
 }
 

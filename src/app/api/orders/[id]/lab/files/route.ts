@@ -3,6 +3,7 @@ import { getSupabaseAdmin } from "@/lib/supabase/server-admin";
 import { enrichOrdersWithSignedUrls, fetchOrderById } from "@/lib/supabase/queries/orders";
 import { isUuid } from "@/lib/supabase/uuid";
 import { requireAuthedUser } from "@/lib/route-auth";
+import { detectImageOrPdf } from "@/lib/payments/magic-bytes";
 
 const MAX_BYTES = 25 * 1024 * 1024; // 25MB
 
@@ -35,11 +36,16 @@ export async function POST(
   if (file.size > MAX_BYTES) {
     return NextResponse.json({ error: "file exceeds 25MB cap" }, { status: 413 });
   }
-  if (file.type && file.type !== "application/pdf") {
-    return NextResponse.json({ error: "only application/pdf is accepted" }, { status: 415 });
-  }
   if (replacesFileId && !isUuid(replacesFileId)) {
     return NextResponse.json({ error: "replacesFileId must be a uuid" }, { status: 400 });
+  }
+
+  // Magic-byte sniff. The browser-supplied Content-Type is spoofable; only
+  // a real PDF header (%PDF) is acceptable for the lab-results bucket.
+  const buf = Buffer.from(await file.arrayBuffer());
+  const detected = detectImageOrPdf(buf);
+  if (detected !== "pdf") {
+    return NextResponse.json({ error: "only application/pdf is accepted" }, { status: 415 });
   }
 
   const sb = getSupabaseAdmin();
@@ -58,11 +64,36 @@ export async function POST(
     }
   }
 
+  // When replacing, the predecessor must belong to this same order. For lab
+  // sessions it must also belong to the caller's lab — otherwise a lab user
+  // could archive another lab's file by passing its uuid as replacesFileId.
+  if (replacesFileId) {
+    const { data: predecessor, error: predErr } = await sb
+      .from("lab_result_files")
+      .select("id, order_id, lab_id, status")
+      .eq("id", replacesFileId)
+      .maybeSingle();
+    if (predErr) {
+      return NextResponse.json({ error: "تعذر قراءة الملف السابق" }, { status: 500 });
+    }
+    if (!predecessor) {
+      return NextResponse.json({ error: "الملف السابق غير موجود" }, { status: 404 });
+    }
+    if (predecessor.order_id !== orderId) {
+      return NextResponse.json({ error: "الملف السابق لا يتبع هذا الطلب" }, { status: 400 });
+    }
+    if (auth.session.role === "lab" && predecessor.lab_id !== auth.session.labId) {
+      return NextResponse.json(
+        { error: "لا تملك صلاحية استبدال هذا الملف" },
+        { status: 403 },
+      );
+    }
+  }
+
   const safeName = (fileName ?? file.name).replace(/[^A-Za-z0-9._؀-ۿ-]/g, "_");
   const rand = Math.random().toString(36).slice(2, 10);
   const storagePath = `${orderId}/${rand}-${safeName}`;
 
-  const buf = Buffer.from(await file.arrayBuffer());
   const { error: uploadErr } = await sb.storage
     .from("lab-results")
     .upload(storagePath, buf, { contentType: "application/pdf", upsert: false });

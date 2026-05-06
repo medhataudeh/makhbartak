@@ -30,6 +30,31 @@ export async function POST(
   }
 
   const sb = getSupabaseAdmin();
+
+  // Ownership pre-flight: a nurse may only verify the patient on their own
+  // assigned order. The route also back-fills patients.national_id below,
+  // so without this check a nurse could mutate another nurse's patient
+  // record. Admin is unrestricted.
+  if (auth.session.role === "nurse") {
+    if (!auth.session.nurseId) {
+      return NextResponse.json(
+        { error: "حساب الممرض غير مكتمل. تواصل مع الإدارة." },
+        { status: 403 },
+      );
+    }
+    const { data: row, error: rowErr } = await sb
+      .from("orders").select("id, nurse_id").eq("id", orderId).maybeSingle();
+    if (rowErr) {
+      return NextResponse.json({ error: "تعذر قراءة الطلب من قاعدة البيانات" }, { status: 500 });
+    }
+    if (!row) {
+      return NextResponse.json({ error: "الطلب غير موجود" }, { status: 404 });
+    }
+    if (row.nurse_id !== auth.session.nurseId) {
+      return NextResponse.json({ error: "هذا الطلب غير مخصص لك" }, { status: 403 });
+    }
+  }
+
   const { error: rpcErr } = await sb.rpc("verify_patient_admin", {
     p_order_id: orderId,
     p_official_name: body.officialName,

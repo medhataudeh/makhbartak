@@ -1,7 +1,9 @@
 import "server-only";
 import { getSupabaseServer } from "@/lib/supabase/server";
 import { getSupabaseAdmin } from "@/lib/supabase/server-admin";
+import { logger } from "@/lib/logger";
 import type { Role } from "@/lib/types";
+import { adminHas, type AdminCapability } from "@/lib/admin-permissions";
 
 // Phase 8.1: single source of truth for "who is calling this route?"
 // Reads the JWT from cookies, returns the enriched session shape every
@@ -167,4 +169,67 @@ export async function requireNurseSelfOrAdmin(nurseId: string): Promise<RouteAut
   if (r.session.role === "admin") return r;
   if (r.session.role === "nurse" && r.session.nurseId === nurseId) return r;
   return { ok: false, status: 403, error: "not authorized for this nurse" };
+}
+
+// F7 — admin sub-role capability gate.
+//
+// Routes that today call `requireAdmin()` will progressively migrate to
+// `requireAdminCap("<cap>")`. The capability matrix lives in
+// `admin-permissions.ts` so an audit of "what can finance_admin do?" is a
+// single-file read.
+//
+// Enforcement contract:
+//   * Production (`NODE_ENV === "production"`) ALWAYS enforces. The
+//     `ADMIN_CAPS_MODE` env var is ignored in production.
+//   * Outside production, `ADMIN_CAPS_MODE=warn` lets unmatched callers
+//     through and emits a structured warning log instead of a 403. This
+//     is for staged rollouts in staging/dev only.
+//   * Even in warn-mode, the caps in ALWAYS_ENFORCE always 403 — these
+//     are finance/auth-critical surfaces where logging-only is too risky.
+const ADMIN_CAPS_MODE: "warn" | "enforce" =
+  process.env.NODE_ENV === "production"
+    ? "enforce"
+    : process.env.ADMIN_CAPS_MODE === "warn"
+      ? "warn"
+      : "enforce";
+
+const ALWAYS_ENFORCE: ReadonlySet<AdminCapability> = new Set<AdminCapability>([
+  "finance.refund",
+  "operations.force_complete",
+  "users.write",
+  "users.write.admins",
+  "users.reset_password",
+  "system.app_settings.write",
+]);
+
+export async function requireAdminCap(cap: AdminCapability): Promise<RouteAuthResult> {
+  const r = await requireAdmin();
+  if (!r.ok) return r;
+  if (adminHas(r.session.adminRole, cap)) return r;
+
+  const enforce = ADMIN_CAPS_MODE === "enforce" || ALWAYS_ENFORCE.has(cap);
+  if (enforce) {
+    logger.warn("admin-cap denied", {
+      route: "admin-caps",
+      cap,
+      userId: r.session.userId,
+      adminRole: r.session.adminRole,
+    });
+    return {
+      ok: false,
+      status: 403,
+      error: "لا تملك صلاحية الوصول إلى هذه العملية",
+    };
+  }
+
+  // Non-production warn-mode: allow but log. Never reachable in production
+  // because ADMIN_CAPS_MODE is forced to "enforce" above.
+  logger.warn("admin-cap would-deny (warn-mode)", {
+    route: "admin-caps",
+    cap,
+    userId: r.session.userId,
+    adminRole: r.session.adminRole,
+    mode: "warn",
+  });
+  return r;
 }

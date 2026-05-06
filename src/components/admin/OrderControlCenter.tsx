@@ -12,6 +12,7 @@ import type {
   AdminRole, OrderNote, LabIssueType,
 } from "@/lib/types";
 import { ROLE_PERMISSIONS } from "@/lib/types";
+import { adminHas, type AdminCapability } from "@/lib/admin-permissions";
 import { FAILED_COLLECTION_REASONS, LAB_ISSUE_REASONS } from "@/lib/mock-data";
 import { formatDate, formatPrice, getShiftLabel, relativeTime } from "@/lib/utils";
 import { StatusBadge } from "@/components/ui/StatusBadge";
@@ -78,6 +79,13 @@ function canEditPricing(role: ControlCenterRole["role"]): boolean {
   if (role === "lab_user") return false;
   const perms = ROLE_PERMISSIONS[role as AdminRole] ?? [];
   return perms.includes("*") || perms.includes("invoices") || perms.includes("orders");
+}
+
+// Capability gate for buttons whose backend route is now sub-role enforced.
+// Lab users always fail; everything else delegates to the canonical matrix.
+function hasCap(role: ControlCenterRole["role"], cap: AdminCapability): boolean {
+  if (role === "lab_user") return false;
+  return adminHas(role, cap);
 }
 
 const TAB_META: Record<Tab, { labelAr: string; Icon: React.FC<{ size?: number; className?: string }> }> = {
@@ -220,16 +228,18 @@ function StickyHeader({ order, role, onClose, onOpenUser }: {
                         setActionsOpen(false);
                       }
                     }} />
-                    <ActionItem icon={Tag} label="تطبيق/إزالة كوبون" onClick={async () => {
-                      const code = window.prompt("كود الكوبون (فارغ للإزالة):", order.couponCode ?? "");
-                      if (code !== null) {
-                        const disc = code ? Number(window.prompt("قيمة الخصم:", String(order.couponDiscount || 0)) || 0) : 0;
-                        const r = await applyCoupon(order.id, code, disc, ref);
-                        if (!r.ok) toast.error(r.error ?? "تعذر تحديث الكوبون");
-                        else record(role, "coupon_change", "order", order.id, code ? `${code} -${disc}` : "إزالة الكوبون");
-                        setActionsOpen(false);
-                      }
-                    }} />
+                    {hasCap(role.role, "finance.coupon") && (
+                      <ActionItem icon={Tag} label="تطبيق/إزالة كوبون" onClick={async () => {
+                        const code = window.prompt("كود الكوبون (فارغ للإزالة):", order.couponCode ?? "");
+                        if (code !== null) {
+                          const disc = code ? Number(window.prompt("قيمة الخصم:", String(order.couponDiscount || 0)) || 0) : 0;
+                          const r = await applyCoupon(order.id, code, disc, ref);
+                          if (!r.ok) toast.error(r.error ?? "تعذر تحديث الكوبون");
+                          else record(role, "coupon_change", "order", order.id, code ? `${code} -${disc}` : "إزالة الكوبون");
+                          setActionsOpen(false);
+                        }
+                      }} />
+                    )}
                     <ActionItem icon={CreditCard} label="تغيير حالة الدفع" onClick={async () => {
                       // Phase 4.1.1: 'paid' transitions go through the cash-payment
                       // RPC (separate menu item below). This route handles the
@@ -261,15 +271,17 @@ function StickyHeader({ order, role, onClose, onOpenUser }: {
                   <>
                     <hr className="my-1 border-gray-100" />
                     <ActionItem icon={Download} label="عرض/تنزيل الفاتورة" onClick={() => { window.print(); setActionsOpen(false); }} />
-                    <ActionItem icon={X} label="إلغاء الطلب" danger onClick={async () => {
-                      const reason = window.prompt("سبب الإلغاء:", "");
-                      if (reason !== null) {
-                        const r = await cancelOrder(order.id, ref, reason || undefined);
-                        if (!r.ok) toast.error(r.error ?? "تعذر إلغاء الطلب");
-                        else record(role, "order_update", "order", order.id, `إلغاء الطلب${reason ? ` — ${reason}` : ""}`);
-                        setActionsOpen(false);
-                      }
-                    }} />
+                    {hasCap(role.role, "operations.cancel") && (
+                      <ActionItem icon={X} label="إلغاء الطلب" danger onClick={async () => {
+                        const reason = window.prompt("سبب الإلغاء:", "");
+                        if (reason !== null) {
+                          const r = await cancelOrder(order.id, ref, reason || undefined);
+                          if (!r.ok) toast.error(r.error ?? "تعذر إلغاء الطلب");
+                          else record(role, "order_update", "order", order.id, `إلغاء الطلب${reason ? ` — ${reason}` : ""}`);
+                          setActionsOpen(false);
+                        }
+                      }} />
+                    )}
                   </>
                 )}
               </div>
@@ -676,18 +688,20 @@ function OperationsTab({ order, role, nurses, labs, ref }: {
               <CheckCircle2 size={14} aria-hidden="true" />
               تأكيد إرسال النتائج (إكمال الطلب)
             </Button>
-            <Button
-              size="sm" variant="ghost"
-              onClick={async () => {
-                const reason = window.prompt("سبب الإغلاق دون نتائج (مطلوب):", "");
-                if (reason && reason.trim()) {
-                  const r = await forceCompleteOrder(order.id, ref, reason.trim());
-                  if (!r.ok) toast.error(r.error ?? "تعذر إغلاق الطلب");
-                }
-              }}
-            >
-              إغلاق دون نتائج
-            </Button>
+            {hasCap(role.role, "operations.force_complete") && (
+              <Button
+                size="sm" variant="ghost"
+                onClick={async () => {
+                  const reason = window.prompt("سبب الإغلاق دون نتائج (مطلوب):", "");
+                  if (reason && reason.trim()) {
+                    const r = await forceCompleteOrder(order.id, ref, reason.trim());
+                    if (!r.ok) toast.error(r.error ?? "تعذر إغلاق الطلب");
+                  }
+                }}
+              >
+                إغلاق دون نتائج
+              </Button>
+            )}
           </div>
         )}
       </Card>
@@ -889,30 +903,34 @@ function FinanceTab({ order, role, ref }: {
                 admin_record_cash_payment which writes the paid payments row
                 + (if a nurse is assigned) wallet credit + history in one
                 transaction. Online and already-paid orders disable. */}
-            <Button
-              size="sm"
-              variant="outline"
-              disabled={order.paymentMethod !== "cash" || order.paymentStatus === "paid"}
-              onClick={async () => {
-                const note = window.prompt("ملاحظة (اختياري):", "تحصيل في المكتب") ?? undefined;
-                const r = await recordAdminCashPayment(order.id, ref, note?.trim() || undefined);
-                if (!r.ok) toast.error(r.error ?? "تعذر تسجيل التحصيل");
-                else toast.success("تم تسجيل التحصيل النقدي");
-              }}
-            >تسجيل تحصيل نقدي</Button>
-            <Button
-              size="sm"
-              variant="outline"
-              disabled={order.paymentStatus !== "paid"}
-              onClick={async () => {
-                const reason = window.prompt("سبب الاسترداد:", "");
-                if (reason === null) return;
-                const r = await setPaymentStatus(order.id, "refunded", ref);
-                if (!r.ok) toast.error(r.error ?? "تعذر استرداد الدفع");
-                else toast.success("تم تسجيل الاسترداد");
-                void reason;
-              }}
-            >استرداد الدفع</Button>
+            {hasCap(role.role, "finance.cash") && (
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={order.paymentMethod !== "cash" || order.paymentStatus === "paid"}
+                onClick={async () => {
+                  const note = window.prompt("ملاحظة (اختياري):", "تحصيل في المكتب") ?? undefined;
+                  const r = await recordAdminCashPayment(order.id, ref, note?.trim() || undefined);
+                  if (!r.ok) toast.error(r.error ?? "تعذر تسجيل التحصيل");
+                  else toast.success("تم تسجيل التحصيل النقدي");
+                }}
+              >تسجيل تحصيل نقدي</Button>
+            )}
+            {hasCap(role.role, "finance.refund") && (
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={order.paymentStatus !== "paid"}
+                onClick={async () => {
+                  const reason = window.prompt("سبب الاسترداد:", "");
+                  if (reason === null) return;
+                  const r = await setPaymentStatus(order.id, "refunded", ref);
+                  if (!r.ok) toast.error(r.error ?? "تعذر استرداد الدفع");
+                  else toast.success("تم تسجيل الاسترداد");
+                  void reason;
+                }}
+              >استرداد الدفع</Button>
+            )}
             <Button size="sm" variant="outline" onClick={() => window.print()}>
               <Download size={13} aria-hidden="true" /> الفاتورة
             </Button>
