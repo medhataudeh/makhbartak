@@ -66,9 +66,12 @@ interface StripeEventEnvelope {
   data: { object: IntentObject | ChargeObject };
 }
 
-const RETRYABLE_RESULTS = new Set([
-  "received", "confirm_error", "failed_error", "refund_error",
-]);
+// Tags that signal the webhook should re-run its side effect on the next
+// Stripe redelivery: "received" (insert succeeded but no result yet) and
+// the three "*_error" forms (confirm_error / failed_error / refund_error).
+// We only check membership of TERMINAL_RESULTS below; anything outside
+// that set is implicitly retryable. The retryable set lives in the comment
+// here to keep the documentation co-located with the dedup branch.
 const TERMINAL_RESULTS = new Set([
   "processed", "confirmed", "failed", "refunded", "ignored", "no_match", "duplicate",
 ]);
@@ -261,5 +264,3 @@ export async function POST(req: NextRequest) {
   });
   return NextResponse.json({ received: true, result: "ignored" });
 }
-// Suppress unused warning if a future tag list is referenced elsewhere.
-void RETRYABLE_RESULTS;

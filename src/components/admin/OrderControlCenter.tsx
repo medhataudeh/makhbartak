@@ -17,6 +17,7 @@ import { FAILED_COLLECTION_REASONS, LAB_ISSUE_REASONS } from "@/lib/mock-data";
 import { formatDate, formatPrice, getShiftLabel, relativeTime } from "@/lib/utils";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { Button } from "@/components/ui/Button";
+import { BottomSheet } from "@/components/ui/BottomSheet";
 import {
   setOrderStatus, assignNurse, assignLab, applyCoupon, setPaymentStatus, recordAdminCashPayment,
   uploadResultFile, archiveResultFile, restoreResultFile, openLabIssue, resolveLabIssue,
@@ -164,6 +165,7 @@ function StickyHeader({ order, role, onClose, onOpenUser }: {
   onOpenUser?: (userId: string) => void;
 }) {
   const [actionsOpen, setActionsOpen] = useState(false);
+  const [cancelOpen, setCancelOpen] = useState(false);
   const ref = { actor: role.actor, actorName: role.actorName };
   const isLab = role.role === "lab_user";
   const toast = useToast();
@@ -272,14 +274,9 @@ function StickyHeader({ order, role, onClose, onOpenUser }: {
                     <hr className="my-1 border-gray-100" />
                     <ActionItem icon={Download} label="عرض/تنزيل الفاتورة" onClick={() => { window.print(); setActionsOpen(false); }} />
                     {hasCap(role.role, "operations.cancel") && (
-                      <ActionItem icon={X} label="إلغاء الطلب" danger onClick={async () => {
-                        const reason = window.prompt("سبب الإلغاء:", "");
-                        if (reason !== null) {
-                          const r = await cancelOrder(order.id, ref, reason || undefined);
-                          if (!r.ok) toast.error(r.error ?? "تعذر إلغاء الطلب");
-                          else record(role, "order_update", "order", order.id, `إلغاء الطلب${reason ? ` — ${reason}` : ""}`);
-                          setActionsOpen(false);
-                        }
+                      <ActionItem icon={X} label="إلغاء الطلب" danger onClick={() => {
+                        setActionsOpen(false);
+                        setCancelOpen(true);
                       }} />
                     )}
                   </>
@@ -292,6 +289,20 @@ function StickyHeader({ order, role, onClose, onOpenUser }: {
           </button>
         </div>
       </div>
+      <ReasonSheet
+        open={cancelOpen}
+        title="إلغاء الطلب"
+        placeholder="سبب الإلغاء (اختياري)"
+        confirmLabel="تأكيد الإلغاء"
+        variant="danger"
+        onCancel={() => setCancelOpen(false)}
+        onConfirm={async (reason) => {
+          setCancelOpen(false);
+          const r = await cancelOrder(order.id, ref, reason || undefined);
+          if (!r.ok) toast.error(r.error ?? "تعذر إلغاء الطلب");
+          else record(role, "order_update", "order", order.id, `إلغاء الطلب${reason ? ` — ${reason}` : ""}`);
+        }}
+      />
     </header>
   );
 }
@@ -365,6 +376,87 @@ function ActionItem({ icon: Icon, label, onClick, danger }: {
       <Icon size={14} className={danger ? "text-red-500" : "text-gray-400"} />
       {label}
     </button>
+  );
+}
+
+// ─── ReasonSheet ─────────────────────────────────────────────────────────────
+// U3.A: typed BottomSheet replacement for the legacy `window.prompt` flows
+// that collect a free-text reason before invoking a mutator. Reuses the
+// existing BottomSheet primitive — no new modal framework. Each callsite
+// owns its own `open` state and decides whether `required` matches the
+// previous prompt's behaviour:
+//   * cancel reason          — optional (cancelOrder accepts undefined)
+//   * force-complete reason  — required (force_complete_order_admin RPC
+//                              raises without a non-empty reason)
+//   * refund reason          — optional + currently discarded by the
+//                              mutator (preserved exactly: setPaymentStatus
+//                              has no reason argument; reason is captured
+//                              for UX consistency with the prior prompt)
+function ReasonSheet({
+  open,
+  title,
+  placeholder,
+  required = false,
+  confirmLabel = "تأكيد",
+  cancelLabel = "إلغاء",
+  initialValue = "",
+  variant = "primary",
+  onConfirm,
+  onCancel,
+}: {
+  open: boolean;
+  title: string;
+  placeholder: string;
+  required?: boolean;
+  confirmLabel?: string;
+  cancelLabel?: string;
+  initialValue?: string;
+  variant?: "primary" | "danger";
+  onConfirm: (reason: string) => void;
+  onCancel: () => void;
+}) {
+  const [value, setValue] = useState(initialValue);
+  // Render-time state-sync: reset on every false → true transition so a
+  // stale value from the prior session isn't sticky. Same pattern used by
+  // CommissionField / StripeKeyField in this file's siblings — avoids the
+  // useEffect+setState pattern that React 19 flags via
+  // `react-hooks/set-state-in-effect`.
+  const [wasOpen, setWasOpen] = useState(open);
+  if (wasOpen !== open) {
+    setWasOpen(open);
+    if (open) setValue(initialValue);
+  }
+
+  const trimmed = value.trim();
+  const canSubmit = required ? trimmed.length > 0 : true;
+
+  return (
+    <BottomSheet open={open} onClose={onCancel} title={title}>
+      <div className="space-y-3 px-4 pb-4">
+        <textarea
+          value={value}
+          onChange={(e) => setValue(e.target.value)}
+          rows={4}
+          placeholder={placeholder}
+          className="w-full p-3 rounded-xl border border-gray-200 text-sm resize-none focus:border-[#0891B2] outline-none"
+          aria-label={title}
+          autoFocus
+        />
+        <div className="flex items-center justify-end gap-2">
+          <Button size="sm" variant="ghost" onClick={onCancel}>
+            {cancelLabel}
+          </Button>
+          <Button
+            size="sm"
+            variant={variant === "danger" ? "danger" : "primary"}
+            disabled={!canSubmit}
+            onClick={() => onConfirm(trimmed)}
+          >
+            {confirmLabel}
+          </Button>
+        </div>
+      </div>
+    </BottomSheet>
   );
 }
 
@@ -558,6 +650,7 @@ function OperationsTab({ order, role, nurses, labs, ref }: {
   const allFiles = order.resultFiles ?? [];
   const activeFiles = allFiles.filter((f) => f.isActive);
   const archivedFiles = allFiles.filter((f) => !f.isActive);
+  const [forceCompleteOpen, setForceCompleteOpen] = useState(false);
 
 
   return (
@@ -691,13 +784,7 @@ function OperationsTab({ order, role, nurses, labs, ref }: {
             {hasCap(role.role, "operations.force_complete") && (
               <Button
                 size="sm" variant="ghost"
-                onClick={async () => {
-                  const reason = window.prompt("سبب الإغلاق دون نتائج (مطلوب):", "");
-                  if (reason && reason.trim()) {
-                    const r = await forceCompleteOrder(order.id, ref, reason.trim());
-                    if (!r.ok) toast.error(r.error ?? "تعذر إغلاق الطلب");
-                  }
-                }}
+                onClick={() => setForceCompleteOpen(true)}
               >
                 إغلاق دون نتائج
               </Button>
@@ -726,6 +813,21 @@ function OperationsTab({ order, role, nurses, labs, ref }: {
           </ol>
         </Card>
       )}
+
+      <ReasonSheet
+        open={forceCompleteOpen}
+        title="إغلاق دون نتائج"
+        placeholder="سبب الإغلاق دون نتائج (مطلوب)"
+        required
+        confirmLabel="إغلاق الطلب"
+        variant="danger"
+        onCancel={() => setForceCompleteOpen(false)}
+        onConfirm={async (reason) => {
+          setForceCompleteOpen(false);
+          const r = await forceCompleteOrder(order.id, ref, reason);
+          if (!r.ok) toast.error(r.error ?? "تعذر إغلاق الطلب");
+        }}
+      />
     </div>
   );
 }
@@ -886,6 +988,7 @@ function FinanceTab({ order, role, ref }: {
 }) {
   const toast = useToast();
   const editable = canEditPricing(role.role);
+  const [refundOpen, setRefundOpen] = useState(false);
   return (
     <div className="space-y-3">
       <Card title="الملخص المالي" icon={<DollarSign size={14} aria-hidden="true" />}>
@@ -921,14 +1024,7 @@ function FinanceTab({ order, role, ref }: {
                 size="sm"
                 variant="outline"
                 disabled={order.paymentStatus !== "paid"}
-                onClick={async () => {
-                  const reason = window.prompt("سبب الاسترداد:", "");
-                  if (reason === null) return;
-                  const r = await setPaymentStatus(order.id, "refunded", ref);
-                  if (!r.ok) toast.error(r.error ?? "تعذر استرداد الدفع");
-                  else toast.success("تم تسجيل الاسترداد");
-                  void reason;
-                }}
+                onClick={() => setRefundOpen(true)}
               >استرداد الدفع</Button>
             )}
             <Button size="sm" variant="outline" onClick={() => window.print()}>
@@ -937,6 +1033,26 @@ function FinanceTab({ order, role, ref }: {
           </div>
         </Card>
       )}
+
+      <ReasonSheet
+        open={refundOpen}
+        title="استرداد الدفع"
+        placeholder="سبب الاسترداد (اختياري — للسجل فقط)"
+        confirmLabel="تأكيد الاسترداد"
+        variant="danger"
+        onCancel={() => setRefundOpen(false)}
+        onConfirm={async (_reason) => {
+          // Reason is collected for UX consistency with the prior prompt
+          // but is intentionally not forwarded — setPaymentStatus has no
+          // reason argument and the underlying RPC doesn't accept one
+          // either. Same payload as today.
+          void _reason;
+          setRefundOpen(false);
+          const r = await setPaymentStatus(order.id, "refunded", ref);
+          if (!r.ok) toast.error(r.error ?? "تعذر استرداد الدفع");
+          else toast.success("تم تسجيل الاسترداد");
+        }}
+      />
     </div>
   );
 }

@@ -49,7 +49,7 @@ export function BottomSheet({ open, onClose, title, children }: BottomSheetProps
             animate={{ y: 0 }}
             exit={{ y: "100%" }}
             transition={{ type: "spring", damping: 32, stiffness: 320, mass: 0.8 }}
-            className="fixed bottom-0 left-0 right-0 z-50 bg-white rounded-t-2xl overflow-hidden"
+            className="fixed bottom-0 inset-x-0 z-50 bg-white rounded-t-2xl overflow-hidden"
             style={{ maxWidth: "448px", margin: "0 auto" }}
           >
             {/* Drag handle — only this area initiates drag */}

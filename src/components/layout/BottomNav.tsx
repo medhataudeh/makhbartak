@@ -21,7 +21,7 @@ const tabs: { id: NavTab; labelAr: string; Icon: React.FC<{ size: number }> }[] 
 export function BottomNav({ active, onChange, cartCount = 0 }: BottomNavProps) {
   return (
     <nav
-      className="md:hidden fixed bottom-0 left-0 right-0 bg-white border-t border-gray-100 z-30 safe-bottom-sm"
+      className="md:hidden fixed bottom-0 inset-x-0 bg-white border-t border-gray-100 z-30 safe-bottom-sm"
       aria-label="التنقل الرئيسي"
     >
       <div className="flex items-stretch h-16">

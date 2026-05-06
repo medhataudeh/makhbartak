@@ -21,7 +21,7 @@ export const Input = forwardRef<HTMLInputElement, InputProps>(
         )}
         <div className="relative">
           {startIcon && (
-            <div className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400">
+            <div className="absolute start-3 top-1/2 -translate-y-1/2 text-gray-400">
               {startIcon}
             </div>
           )}
@@ -34,14 +34,14 @@ export const Input = forwardRef<HTMLInputElement, InputProps>(
               "transition-all duration-200 outline-none",
               "border-gray-200 focus:border-[#0891B2] focus:ring-2 focus:ring-[#0891B2]/20",
               error && "border-red-400 focus:border-red-400 focus:ring-red-400/20",
-              startIcon && "pr-10",
-              endIcon && "pl-10",
+              startIcon && "ps-10",
+              endIcon && "pe-10",
               className
             )}
             {...props}
           />
           {endIcon && (
-            <div className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400">
+            <div className="absolute end-3 top-1/2 -translate-y-1/2 text-gray-400">
               {endIcon}
             </div>
           )}

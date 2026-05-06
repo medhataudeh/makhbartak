@@ -505,7 +505,7 @@ function SectionRow({ icon, title, value, placeholder, required, onClick }: {
         {icon}
       </div>
       <div className="flex-1 min-w-0">
-        <p className="text-xs text-gray-400 mb-0.5">{title}{required && !value && <span className="text-red-400 mr-0.5">*</span>}</p>
+        <p className="text-xs text-gray-400 mb-0.5">{title}{required && !value && <span className="text-red-400 me-0.5">*</span>}</p>
         <p className={`text-sm font-semibold truncate ${value ? "text-[#164E63]" : "text-gray-300"}`}>
           {value ?? placeholder}
         </p>

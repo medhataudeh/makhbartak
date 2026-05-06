@@ -807,15 +807,30 @@ export const ROLE_LABELS: Record<AdminRole, string> = {
 };
 
 // Permission matrix — what each role can manage in the admin dashboard.
+//
+// NOTE: this matrix gates UI section *visibility* in the admin nav. The
+// authoritative API capability matrix is `ADMIN_CAPS` in
+// `lib/admin-permissions.ts`; per CLAUDE.md the two are intentionally
+// kept separate today. Any role listed here as having "settings" must
+// also hold `system.app_settings.read` in `ADMIN_CAPS` (otherwise their
+// SettingsAdmin GET would 403 and fall through to the explicit
+// forbidden state, surfacing as a confused-looking screen).
 export const ROLE_PERMISSIONS: Record<AdminRole, string[]> = {
   super_admin: ["*"],
-  operations_admin: ["overview", "orders", "users", "nurses", "scheduling", "gamification", "shortages", "notifications"],
+  // operations_admin holds `system.app_settings.read` and benefits from a
+  // read-only view of system settings during operational triage. They do
+  // NOT hold `system.app_settings.write` — SettingsAdmin's existing
+  // <fieldset disabled={!canWrite}> path renders the form read-only.
+  operations_admin: ["overview", "orders", "users", "nurses", "scheduling", "gamification", "shortages", "notifications", "settings"],
   // Test catalog editing is admin-only (super_admin / content_admin). The
   // admin sub-role "lab_admin" oversees lab partnerships and operations but
   // must not touch the tests catalog.
   lab_admin: ["overview", "orders", "labs"],
   customer_support: ["overview", "orders", "users", "notifications"],
-  finance_admin: ["overview", "finance", "invoices", "payments", "coupons"],
+  // finance_admin holds `system.app_settings.read` (commission rate is
+  // finance-sensitive operational config). Same read-only fieldset
+  // behaviour applies as for operations_admin.
+  finance_admin: ["overview", "finance", "invoices", "payments", "coupons", "settings"],
   content_admin: ["overview", "tests", "packages", "sliders", "icons", "branding", "content", "libraries", "media", "settings"],
 };
 
