@@ -11,7 +11,7 @@ import {
   LAB_ISSUE_REASONS, computeOrderLabAmount,
 } from "@/lib/mock-data";
 import {
-  useOrders, uploadResultFile, archiveResultFile, openLabIssue, setOrderStatus,
+  useOrders, uploadResultFile, archiveResultFile, openLabIssue, setOrderStatus, hydrateOrdersForLab,
   confirmResultsReady,
 } from "@/lib/store";
 import { useSession, useAuthStatus, logout, labUserFromSession } from "@/lib/auth";
@@ -138,6 +138,16 @@ export function LabPortal() {
     return () => { cancelled = true; };
   }, [labUser?.labId]);
   /* eslint-enable react-hooks/set-state-in-effect */
+
+  // Hydrate orders for this lab. Without this, useOrders() returns an
+  // empty array and the portal renders "لم يتم إسناد أي طلب لهذا المخبر بعد"
+  // even when orders exist server-side. The server's GET /api/orders
+  // route filters by lab_id matching the authenticated session; the
+  // labId argument is for telemetry only (server does not trust it).
+  useEffect(() => {
+    if (!lab?.id) return;
+    void hydrateOrdersForLab(lab.id);
+  }, [lab?.id]);
 
   // Apply per-lab branding via CSS variables. Cleared on logout.
   useEffect(() => {

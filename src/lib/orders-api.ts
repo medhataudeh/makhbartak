@@ -63,6 +63,17 @@ export async function apiListOrdersForNurse(nurseId: string): Promise<Order[] | 
   return (body?.orders ?? null) as Order[] | null;
 }
 
+// Lab portal hydration. The server's GET /api/orders handler routes by
+// `auth.session.role`; for a lab session it filters orders by
+// `lab_id === session.labId` server-side. The labId in the URL is for
+// telemetry/consistency only — the server does not trust it.
+export async function apiListOrdersForLab(labId: string): Promise<Order[] | null> {
+  const res = await fetch(`/api/orders?role=lab&labId=${encodeURIComponent(labId)}`, { cache: "no-store" });
+  if (!res.ok) return null;
+  const body = await res.json().catch(() => null);
+  return (body?.orders ?? null) as Order[] | null;
+}
+
 export async function apiAssignNurse(
   orderId: string,
   nurseId: string | null,

@@ -19,7 +19,7 @@ import { USE_SUPABASE } from "./supabase/flags";
 // orders-mutations.ts exports remain @deprecated for the future
 // authenticated-browser flow but are no longer imported here.
 import {
-  apiCreateOrder, apiListOrdersForAdmin, apiListOrdersForCustomer, apiListOrdersForNurse,
+  apiCreateOrder, apiListOrdersForAdmin, apiListOrdersForCustomer, apiListOrdersForLab, apiListOrdersForNurse,
   apiSetOrderStatus, apiUploadLabResultFile, apiArchiveLabResultFile, apiConfirmLabResults,
   apiAssignNurse, apiAssignLab,
   apiAddOrderNote, apiApplyCoupon, apiSetPaymentStatus, apiCollectCash,
@@ -111,6 +111,19 @@ export async function hydrateOrdersForNurse(nurseId: string): Promise<void> {
   const remote = isUuid(nurseId)
     ? await apiListOrdersForNurse(nurseId)
     : await apiListOrdersForAdmin();
+  if (!remote) return;
+  mergeRemoteOrders(remote);
+}
+
+// Lab portal hydration. The server filters orders by lab_id matching the
+// authenticated lab session. Without this hydrator the lab portal sees
+// an empty `_orders` store and renders "لم يتم إسناد أي طلب لهذا المخبر بعد"
+// even when assigned orders exist. Symmetric to the nurse/admin hydrators
+// above; safe to call repeatedly.
+export async function hydrateOrdersForLab(labId: string): Promise<void> {
+  if (!USE_SUPABASE) return;
+  if (!isUuid(labId)) return;
+  const remote = await apiListOrdersForLab(labId);
   if (!remote) return;
   mergeRemoteOrders(remote);
 }
