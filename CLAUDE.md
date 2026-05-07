@@ -394,6 +394,27 @@ A 7th implicit `needs_attention` surfaces failures. Internal
   reverse_cash_collection_admin continues to debit the nurse wallet
   and flip the cash payment row in one transaction. The old 5-arg
   overload was dropped.
+- 041 (sibling, separate authorship): `041_fix_set_order_status_admin_enum_literals.sql`
+  patched mig 029's payment-gate IN clause which used TS-side status
+  names (`sent_to_lab`, `lab_processing`, `result_ready`) that don't
+  exist in the SQL `order_status` enum. The fix swaps to canonical
+  SQL values (`received_by_lab`, `processing`, `results_uploaded`).
+  **Numbering note:** this file shares the `041_` prefix with
+  `041_lab_issue_resolve_ownership.sql` (P5.1). The two files touch
+  unrelated functions and run safely in either order, but the
+  prefix collision is cosmetic debt — track for cleanup.
+- 044a + 044b: Recovery — staging schema drift triage. `044a_payment_status_enum_values_recover.sql`
+  re-applies the three `payment_status` enum values from mig 033
+  (`paid_by_nurse`, `verified_by_admin`, `partially_refunded`) and
+  the `nurse_wallet_txn_type` `'refund'` value. `044b_payments_paid_index_recover.sql`
+  re-creates the `payments_one_paid_per_order` partial unique index.
+  **The split is mandatory** — Postgres errcode 55P04 forbids using a
+  newly-added enum value in the same transaction as the ADD VALUE.
+  044a must commit before 044b runs. Both files are idempotent via
+  `IF NOT EXISTS` guards. Mig 033's original single-file shape is
+  the root cause of the staging drift documented under "OCC drift"
+  below — its CREATE INDEX referenced enum values added in the same
+  file, which silently rolls back on transaction-wrapping runners.
 
 ## Freshness model — Realtime, polling, optimistic UI
 
@@ -966,6 +987,39 @@ in a system like this come from an agent taking a "convenient" shortcut.
   which duplicates are real duplicates worth promoting. The OCC
   decomposition (U4.A–E) followed this rule. Do not "tidy up" by
   introducing a shared helper in the middle of an extraction series.
+- **TS↔SQL enum boundary is a hard rule.** The codebase carries two
+  vocabularies for `order_status`: the SQL canonical enum (mig 001 +
+  mig 023) and the TS `OrderStatus` union (`src/lib/types.ts`).
+  Translation lives at exactly one place: `src/lib/supabase/order-status.ts`
+  (`tsStatusToSql` / `sqlStatusToTs`). **Migration authors must never
+  write TS-side names (`sent_to_lab`, `lab_processing`, `result_ready`,
+  `created`, `priced`, `scheduled`, `confirmed`, `nurse_assigned`,
+  `on_the_way`, `failed_to_collect`, `lab_issue`) in any SQL file.**
+  Inside SQL — function bodies, IN predicates, indexes, defaults — use
+  only the canonical SQL enum values (`pending_payment`, `paid`,
+  `assigned`, `nurse_on_way`, `arrived`, `sample_collected`,
+  `received_by_lab`, `processing`, `results_uploaded`, `completed`,
+  `cancelled`, `refunded`). Postgres coerces every IN-list literal to
+  the column's enum type at evaluation, so a single TS-side name in a
+  predicate crashes the entire function regardless of which value is
+  being checked. Mig 028 + mig 029 shipped this bug; `041_fix_set_order_status_admin_enum_literals.sql`
+  patched it. Don't reintroduce.
+- **Enum-add-then-use must split into two migrations.** Postgres
+  errcode 55P04 ("unsafe use of new value of enum type") forbids a
+  transaction from referencing a newly-added enum value before the
+  transaction commits. This means a migration file containing
+  `ALTER TYPE ... ADD VALUE 'foo'` must NOT also contain — anywhere
+  later in the same file — a `CREATE INDEX ... WHERE col IN ('foo')`,
+  a `CREATE FUNCTION` body that references `'foo'`, an `UPDATE ... WHERE
+  col = 'foo'`, or any predicate that requires Postgres to coerce
+  `'foo'` to the enum type. Whether the migration succeeds depends
+  on the runner's transaction policy; on transaction-wrapping runners
+  it silently fails. Mig 033 shipped this shape and caused
+  cross-environment schema drift that surfaced ~6 phases later.
+  **Always split:** file A with only the `ALTER TYPE` statements,
+  file B (next sequential number, applied AFTER A commits) with the
+  index / function / predicate. See `044a_*` + `044b_*` for the
+  reference shape.
 
 ## Known minor risks (deliberately accepted)
 

@@ -953,8 +953,10 @@ export async function confirmResultsReady(orderId: string, ref: ActorRef): Promi
   }
 
   // Production path: server confirms first. Only after a successful server
-  // response do we mirror the canonical row (status, events, completed_at)
-  // into the local store.
+  // response do we mirror the canonical row (status, events, history)
+  // into the local store. The "when did this complete" timestamp lives
+  // on the order_status_history row with status='completed' — the
+  // orders table itself has no completed_at column (P5.6, mig 045).
   const session = (await import("./auth")).getStoredSession();
   if (!session || (session.role !== "lab" && session.role !== "admin")) {
     return { ok: false, error: "الجلسة غير صالحة" };
