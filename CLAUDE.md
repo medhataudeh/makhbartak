@@ -355,6 +355,23 @@ A 7th implicit `needs_attention` surfaces failures. Internal
   singleton, activity log + public_number indexes).
 - 036: Phase 5.2 lab finance (`lab_wallets`, `lab_wallet_transactions`,
   `lab_payout_rules`, accrual trigger extension).
+- 037: Ledger immutability Phase 1 (block UPDATE/DELETE on
+  `nurse_wallet_transactions`, `lab_wallet_transactions`,
+  `order_status_history`, `admin_activity_logs` via the
+  `current_user='service_role'` gate).
+- 038: Ledger immutability Phase 2A (`payments` trigger).
+- 039: Ledger immutability Phase 2B (`settlements`, `settlement_items`).
+- 040: `set_payment_provider_event_result` SECURITY DEFINER RPC; the
+  Stripe webhook now routes its 9 result-tag UPDATEs through this RPC
+  in preparation for the `payment_provider_events` immutability trigger
+  (PR3.B, parked).
+- 041: P5.1 — `resolve_lab_issue_admin` now uses the **6-argument
+  signature** including the optional `p_actor_lab_id` ownership
+  enforcement. Lab callers must pass their `session.labId`; the RPC
+  raises P0001 "لا تملك صلاحية حل هذه المشكلة" on cross-lab attempts.
+  Admin callers pass null and the check is skipped (preserves admin
+  semantics). The old 5-arg overload was dropped — direct DB calls
+  using the legacy signature will fail with "function does not exist".
 
 ## Freshness model — Realtime, polling, optimistic UI
 

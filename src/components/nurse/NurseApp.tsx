@@ -1417,9 +1417,12 @@ function NurseVisitDetail({
               <p className="text-sm text-[#164E63]">{o.patientVerification?.officialName}</p>
               <p className="text-xs text-gray-500 lat" dir="ltr">{o.patientVerification?.nationalId}</p>
               {o.patientVerification?.note && <p className="text-xs text-gray-400">{o.patientVerification.note}</p>}
-              <button onClick={() => setVerifyOpen(true)} className="text-xs font-semibold text-[#0891B2] cursor-pointer">
-                تعديل
-              </button>
+              {/* P5.2 — verification is append-only at the data layer
+                  (mig 042). The nurse cannot edit a stamped identity;
+                  the admin override path is admin-only. */}
+              <p className="text-[11px] text-gray-400 leading-relaxed">
+                التحقق مُستقَر — للتعديل تواصل مع الإدارة.
+              </p>
             </div>
           ) : status === "arrived" ? (
             <Button variant="outline" size="sm" onClick={() => setVerifyOpen(true)}>

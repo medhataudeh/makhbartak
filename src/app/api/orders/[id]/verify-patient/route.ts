@@ -8,6 +8,11 @@ interface VerifyPatientBody {
   officialName: string;
   nationalId?: string;
   note?: string;
+  /** P5.2 — admin-only opt-in to overwrite a previously stamped
+   *  verification. Ignored for non-admin callers. When true and the
+   *  order is already verified, the RPC stamps `verify_patient[override]`
+   *  in order_status_history. */
+  allowOverride?: boolean;
 }
 
 export async function POST(
@@ -55,6 +60,15 @@ export async function POST(
     }
   }
 
+  // P5.2 — verification is operationally append-only. Nurse callers
+  // are always immutable. Admin callers default to immutable; the
+  // explicit body.allowOverride=true opt-in is the only path that
+  // re-stamps an already-verified order. The RPC stamps
+  // 'verify_patient[override]' in order_status_history when the
+  // override path runs so audits can find override events.
+  const allowOverwrite =
+    auth.session.role === "admin" && body.allowOverride === true;
+
   const { error: rpcErr } = await sb.rpc("verify_patient_admin", {
     p_order_id: orderId,
     p_official_name: body.officialName,
@@ -63,11 +77,13 @@ export async function POST(
     p_actor_role: auth.session.role,
     p_actor_id: auth.session.userId,
     p_actor_name: auth.session.fullName ?? null,
+    p_allow_overwrite: allowOverwrite,
   });
   if (rpcErr) {
     console.error("[api/orders/verify-patient] rpc failed", {
       code: rpcErr.code, message: rpcErr.message, details: rpcErr.details, orderId,
     });
+    // TODO(P5.4): replace raw rpcErr.message echo with safeApiError().
     return NextResponse.json({ error: rpcErr.message }, { status: 500 });
   }
 
