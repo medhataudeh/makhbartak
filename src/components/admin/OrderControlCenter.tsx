@@ -17,6 +17,7 @@ import { IssuesTab } from "@/components/admin/OCCIssuesTab";
 import { OperationsTab } from "@/components/admin/OCCOperationsTab";
 import { FinanceTab } from "@/components/admin/OCCFinanceTab";
 import { StickyHeader } from "@/components/admin/OCCStickyHeader";
+import { Card } from "@/components/admin/occ-helpers";
 
 type Tab = "overview" | "items" | "operations" | "timeline" | "issues" | "finance" | "notes";
 
@@ -364,23 +365,10 @@ function ItemsTab({ order }: { order: Order }) {
 }
 
 // ─── Local helpers ────────────────────────────────────────────────────────────
-function Card({ title, icon, action, children }: { title: string; icon?: React.ReactNode; action?: React.ReactNode; children: React.ReactNode }) {
-  return (
-    <section className="bg-white rounded-xl border border-gray-100 overflow-hidden">
-      <header className="flex items-center justify-between px-4 py-2.5 border-b border-gray-50 bg-gray-50/40">
-        <h4 className="text-xs font-bold text-[#164E63] flex items-center gap-1.5">
-          {icon}
-          {title}
-        </h4>
-        {action}
-      </header>
-      <div className="p-4 space-y-1.5">
-        {children}
-      </div>
-    </section>
-  );
-}
-
+// Row stays local: this file's `Row` uses `gap-3 text-xs` with
+// `font-medium break-words` on the value; the tab bodies' `Row` uses
+// a denser layout. They are intentionally divergent — see CLAUDE.md
+// "OCC drift". Do not unify here.
 function Row({ label, value }: { label: string; value: React.ReactNode }) {
   return (
     <div className="flex items-baseline justify-between gap-3 text-xs">

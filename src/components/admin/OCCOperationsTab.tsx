@@ -3,17 +3,16 @@ import { useState } from "react";
 import {
   UserCog, Building2, FileText, Upload, Trash2, CheckCircle2,
 } from "lucide-react";
-import type { Order, Nurse, Lab, OrderEvent } from "@/lib/types";
+import type { Order, Nurse, Lab } from "@/lib/types";
 import { formatDate } from "@/lib/utils";
 import { Button } from "@/components/ui/Button";
-import { BottomSheet } from "@/components/ui/BottomSheet";
 import {
   assignNurse, assignLab, archiveResultFile, restoreResultFile,
   confirmResultsReady, forceCompleteOrder, uploadResultFile,
 } from "@/lib/store";
 import { useToast } from "@/components/ui/Toast";
-import { adminHas, type AdminCapability } from "@/lib/admin-permissions";
 import type { ControlCenterRole } from "@/components/admin/OrderControlCenter";
+import { Card, ReasonSheet, hasCap, type OrderActorRef } from "@/components/admin/occ-helpers";
 
 // U4.D: extracted from OrderControlCenter.tsx without behavioural change.
 // State (forceCompleteOpen / uploadNameOpen) stays inside this function —
@@ -29,33 +28,6 @@ import type { ControlCenterRole } from "@/components/admin/OrderControlCenter";
 
 // ─── Local helpers (duplicated, same bodies as in OCC parent) ────────────────
 
-function Card({
-  title,
-  icon,
-  action,
-  children,
-}: {
-  title: string;
-  icon?: React.ReactNode;
-  action?: React.ReactNode;
-  children: React.ReactNode;
-}) {
-  return (
-    <section className="bg-white rounded-xl border border-gray-100 overflow-hidden">
-      <header className="flex items-center justify-between px-4 py-2.5 border-b border-gray-50 bg-gray-50/40">
-        <h4 className="text-xs font-bold text-[#164E63] flex items-center gap-1.5">
-          {icon}
-          {title}
-        </h4>
-        {action}
-      </header>
-      <div className="p-4 space-y-1.5">
-        {children}
-      </div>
-    </section>
-  );
-}
-
 function Row({ label, value }: { label: string; value: React.ReactNode }) {
   return (
     <div className="flex items-baseline justify-between gap-2 py-1">
@@ -65,92 +37,10 @@ function Row({ label, value }: { label: string; value: React.ReactNode }) {
   );
 }
 
-function ReasonSheet({
-  open,
-  title,
-  placeholder,
-  required = false,
-  multiline = true,
-  confirmLabel = "تأكيد",
-  cancelLabel = "إلغاء",
-  initialValue = "",
-  variant = "primary",
-  onConfirm,
-  onCancel,
-}: {
-  open: boolean;
-  title: string;
-  placeholder: string;
-  required?: boolean;
-  multiline?: boolean;
-  confirmLabel?: string;
-  cancelLabel?: string;
-  initialValue?: string;
-  variant?: "primary" | "danger";
-  onConfirm: (reason: string) => void;
-  onCancel: () => void;
-}) {
-  const [value, setValue] = useState(initialValue);
-  const [wasOpen, setWasOpen] = useState(open);
-  if (wasOpen !== open) {
-    setWasOpen(open);
-    if (open) setValue(initialValue);
-  }
-
-  const trimmed = value.trim();
-  const canSubmit = required ? trimmed.length > 0 : true;
-
-  return (
-    <BottomSheet open={open} onClose={onCancel} title={title}>
-      <div className="space-y-3 px-4 pb-4">
-        {multiline ? (
-          <textarea
-            value={value}
-            onChange={(e) => setValue(e.target.value)}
-            rows={4}
-            placeholder={placeholder}
-            className="w-full p-3 rounded-xl border border-gray-200 text-sm resize-none focus:border-[#0891B2] outline-none"
-            aria-label={title}
-            autoFocus
-          />
-        ) : (
-          <input
-            type="text"
-            value={value}
-            onChange={(e) => setValue(e.target.value)}
-            placeholder={placeholder}
-            className="w-full h-11 px-3 rounded-xl border border-gray-200 text-sm focus:border-[#0891B2] outline-none"
-            aria-label={title}
-            autoFocus
-          />
-        )}
-        <div className="flex items-center justify-end gap-2">
-          <Button size="sm" variant="ghost" onClick={onCancel}>
-            {cancelLabel}
-          </Button>
-          <Button
-            size="sm"
-            variant={variant === "danger" ? "danger" : "primary"}
-            disabled={!canSubmit}
-            onClick={() => onConfirm(trimmed)}
-          >
-            {confirmLabel}
-          </Button>
-        </div>
-      </div>
-    </BottomSheet>
-  );
-}
-
-function hasCap(role: ControlCenterRole["role"], cap: AdminCapability): boolean {
-  if (role === "lab_user") return false;
-  return adminHas(role, cap);
-}
-
 // ─── OperationsTab ───────────────────────────────────────────────────────────
 
 export function OperationsTab({ order, role, nurses, labs, ref }: {
-  order: Order; role: ControlCenterRole; nurses: Nurse[]; labs: Lab[]; ref: { actor: OrderEvent["actor"]; actorName?: string };
+  order: Order; role: ControlCenterRole; nurses: Nurse[]; labs: Lab[]; ref: OrderActorRef;
 }) {
   const toast = useToast();
   const isLab = role.role === "lab_user";

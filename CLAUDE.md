@@ -534,6 +534,55 @@ line-count rules. Finance subtabs are the natural first extraction when
 they grow further; treat that as expected refactoring, not "blowing it
 apart."
 
+**`OrderControlCenter.tsx` (decomposed as of U4.A–E).** OCC was
+originally a single ~3.6k-line file mixing dispatcher shell, sticky
+header, six tab bodies, and shared sheet helpers. It is now split into
+sibling files in `src/components/admin/`:
+
+- `OrderControlCenter.tsx` — dispatcher shell, `OverviewTab`,
+  `ItemsTab`, `Stars`, `RatingCard`, local `Card`/`Row`, the
+  `ControlCenterRole` type-only export, and the tab/role matrix
+  (`tabsFor`, `TAB_META`, `TABS_BY_ROLE`).
+- `OCCStickyHeader.tsx` — sticky header + the 5 sheet states +
+  `ReasonSheet` / `DateSheet` / `StatusPickerSheet` / `CouponSheet` +
+  `ActionItem` / `Pill` / `record` / `hasCap` (helpers private to
+  this file because StickyHeader is their only consumer).
+- `OCCOperationsTab.tsx`, `OCCFinanceTab.tsx`, `OCCIssuesTab.tsx`,
+  `OCCTimelineTab.tsx`, `OCCNotesTab.tsx` — one tab per file. Each
+  child owns its own state and locally-duplicated helpers
+  (`Card`/`Row`/`Pill`/`ReasonSheet`/`canEditPricing`/`hasCap`).
+
+The locally-duplicated helpers are intentional — see
+"extraction-before-abstraction" in *AI Agent Rules* below. **U4.F.1**
+(landed) consolidated `hasCap`, `Card`, `ReasonSheet`, and the
+`OrderActorRef` type into `src/components/admin/occ-helpers.tsx`. The
+remaining single-use helpers (`record`, `ActionItem`, `DateSheet`,
+`StatusPickerSheet`, `CouponSheet`, `Stars`, `RatingCard`,
+`EVENT_LABELS`, `canEditPricing`) stay co-located with their sole
+consumer by design.
+
+**OCC drift — intentionally preserved (U4.F audit findings).** Two
+helpers diverged across the OCC family during U4.A–E:
+
+- **`Row`** — parent `OverviewTab` uses `gap-3 text-xs` with
+  `font-medium break-words` on the value; tab bodies
+  (`OCCOperationsTab`, `OCCFinanceTab`) use `gap-2 py-1` with
+  `text-[11px] text-gray-400` label and `text-xs text-[#164E63]`
+  value. They render at noticeably different densities.
+- **`Pill`** — `OCCStickyHeader`'s payment-status pills are
+  `text-[11px] font-semibold` with `bg-red-50 text-red-600` for the
+  red palette; `OCCIssuesTab`'s status pills are `text-[10px]
+  font-bold` with `bg-rose-50 text-rose-700`. They render at different
+  sizes and weights.
+
+These are no longer code duplication — they are divergent visual
+semantics. Unifying either would force a UX/styling decision and
+violate the "no styling drift" rule of structural refactors. They are
+**deferred to a future visual-consistency design pass**, not
+considered architectural debt. If you find yourself "tidying up" by
+picking one Row or one Pill as canonical, stop — that is U4.F.2 (or
+later), not U4.F.1.
+
 ## Environment variables
 
 Server-only (never expose to client):
@@ -866,6 +915,18 @@ in a system like this come from an agent taking a "convenient" shortcut.
 - **Don't add a new `result` tag to `payment_provider_events`** without
   updating both the webhook handler's `TERMINAL_RESULTS` and
   `RETRYABLE_RESULTS` sets and migration 035's column comment.
+- **Extraction before abstraction.** When breaking a large component
+  into siblings, locally duplicate small presentational helpers
+  (`Card`, `Row`, `Pill`, `ReasonSheet` shape, `hasCap`) in each
+  extracted child rather than promoting them to a shared module
+  up-front. Shared modules force you to commit to an abstraction
+  before all consumers exist; duplicates make it cheap to discover
+  what the right shared shape actually is, and let each phase land
+  with a small, reviewable diff. Once every consumer has been
+  extracted, a dedicated cleanup phase (e.g. **U4.F** for OCC) decides
+  which duplicates are real duplicates worth promoting. The OCC
+  decomposition (U4.A–E) followed this rule. Do not "tidy up" by
+  introducing a shared helper in the middle of an extraction series.
 
 ## Known minor risks (deliberately accepted)
 

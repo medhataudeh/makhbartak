@@ -8,7 +8,6 @@ import type {
   Order, Nurse, Lab,
   AdminRole,
 } from "@/lib/types";
-import { adminHas, type AdminCapability } from "@/lib/admin-permissions";
 import { formatDate, formatPrice, getShiftLabel } from "@/lib/utils";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { Button } from "@/components/ui/Button";
@@ -21,6 +20,7 @@ import { logActivity } from "@/lib/activity-log";
 import { apiValidateCoupon } from "@/lib/admin-catalog-api";
 import { useToast } from "@/components/ui/Toast";
 import type { ControlCenterRole } from "@/components/admin/OrderControlCenter";
+import { ReasonSheet, hasCap } from "@/components/admin/occ-helpers";
 
 // U4.E: extracted from OrderControlCenter.tsx without behavioural change.
 // State (5 sheet-open slots) stays inside this function — same as in the
@@ -230,13 +230,6 @@ function record(role: ControlCenterRole, action: import("@/lib/types").ActivityA
   });
 }
 
-// Capability gate for buttons whose backend route is now sub-role enforced.
-// Lab users always fail; everything else delegates to the canonical matrix.
-function hasCap(role: ControlCenterRole["role"], cap: AdminCapability): boolean {
-  if (role === "lab_user") return false;
-  return adminHas(role, cap);
-}
-
 function Pill({ children, color = "gray" }: { children: React.ReactNode; color?: "gray" | "green" | "red" | "amber" | "cyan" | "purple" }) {
   const map = {
     gray:   "bg-gray-100 text-gray-600",
@@ -263,105 +256,6 @@ function ActionItem({ icon: Icon, label, onClick, danger }: {
       <Icon size={14} className={danger ? "text-red-500" : "text-gray-400"} />
       {label}
     </button>
-  );
-}
-
-// ─── ReasonSheet ─────────────────────────────────────────────────────────────
-// U3.A: typed BottomSheet replacement for the legacy `window.prompt` flows
-// that collect a free-text reason before invoking a mutator. Reuses the
-// existing BottomSheet primitive — no new modal framework. Each callsite
-// owns its own `open` state and decides whether `required` matches the
-// previous prompt's behaviour:
-//   * cancel reason          — optional (cancelOrder accepts undefined)
-//   * force-complete reason  — required (force_complete_order_admin RPC
-//                              raises without a non-empty reason)
-//   * refund reason          — optional + currently discarded by the
-//                              mutator (preserved exactly: setPaymentStatus
-//                              has no reason argument; reason is captured
-//                              for UX consistency with the prior prompt)
-function ReasonSheet({
-  open,
-  title,
-  placeholder,
-  required = false,
-  multiline = true,
-  confirmLabel = "تأكيد",
-  cancelLabel = "إلغاء",
-  initialValue = "",
-  variant = "primary",
-  onConfirm,
-  onCancel,
-}: {
-  open: boolean;
-  title: string;
-  placeholder: string;
-  required?: boolean;
-  /** When false, render a single-line <input type="text"> instead of a
-   *  multiline <textarea>. Used by U3.B's filename callsite where a short
-   *  identifier is the right input shape. Defaults to true to preserve
-   *  the U3.A callsites' existing multiline behaviour. */
-  multiline?: boolean;
-  confirmLabel?: string;
-  cancelLabel?: string;
-  initialValue?: string;
-  variant?: "primary" | "danger";
-  onConfirm: (reason: string) => void;
-  onCancel: () => void;
-}) {
-  const [value, setValue] = useState(initialValue);
-  // Render-time state-sync: reset on every false → true transition so a
-  // stale value from the prior session isn't sticky. Same pattern used by
-  // CommissionField / StripeKeyField in this file's siblings — avoids the
-  // useEffect+setState pattern that React 19 flags via
-  // `react-hooks/set-state-in-effect`.
-  const [wasOpen, setWasOpen] = useState(open);
-  if (wasOpen !== open) {
-    setWasOpen(open);
-    if (open) setValue(initialValue);
-  }
-
-  const trimmed = value.trim();
-  const canSubmit = required ? trimmed.length > 0 : true;
-
-  return (
-    <BottomSheet open={open} onClose={onCancel} title={title}>
-      <div className="space-y-3 px-4 pb-4">
-        {multiline ? (
-          <textarea
-            value={value}
-            onChange={(e) => setValue(e.target.value)}
-            rows={4}
-            placeholder={placeholder}
-            className="w-full p-3 rounded-xl border border-gray-200 text-sm resize-none focus:border-[#0891B2] outline-none"
-            aria-label={title}
-            autoFocus
-          />
-        ) : (
-          <input
-            type="text"
-            value={value}
-            onChange={(e) => setValue(e.target.value)}
-            placeholder={placeholder}
-            className="w-full h-11 px-3 rounded-xl border border-gray-200 text-sm focus:border-[#0891B2] outline-none"
-            aria-label={title}
-            autoFocus
-          />
-        )}
-        <div className="flex items-center justify-end gap-2">
-          <Button size="sm" variant="ghost" onClick={onCancel}>
-            {cancelLabel}
-          </Button>
-          <Button
-            size="sm"
-            variant={variant === "danger" ? "danger" : "primary"}
-            disabled={!canSubmit}
-            onClick={() => onConfirm(trimmed)}
-          >
-            {confirmLabel}
-          </Button>
-        </div>
-      </div>
-    </BottomSheet>
   );
 }
 

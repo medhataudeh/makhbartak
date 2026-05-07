@@ -6,43 +6,7 @@ import { relativeTime } from "@/lib/utils";
 import { Button } from "@/components/ui/Button";
 import { addNote } from "@/lib/store";
 import type { ControlCenterRole } from "@/components/admin/OrderControlCenter";
-
-// U4.A: extracted from OrderControlCenter.tsx without behavioural change.
-// State (textarea draft) stays per-tab and inside this child. The mutator
-// `addNote` is imported from @/lib/store with the same signature; no
-// store / API / RPC change.
-//
-// `Card` is duplicated locally as a small presentational helper rather
-// than extracted to a shared module — preserves the U4.A blast-radius
-// contract (only this file + OCCTimelineTab + a 3-line edit in the
-// parent). If more tabs end up needing Card, a future cleanup phase can
-// promote it to a shared `occ-helpers` module.
-function Card({
-  title,
-  icon,
-  action,
-  children,
-}: {
-  title: string;
-  icon?: React.ReactNode;
-  action?: React.ReactNode;
-  children: React.ReactNode;
-}) {
-  return (
-    <section className="bg-white rounded-xl border border-gray-100 overflow-hidden">
-      <header className="flex items-center justify-between px-4 py-2.5 border-b border-gray-50 bg-gray-50/40">
-        <h4 className="text-xs font-bold text-[#164E63] flex items-center gap-1.5">
-          {icon}
-          {title}
-        </h4>
-        {action}
-      </header>
-      <div className="p-4 space-y-1.5">
-        {children}
-      </div>
-    </section>
-  );
-}
+import { Card } from "@/components/admin/occ-helpers";
 
 export function NotesTab({ order, role }: { order: Order; role: ControlCenterRole }) {
   const [text, setText] = useState("");
