@@ -26,7 +26,15 @@ export async function POST(
     p_actor_role: auth.session.role,
     p_actor_id: auth.session.userId,
     p_actor_name: auth.session.fullName ?? null,
+    // P5.5 — refuse cancellation while an online payment is still in a
+    // money-owed status. The admin must execute the refund first
+    // (Stripe Dashboard → webhook, OR /api/admin/payments/[id]/refund).
+    // Cash payments are unaffected; reverse_cash_collection_admin still
+    // runs on the proceed path. cancel_order_admin intentionally does
+    // not call Stripe — provider-side effects stay out of cancel.
+    p_refuse_if_unrefunded_online: true,
   });
+  // TODO(P5.4): replace raw rpcErr.message echo with safeApiError().
   if (rpcErr) return NextResponse.json({ error: rpcErr.message }, { status: 500 });
 
   const hydrated = await fetchOrderById(sb, orderId);

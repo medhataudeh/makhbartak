@@ -372,6 +372,28 @@ A 7th implicit `needs_attention` surfaces failures. Internal
   Admin callers pass null and the check is skipped (preserves admin
   semantics). The old 5-arg overload was dropped — direct DB calls
   using the legacy signature will fail with "function does not exist".
+- 042: P5.2 — `verify_patient_admin` now uses the **8-argument
+  signature** including the optional `p_allow_overwrite boolean
+  default true`. Identity stamping is operationally append-only:
+  subsequent verifies raise P0001 "تم التحقق من المريض مسبقاً ولا
+  يمكن تعديله" unless the caller explicitly opts in. The route gates
+  the opt-in to admin role + body `allowOverride: true`. Override
+  events stamp `verify_patient[override]` in `order_status_history`
+  for forensic distinction. The old 7-arg overload was dropped.
+- 043: P5.5 — `cancel_order_admin` now uses the **6-argument
+  signature** including the optional `p_refuse_if_unrefunded_online
+  boolean default false`. **Online-paid orders require full refund
+  before cancellation.** The operational sequence is:
+    1. **refund** — Stripe Dashboard (→ webhook record_provider_refund)
+       OR `/api/admin/payments/[id]/refund` (→ refund_payment_admin)
+    2. **cancel** — once `payments.status = 'refunded'`, the cancel
+       RPC accepts the call.
+  cancel_order_admin intentionally does not trigger provider refunds
+  automatically — provider-side effects stay out of the cancel path
+  by design. Cash cancellations are unaffected:
+  reverse_cash_collection_admin continues to debit the nurse wallet
+  and flip the cash payment row in one transaction. The old 5-arg
+  overload was dropped.
 
 ## Freshness model — Realtime, polling, optimistic UI
 
