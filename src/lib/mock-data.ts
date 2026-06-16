@@ -11,11 +11,10 @@ import type {
 } from "./types";
 import { ROLE_PERMISSIONS } from "./types";
 
-// Reproducible Picsum seeds keyed to a healthcare/clinical mood.
-// In production, these would be replaced with real CDN-hosted product images
-// uploaded by the content admin.
-const img = (seed: string, w: number, h: number) =>
-  `https://picsum.photos/seed/${seed}/${w}/${h}`;
+// Locally generated brand photography in /public/images, keyed by seed.
+// In production these are replaced with CDN-hosted images uploaded by the
+// content admin via the media library; the seed maps 1:1 to the file name.
+const img = (seed: string) => `/images/${seed}.jpg`;
 
 // ─── Test Categories ────────────────────────────────────────────────────────
 export const TEST_CATEGORIES: TestCategory[] = [
@@ -158,9 +157,9 @@ export const MOCK_PACKAGES: Package[] = [
       "تشمل هذه الباقة فحوصات تعداد الدم، السكر، الكوليسترول، وظائف الكلى وتحليل البول — لتقييم متكامل لحالتك الصحية مرة كل ستة أشهر.",
     category: "checkup", price: 59, originalPrice: 88,
     tests: [MOCK_TESTS[0], MOCK_TESTS[1], MOCK_TESTS[4], MOCK_TESTS[5], MOCK_TESTS[6], MOCK_TESTS[10]],
-    mainImage: img("makhbartak-checkup", 800, 800),
-    mobileImage: img("makhbartak-checkup-m", 600, 800),
-    desktopImage: img("makhbartak-checkup-d", 1200, 700),
+    mainImage: img("makhbartak-checkup"),
+    mobileImage: img("makhbartak-checkup-m"),
+    desktopImage: img("makhbartak-checkup-d"),
     badgeAr: "الأكثر طلباً",
     displayOrder: 1, showInSlider: true, isActive: true,
   },
@@ -171,9 +170,9 @@ export const MOCK_PACKAGES: Package[] = [
       "صُممت هذه الباقة لمتابعة لياقتك ومستويات الهرمونات والحديد والفيتامينات الضرورية للنشاط البدني المنتظم.",
     category: "athletes", price: 75, originalPrice: 110,
     tests: [MOCK_TESTS[0], MOCK_TESTS[8], MOCK_TESTS[2], MOCK_TESTS[7], MOCK_TESTS[9]],
-    mainImage: img("makhbartak-athletes", 800, 800),
-    mobileImage: img("makhbartak-athletes-m", 600, 800),
-    desktopImage: img("makhbartak-athletes-d", 1200, 700),
+    mainImage: img("makhbartak-athletes"),
+    mobileImage: img("makhbartak-athletes-m"),
+    desktopImage: img("makhbartak-athletes-d"),
     badgeAr: "للرياضيين",
     displayOrder: 2, showInSlider: true, isActive: true,
   },
@@ -184,9 +183,9 @@ export const MOCK_PACKAGES: Package[] = [
       "متابعة هرمونية وأيضية تكشف توازن السكر، الدرقية، الكوليسترول والسكر التراكمي — لخطّة تنحيف ذكية ومتابعة مستمرة.",
     category: "slimming", price: 65, originalPrice: 90,
     tests: [MOCK_TESTS[1], MOCK_TESTS[3], MOCK_TESTS[4], MOCK_TESTS[11], MOCK_TESTS[7]],
-    mainImage: img("makhbartak-slim", 800, 800),
-    mobileImage: img("makhbartak-slim-m", 600, 800),
-    desktopImage: img("makhbartak-slim-d", 1200, 700),
+    mainImage: img("makhbartak-slim"),
+    mobileImage: img("makhbartak-slim-m"),
+    desktopImage: img("makhbartak-slim-d"),
     displayOrder: 3, showInSlider: true, isActive: true,
   },
   {
@@ -196,9 +195,9 @@ export const MOCK_PACKAGES: Package[] = [
       "تشمل قياس مستويات فيتامين د، فيتامين ب12 والحديد — أهم الفيتامينات والمعادن لطاقتك اليومية ومناعتك.",
     category: "vitamins", price: 55, originalPrice: 75,
     tests: [MOCK_TESTS[2], MOCK_TESTS[7], MOCK_TESTS[9]],
-    mainImage: img("makhbartak-vit", 800, 800),
-    mobileImage: img("makhbartak-vit-m", 600, 800),
-    desktopImage: img("makhbartak-vit-d", 1200, 700),
+    mainImage: img("makhbartak-vit"),
+    mobileImage: img("makhbartak-vit-m"),
+    desktopImage: img("makhbartak-vit-d"),
     badgeAr: "خصم 27%",
     displayOrder: 4, showInSlider: false, isActive: true,
   },
@@ -209,9 +208,9 @@ export const MOCK_PACKAGES: Package[] = [
       "تقييم شامل لوظيفة الغدة الدرقية مع تعداد دم — يفيد في حالات التعب المزمن وتقلّبات الوزن والمزاج.",
     category: "checkup", price: 45, originalPrice: 60,
     tests: [MOCK_TESTS[3], MOCK_TESTS[0]],
-    mainImage: img("makhbartak-thyroid", 800, 800),
-    mobileImage: img("makhbartak-thyroid-m", 600, 800),
-    desktopImage: img("makhbartak-thyroid-d", 1200, 700),
+    mainImage: img("makhbartak-thyroid"),
+    mobileImage: img("makhbartak-thyroid-m"),
+    desktopImage: img("makhbartak-thyroid-d"),
     displayOrder: 5, showInSlider: false, isActive: true,
   },
 ];
@@ -222,8 +221,8 @@ export const MOCK_SLIDERS: SliderItem[] = [
     id: "sl-1",
     titleAr: "الفحص الشامل من بيتك",
     subtitleAr: "ست تحاليل تقييمية بسعر مخفّض ، يأتيك الممرض في الموعد",
-    mobileImage: img("makhbartak-sl1-m", 800, 1000),
-    desktopImage: img("makhbartak-sl1-d", 1600, 800),
+    mobileImage: img("makhbartak-sl1-m"),
+    desktopImage: img("makhbartak-sl1-d"),
     priceLabel: "59 ل.س",
     ctaLabel: "احجز الباقة",
     ctaTarget: "package",
@@ -236,8 +235,8 @@ export const MOCK_SLIDERS: SliderItem[] = [
     id: "sl-2",
     titleAr: "وصفتك تحاليلك بدون تعب",
     subtitleAr: "صوّر وصفة الطبيب وسنستخرج التحاليل ونرتّب لك زيارة في نفس اليوم",
-    mobileImage: img("makhbartak-sl2-m", 800, 1000),
-    desktopImage: img("makhbartak-sl2-d", 1600, 800),
+    mobileImage: img("makhbartak-sl2-m"),
+    desktopImage: img("makhbartak-sl2-d"),
     priceLabel: "حسب الوصفة",
     ctaLabel: "ارفع وصفتك",
     ctaTarget: "prescription",
@@ -248,8 +247,8 @@ export const MOCK_SLIDERS: SliderItem[] = [
     id: "sl-3",
     titleAr: "باقة الرياضيين",
     subtitleAr: "متابعة هرمونية وقوية لكل رياضي يسعى للأفضل",
-    mobileImage: img("makhbartak-sl3-m", 800, 1000),
-    desktopImage: img("makhbartak-sl3-d", 1600, 800),
+    mobileImage: img("makhbartak-sl3-m"),
+    desktopImage: img("makhbartak-sl3-d"),
     priceLabel: "75 ل.س",
     ctaLabel: "تفاصيل الباقة",
     ctaTarget: "package",
@@ -261,8 +260,8 @@ export const MOCK_SLIDERS: SliderItem[] = [
     id: "sl-4",
     titleAr: "اختر تحاليلك بنفسك",
     subtitleAr: "ابحث وأضف ما تحتاج فقط — سعر شفّاف لكل تحليل",
-    mobileImage: img("makhbartak-sl4-m", 800, 1000),
-    desktopImage: img("makhbartak-sl4-d", 1600, 800),
+    mobileImage: img("makhbartak-sl4-m"),
+    desktopImage: img("makhbartak-sl4-d"),
     priceLabel: "حسب اختيارك",
     ctaLabel: "ابدأ الآن",
     ctaTarget: "custom-builder",
@@ -323,7 +322,7 @@ export const MOCK_ORDERS: Order[] = [
       packageId: "pkg-1",
       nameAr: "باقة الفحص الشامل",
       nameEn: "Full Checkup Package",
-      image: img("makhbartak-checkup", 800, 800),
+      image: img("makhbartak-checkup"),
       testsCount: 6,
       price: 59,
     },
@@ -564,9 +563,9 @@ export const SYSTEM_SETTINGS: SystemSettings = {
 
 // ─── Nurses ──────────────────────────────────────────────────────────────────
 export const MOCK_NURSES: Nurse[] = [
-  { id: SEED_NURSE_1_ID, name: "محمد الأحمد", phone: "+963911111111", city: "دمشق",      photoUrl: img("makhbartak-nur1", 200, 200), isActive: true },
-  { id: SEED_NURSE_2_ID, name: "سارة السيد",  phone: "+963922222222", city: "دمشق",      photoUrl: img("makhbartak-nur2", 200, 200), isActive: true },
-  { id: SEED_NURSE_3_ID, name: "ليث ناصر",   phone: "+963933333333", city: "ريف دمشق", photoUrl: img("makhbartak-nur3", 200, 200), isActive: true },
+  { id: SEED_NURSE_1_ID, name: "محمد الأحمد", phone: "+963911111111", city: "دمشق",      photoUrl: img("makhbartak-nur1"), isActive: true },
+  { id: SEED_NURSE_2_ID, name: "سارة السيد",  phone: "+963922222222", city: "دمشق",      photoUrl: img("makhbartak-nur2"), isActive: true },
+  { id: SEED_NURSE_3_ID, name: "ليث ناصر",   phone: "+963933333333", city: "ريف دمشق", photoUrl: img("makhbartak-nur3"), isActive: true },
 ];
 
 // ─── Admin Stats ─────────────────────────────────────────────────────────────
@@ -888,7 +887,7 @@ export const MOCK_LABS: Lab[] = [
     phone: "+963112345678",
     nameAr: "مخبر الشام الطبي",
     nameEn: "Sham Medical Lab",
-    logo: img("makhbartak-lab1", 200, 200),
+    logo: img("makhbartak-lab1"),
     isActive: true,
     officialName: "مخبر الشام الطبي للتحاليل المخبرية",
     registrationNumber: "REG-2018-1042",
@@ -916,7 +915,7 @@ export const MOCK_LABS: Lab[] = [
       secondaryColor: "#0E7490",
       accentColor: "#ECFEFF",
       portalDisplayName: "بوابة مخبر الشام",
-      logo: img("makhbartak-lab1", 200, 200),
+      logo: img("makhbartak-lab1"),
     },
   },
   {
@@ -925,7 +924,7 @@ export const MOCK_LABS: Lab[] = [
     phone: "+963113334455",
     nameAr: "مخبر النور",
     nameEn: "Al Nour Lab",
-    logo: img("makhbartak-lab2", 200, 200),
+    logo: img("makhbartak-lab2"),
     isActive: true,
     officialName: "مخبر النور للتحاليل الدقيقة",
     registrationNumber: "REG-2020-2210",

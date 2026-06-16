@@ -9,21 +9,20 @@ import type { BrandingConfig } from "./types";
 //     it. On a PUT failure we roll the in-memory state back to the
 //     previous canonical config and re-emit, so admins always see DB state.
 
-const ph = (seed: string, size: number) =>
-  `https://picsum.photos/seed/${seed}/${size}/${size}`;
+const ph = (seed: string) => `/images/${seed}.jpg`;
 
 export const DEFAULT_BRANDING: BrandingConfig = {
   logos: {
-    main:           ph("makhbartak-logo-main", 256),
-    header:         ph("makhbartak-logo-hdr", 96),
-    mobile:         ph("makhbartak-logo-m", 192),
-    desktop:        ph("makhbartak-logo-d", 256),
-    light:          ph("makhbartak-logo-light", 192),
+    main:           ph("makhbartak-logo-main"),
+    header:         ph("makhbartak-logo-hdr"),
+    mobile:         ph("makhbartak-logo-m"),
+    desktop:        ph("makhbartak-logo-d"),
+    light:          ph("makhbartak-logo-light"),
     favicon:        "/favicon.ico",
-    pwaIcon:        ph("makhbartak-pwa", 512),
-    adminDashboard: ph("makhbartak-admin", 128),
-    nurseInterface: ph("makhbartak-nurse", 128),
-    labPortal:      ph("makhbartak-lab", 128),
+    pwaIcon:        ph("makhbartak-pwa"),
+    adminDashboard: ph("makhbartak-admin"),
+    nurseInterface: ph("makhbartak-nurse"),
+    labPortal:      ph("makhbartak-lab"),
   },
   theme: {
     primary: "#0891B2",
