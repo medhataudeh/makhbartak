@@ -1488,7 +1488,10 @@ function PackagesAdmin({ packages, setPackages, tests }: { packages: Package[]; 
 
 function PackageForm({ initial, tests, onCancel, onSubmit }: { initial?: Package; tests: Test[]; onCancel: () => void; onSubmit: (p: Package) => void }) {
   const [draft, setDraft] = useState<Package>(() => initial ?? {
-    id: `pkg-${Date.now()}`, nameAr: "", nameEn: "", descriptionAr: "", fullDescriptionAr: "",
+    // Empty id on new drafts so apiUpsertPackage sends no id → the RPC inserts
+    // and Postgres generates the canonical uuid. A client-side "pkg-…" id is a
+    // non-uuid and crashes the insert ("invalid input syntax for type uuid").
+    id: "", nameAr: "", nameEn: "", descriptionAr: "", fullDescriptionAr: "",
     category: "checkup", tests: [], price: 0, originalPrice: 0,
     mainImage: "", mobileImage: "", desktopImage: "",
     displayOrder: 99, showInSlider: false, isActive: true,
