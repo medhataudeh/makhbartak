@@ -10,8 +10,9 @@ import {
 } from "lucide-react";
 import { NurseWallet } from "@/components/nurse/NurseWallet";
 import {
-  buildPrepChecklist, FAILED_COLLECTION_REASONS, NURSE_BADGES,
+  FAILED_COLLECTION_REASONS, NURSE_BADGES,
 } from "@/lib/mock-data";
+import { apiConfirmPrep } from "@/lib/nurse-api";
 import { useNurseGamification } from "@/lib/nurse-gamification";
 import { usePersistedNav } from "@/lib/use-persisted-nav";
 import type { Nurse, NurseRouteStop, NurseGamification, Notification, Order } from "@/lib/types";
@@ -150,8 +151,15 @@ function NurseAppInner({ nurseId, onLogout }: { nurseId: string; onLogout: () =>
   };
 
   const startDay = async () => {
-    // Flip the persistent online flag instead of writing the per-day
-    // "started" record. The nurse stays online across sessions.
+    // Day-start is server-gated: record an auditable prep confirmation for
+    // today, THEN flip the persistent online flag. The /online route refuses
+    // to go online without today's confirmation, so the gate is not
+    // frontend-only.
+    const conf = await apiConfirmPrep(nurseId, todayStr, Array.from(checkedIds));
+    if (!conf.ok) {
+      toast.error(conf.error ?? "تعذر تأكيد جاهزية الأدوات");
+      return;
+    }
     const r = await setNurseOnline(nurseId, true);
     if (!r.ok) toast.error(r.error ?? "تعذر تفعيل وضع العمل");
   };
@@ -310,9 +318,12 @@ function NurseAppInner({ nurseId, onLogout }: { nurseId: string; onLogout: () =>
     defaults: checklistDefaults,
     toolsCatalog,
   });
-  // Render rows for the visible checklist. If aggregation is empty (no
-  // structured tools on any test), fall back to the legacy string-based
-  // builder so seed orders still show something.
+  // Render rows for the visible checklist. The precise path is per-test tool
+  // aggregation (lab_test_required_tools → Test.nurseTools). When no test
+  // carries structured tools, fall back to the admin-managed nurse_tools
+  // catalog (every active tool) so the nurse always has a required-prep list
+  // to confirm before starting the day. This list is admin-configurable from
+  // الإدارة → أدوات الممرضين.
   const checklist: { id: string; label: string; checked: boolean; required: boolean }[] =
     aggregated.length > 0
       ? aggregated.map((r) => ({
@@ -321,9 +332,11 @@ function NurseAppInner({ nurseId, onLogout }: { nurseId: string; onLogout: () =>
           checked: checkedIds.has(r.toolId),
           required: r.required,
         }))
-      : buildPrepChecklist(nurse.id).map((c) => ({
-          id: c.id, label: c.label, checked: checkedIds.has(c.id), required: true,
-        }));
+      : toolsCatalog
+          .filter((t) => t.isActive)
+          .map((t) => ({
+            id: t.id, label: t.nameAr, checked: checkedIds.has(t.id), required: true,
+          }));
 
   const onToggleCheck = (id: string) => {
     const next = new Set(checkedIds);

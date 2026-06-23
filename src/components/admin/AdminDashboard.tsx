@@ -317,7 +317,7 @@ export function AdminDashboard({ user, onLogout }: AdminDashboardProps) {
           {section === "packages"      && <PackagesAdmin packages={packages} setPackages={setPackages} tests={tests} />}
           {section === "coupons"       && <CouponsAdmin coupons={coupons} setCoupons={setCoupons} />}
           {section === "nurses"        && <NursesAdmin nurses={nurses} setNurses={setNurses} />}
-          {section === "scheduling"    && <SchedulingAdmin nurses={nurses} routes={routes} setRoutes={setRoutes} orders={orders} />}
+          {section === "scheduling"    && <SchedulingAdmin nurses={nurses} routes={routes} setRoutes={setRoutes} />}
           {section === "gamification"  && <GamificationAdmin nurses={nurses} config={config} setConfig={setConfig} />}
           {section === "labs"          && <LabsAdmin adminId={user.id} adminName={user.name} adminRole={user.role} />}
           {section === "shortages"     && <ShortageRequestsAdmin adminId={user.id} adminName={user.name} adminRole={user.role} />}
@@ -1796,9 +1796,14 @@ function NurseForm({ initial, onCancel, onSubmit }: { initial?: Nurse; onCancel:
 
 // ════════════════════════════ Scheduling ════════════════════════════════════
 
-function SchedulingAdmin({ nurses, routes, setRoutes, orders }: {
-  nurses: Nurse[]; routes: NurseRoute[]; setRoutes: React.Dispatch<React.SetStateAction<NurseRoute[]>>; orders: Order[];
+function SchedulingAdmin({ nurses, routes, setRoutes }: {
+  nurses: Nurse[]; routes: NurseRoute[]; setRoutes: React.Dispatch<React.SetStateAction<NurseRoute[]>>;
 }) {
+  // Source orders from the live store (same path as OrdersAdmin). The parent
+  // `orders` prop was never hydrated — that's why this page rendered blank.
+  const orders = useOrders();
+  useEffect(() => { void hydrateOrdersForAdmin(); }, []);
+
   const [nurseId, setNurseId] = useState(nurses[0]?.id ?? "");
   const [date, setDate] = useState(routes[0]?.date ?? new Date().toISOString().split("T")[0]);
   const [cityFilter, setCityFilter] = useState("all");

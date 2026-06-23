@@ -24,6 +24,28 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
   const isOnline = !!body.isOnline;
 
   const sb = getSupabaseAdmin();
+
+  // Server-side day-start gate: a nurse may only go online after recording an
+  // auditable prep confirmation for today (Asia/Damascus). Admins toggling a
+  // nurse online (operational override) bypass the gate. Going offline is
+  // never gated.
+  if (isOnline && auth.session.role === "nurse") {
+    const today = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Damascus" }).format(new Date());
+    const { data: conf, error: confErr } = await sb
+      .from("nurse_daily_prep_confirmations")
+      .select("id")
+      .eq("nurse_id", id)
+      .eq("work_date", today)
+      .maybeSingle();
+    if (confErr) {
+      console.error("[api/nurses/online] prep-confirmation check failed", { id, code: confErr.code, message: confErr.message });
+      return NextResponse.json({ error: "تعذر التحقق من جاهزية الأدوات" }, { status: 500 });
+    }
+    if (!conf) {
+      return NextResponse.json({ error: "يجب تأكيد جاهزية الأدوات قبل بدء اليوم" }, { status: 409 });
+    }
+  }
+
   const { error } = await sb
     .from("nurses")
     .update({

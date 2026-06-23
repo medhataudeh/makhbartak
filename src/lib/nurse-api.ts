@@ -60,6 +60,51 @@ export async function apiSetNursePrep(
   return { ok: true };
 }
 
+// ─── Daily prep confirmation (server-side day-start gate) ──────────────────
+export interface NursePrepConfirmation {
+  nurseId: string;
+  workDate: string;
+  confirmedAt: string;
+  confirmedItems: string[];
+}
+
+export async function apiGetPrepConfirmation(
+  nurseId: string,
+  workDate: string,
+): Promise<NursePrepConfirmation | null> {
+  const res = await fetch(
+    `/api/nurses/${encodeURIComponent(nurseId)}/prep-confirmation?day=${encodeURIComponent(workDate)}`,
+    { cache: "no-store" },
+  );
+  if (!res.ok) return null;
+  const body = await res.json().catch(() => null);
+  const c = body?.confirmation;
+  if (!c) return null;
+  return {
+    nurseId: c.nurse_id,
+    workDate: c.work_date,
+    confirmedAt: c.confirmed_at,
+    confirmedItems: Array.isArray(c.confirmed_items) ? c.confirmed_items : [],
+  };
+}
+
+export async function apiConfirmPrep(
+  nurseId: string,
+  workDate: string,
+  confirmedItems: string[],
+): Promise<{ ok: boolean; error?: string }> {
+  const res = await fetch(`/api/nurses/${encodeURIComponent(nurseId)}/prep-confirmation`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ workDate, confirmedItems }),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    return { ok: false, error: body.error ?? `HTTP ${res.status}` };
+  }
+  return { ok: true };
+}
+
 export interface NurseShortageRequest {
   id: string;
   nurseId: string;
