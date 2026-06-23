@@ -13,6 +13,7 @@ import {
   buildPrepChecklist, FAILED_COLLECTION_REASONS, NURSE_BADGES,
 } from "@/lib/mock-data";
 import { useNurseGamification } from "@/lib/nurse-gamification";
+import { usePersistedNav } from "@/lib/use-persisted-nav";
 import type { Nurse, NurseRouteStop, NurseGamification, Notification, Order } from "@/lib/types";
 import {
   setOrderStatus, verifyPatient, collectCash, useOrders,
@@ -120,7 +121,7 @@ function NurseAppInner({ nurseId, onLogout }: { nurseId: string; onLogout: () =>
   const settings = useSystemSettings();
   const toast = useToast();
 
-  const [tab, setTab] = useState<NurseTab>("home");
+  const [tab, setTab] = usePersistedNav<NurseTab>("makhbartak.nurse.nav.v1", "home");
 
   // Prep checklist: a Set of "checked" tool ids persisted per-day. The visible
   // checklist rows are derived from aggregateNurseTools(), so adding/removing

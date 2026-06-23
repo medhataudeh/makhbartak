@@ -15,6 +15,7 @@ import {
   confirmResultsReady,
 } from "@/lib/store";
 import { useSession, useAuthStatus, logout, labUserFromSession } from "@/lib/auth";
+import { usePersistedNav } from "@/lib/use-persisted-nav";
 import { AuthLoading } from "@/components/auth/AuthLoading";
 import { LoginForm } from "@/components/auth/LoginForm";
 import { ForgotPasswordForm } from "@/components/auth/ForgotPasswordForm";
@@ -258,13 +259,21 @@ function LabPortalShell({ lab, labUser, onLogout }: { lab: Lab; labUser: LabUser
   );
 
   const canAccount = labUser.role === "lab_admin" || labUser.role === "lab_accounting";
+  const isLabAdmin = labUser.role === "lab_admin";
   const initialSection: LabSection = labUser.role === "lab_accounting" ? "accounting" : "orders";
-  const [section, setSection] = useState<LabSection>(initialSection);
+  const sectionAllowed = (s: LabSection) =>
+    s === "orders" || s === "results" || s === "issues" ||
+    ((s === "finance" || s === "accounting") && canAccount) ||
+    (s === "lab_settings" && isLabAdmin);
+  const [section, setSection] = usePersistedNav<LabSection>(
+    "makhbartak.lab.nav.v1",
+    initialSection,
+    sectionAllowed,
+  );
 
   const brand = lab.branding ?? { primaryColor: "#0891B2", secondaryColor: "#0E7490", accentColor: "#ECFEFF" };
   const portalName = lab.branding?.portalDisplayName ?? `بوابة ${lab.nameAr}`;
 
-  const isLabAdmin = labUser.role === "lab_admin";
   const sections: { id: LabSection; labelAr: string; Icon: React.FC<{ size?: number; className?: string }> }[] = [
     { id: "orders",     labelAr: "الطلبات",       Icon: ClipboardList },
     { id: "results",    labelAr: "رفع النتائج",   Icon: Upload },

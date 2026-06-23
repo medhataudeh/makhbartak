@@ -16,6 +16,7 @@ import {
 } from "@/lib/mock-data";
 import { ROLE_LABELS, ACTIVITY_LABELS } from "@/lib/types";
 import { adminHas } from "@/lib/admin-permissions";
+import { usePersistedNav } from "@/lib/use-persisted-nav";
 import type {
   AdminUser, AdminRole, Order,
   Test, Package, Coupon, Nurse, SliderItem, SvgIcon, Notification,
@@ -129,7 +130,11 @@ export function AdminDashboard({ user, onLogout }: AdminDashboardProps) {
     () => SECTIONS.filter((s) => canAccess(user.role, s.id)),
     [user.role],
   );
-  const [section, setSection] = useState<AdminSection>(accessible[0]?.id ?? "overview");
+  const [section, setSection] = usePersistedNav<AdminSection>(
+    "makhbartak.admin.nav.v1",
+    accessible[0]?.id ?? "overview",
+    (s) => accessible.some((a) => a.id === s),
+  );
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const branding = useBranding();
 
