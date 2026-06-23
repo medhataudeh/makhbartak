@@ -17,17 +17,25 @@ function subscribe(l: () => void) { listeners.add(l); return () => { listeners.d
 
 export function getSliders(): SliderItem[] { return _sliders; }
 
+async function fetchSliders(): Promise<void> {
+  if (!USE_SUPABASE) return;
+  const remote = await hydrateAdminSliders();
+  if (!remote) return;
+  _sliders = remote.filter((s) => s.isActive);
+  emit();
+}
+
 export function useSliders(): SliderItem[] {
   useEffect(() => {
     if (_hydratedOnce) return;
     _hydratedOnce = true;
-    if (!USE_SUPABASE) return;
-    void (async () => {
-      const remote = await hydrateAdminSliders();
-      if (!remote) return;
-      _sliders = remote.filter((s) => s.isActive);
-      emit();
-    })();
+    void fetchSliders();
   }, []);
   return useSyncExternalStore(subscribe, getSliders, () => []);
+}
+
+// Force a re-fetch (e.g. pull-to-refresh on the customer home).
+export async function refreshSliders(): Promise<void> {
+  _hydratedOnce = true;
+  await fetchSliders();
 }

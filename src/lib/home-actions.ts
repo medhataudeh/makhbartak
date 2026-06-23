@@ -85,25 +85,33 @@ function subscribe(l: () => void) { listeners.add(l); return () => { listeners.d
 
 export function getHomeActions(): HomeActionSection[] { return _actions; }
 
+async function fetchHomeActions(): Promise<void> {
+  if (!USE_SUPABASE) return;
+  try {
+    const res = await fetch("/api/home-actions", { cache: "no-store" });
+    if (!res.ok) return;
+    const body = await res.json().catch(() => null);
+    if (!Array.isArray(body?.sections)) return;
+    _actions = (body.sections as RawHomeAction[])
+      .map(mapHomeAction)
+      .sort((a, b) => a.displayOrder - b.displayOrder);
+    emit();
+  } catch {
+    // Network failure: keep empty → HomeScreen renders DEFAULT_HOME_ACTIONS.
+  }
+}
+
 export function useHomeActions(): HomeActionSection[] {
   useEffect(() => {
     if (_hydratedOnce) return;
     _hydratedOnce = true;
-    if (!USE_SUPABASE) return;
-    void (async () => {
-      try {
-        const res = await fetch("/api/home-actions", { cache: "no-store" });
-        if (!res.ok) return;
-        const body = await res.json().catch(() => null);
-        if (!Array.isArray(body?.sections)) return;
-        _actions = (body.sections as RawHomeAction[])
-          .map(mapHomeAction)
-          .sort((a, b) => a.displayOrder - b.displayOrder);
-        emit();
-      } catch {
-        // Network failure: keep empty → HomeScreen renders DEFAULT_HOME_ACTIONS.
-      }
-    })();
+    void fetchHomeActions();
   }, []);
   return useSyncExternalStore(subscribe, getHomeActions, () => []);
+}
+
+// Force a re-fetch (e.g. pull-to-refresh on the customer home).
+export async function refreshHomeActions(): Promise<void> {
+  _hydratedOnce = true;
+  await fetchHomeActions();
 }

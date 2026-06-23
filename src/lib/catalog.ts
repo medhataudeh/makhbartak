@@ -72,6 +72,12 @@ async function hydrateFromSupabase() {
   }
 }
 
+// Force a re-fetch of the customer catalog (e.g. pull-to-refresh on home).
+export async function refreshCatalog(): Promise<void> {
+  _remoteHydrated = false;
+  await hydrateFromSupabase();
+}
+
 export function getTests(): Test[] { if (!_hydrated) hydrate(); return _tests; }
 export function getPackages(): Package[] { if (!_hydrated) hydrate(); return _packages; }
 export function getCategories(): TestCategory[] { if (!_hydrated) hydrate(); return _categories; }

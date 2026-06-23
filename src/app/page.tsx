@@ -21,6 +21,10 @@ import { StripePaymentScreen } from "@/components/payment/StripePaymentScreen";
 import { OrdersList } from "@/components/order/OrdersList";
 import { NotificationsScreen } from "@/components/notifications/NotificationsScreen";
 import { AccountScreen } from "@/components/account/AccountScreen";
+import { PullToRefresh } from "@/components/ui/PullToRefresh";
+import { refreshCatalog } from "@/lib/catalog";
+import { refreshSliders } from "@/lib/home-sliders";
+import { refreshHomeActions } from "@/lib/home-actions";
 import { ShoppingCart, ChevronLeft } from "lucide-react";
 
 import type { Test, Package, Shift, Address, Patient, PaymentMethod } from "@/lib/types";
@@ -267,6 +271,24 @@ function CustomerApp() {
     toast.success("تم تسجيل الخروج");
   };
 
+  // Pull-to-refresh on the customer home: re-hydrate the homepage data sources
+  // (catalog/packages, sliders, action sections) plus the customer's
+  // notification badge. The store hydrators swallow their own network errors,
+  // so the try/catch only guards against the unexpected — falling back to a
+  // full reload.
+  const refreshHome = async () => {
+    try {
+      await Promise.all([
+        refreshCatalog(),
+        refreshSliders(),
+        refreshHomeActions(),
+        userId ? hydrateNotificationsForCustomer(userId) : Promise.resolve(),
+      ]);
+    } catch {
+      if (typeof window !== "undefined") window.location.reload();
+    }
+  };
+
   const renderScreen = () => {
     if (view === "login") {
       return (
@@ -452,15 +474,17 @@ function CustomerApp() {
         );
       default:
         return (
-          <HomeScreen
-            onSelectPackage={(pkg) => { setPendingPackage(pkg); setView("package-details"); }}
-            onPrescription={() => setView("prescription")}
-            onCustomBuilder={() => setView("custom-builder")}
-            cartCount={cartCount}
-            onCartClick={() => { setActiveTab("cart"); setView("home"); }}
-            onNotificationsClick={openNotifications}
-            unreadNotifications={unread}
-          />
+          <PullToRefresh onRefresh={refreshHome}>
+            <HomeScreen
+              onSelectPackage={(pkg) => { setPendingPackage(pkg); setView("package-details"); }}
+              onPrescription={() => setView("prescription")}
+              onCustomBuilder={() => setView("custom-builder")}
+              cartCount={cartCount}
+              onCartClick={() => { setActiveTab("cart"); setView("home"); }}
+              onNotificationsClick={openNotifications}
+              unreadNotifications={unread}
+            />
+          </PullToRefresh>
         );
     }
   };
