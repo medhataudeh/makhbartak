@@ -28,7 +28,7 @@ function esc(s: string | null | undefined): string {
 function formatExpiry(iso: string | null): string | null {
   if (!iso) return null;
   try {
-    return new Intl.DateTimeFormat("ar-SY", {
+    return new Intl.DateTimeFormat("ar-SY-u-nu-latn", {
       year: "numeric", month: "long", day: "numeric", hour: "2-digit", minute: "2-digit",
     }).format(new Date(iso));
   } catch {

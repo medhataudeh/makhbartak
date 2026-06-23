@@ -135,7 +135,7 @@ function PageEditor({ page, adminId, adminName, adminRole }: { page: ContentPage
       </Card>
 
       <div className="flex items-center justify-end gap-2">
-        <p className="text-[11px] text-gray-400 me-2">آخر تحديث: {new Date(page.updatedAt).toLocaleString("ar-SY")}</p>
+        <p className="text-[11px] text-gray-400 me-2">آخر تحديث: {new Date(page.updatedAt).toLocaleString("ar-SY-u-nu-latn")}</p>
         <Button variant="primary" size="sm" loading={saving} disabled={!dirty} onClick={save}>
           <Save size={13} aria-hidden="true" /> حفظ التغييرات
         </Button>
@@ -214,7 +214,7 @@ function FaqEditor({ page, adminId, adminName, adminRole }: { page: ContentPage;
       </button>
 
       <div className="flex items-center justify-end gap-2">
-        <p className="text-[11px] text-gray-400 me-2">آخر تحديث: {new Date(page.updatedAt).toLocaleString("ar-SY")}</p>
+        <p className="text-[11px] text-gray-400 me-2">آخر تحديث: {new Date(page.updatedAt).toLocaleString("ar-SY-u-nu-latn")}</p>
         <Button variant="primary" size="sm" loading={saving} disabled={!dirty || items.some((it) => !it.q.trim() || !it.a.trim())} onClick={save}>
           <Save size={13} aria-hidden="true" /> حفظ التغييرات
         </Button>

@@ -4,16 +4,20 @@ import { getSupabaseAdmin } from "@/lib/supabase/server-admin";
 interface SignupBody {
   email: string;
   password: string;
-  fullName: string;
+  // Optional: self-signup collects only email + password. Profile details are
+  // filled in later (booking / profile completion). Admin-created and invited
+  // users supply these via their own routes, not here.
+  fullName?: string;
   phone?: string;
 }
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-// Self-signup for customers. Uses the service-role auth.admin.createUser with
-// email_confirm:true so the new account can sign in immediately without an
-// extra verification email round-trip. The on-signup trigger inserts the
-// matching profiles + customers rows; we patch full_name + phone after.
+// Self-signup for customers — email + password only. Uses the service-role
+// auth.admin.createUser with email_confirm:true so the new account can sign in
+// immediately without an email verification round-trip. The on-signup trigger
+// inserts the matching profiles + customers rows; name/phone stay null until
+// the user completes their profile during booking/checkout.
 export async function POST(req: NextRequest) {
   let body: SignupBody;
   try { body = await req.json(); } catch {
@@ -21,7 +25,7 @@ export async function POST(req: NextRequest) {
   }
   const email = (body.email ?? "").trim().toLowerCase();
   const password = body.password ?? "";
-  const fullName = (body.fullName ?? "").trim();
+  const fullName = body.fullName?.trim() || null;
   const phone = body.phone?.trim() || null;
 
   if (!EMAIL_RE.test(email)) {
@@ -29,9 +33,6 @@ export async function POST(req: NextRequest) {
   }
   if (password.length < 8) {
     return NextResponse.json({ error: "كلمة المرور يجب أن تكون 8 أحرف على الأقل" }, { status: 400 });
-  }
-  if (!fullName) {
-    return NextResponse.json({ error: "الاسم الكامل مطلوب" }, { status: 400 });
   }
 
   const sb = getSupabaseAdmin();
@@ -54,10 +55,16 @@ export async function POST(req: NextRequest) {
   }
   const userId = created.user.id;
 
-  // Patch profile shape (the on-signup trigger leaves full_name/phone null).
+  // Ensure the role-specific shape (the on-signup trigger leaves name/phone
+  // null). We only stamp role + active here; name/phone are written only when
+  // actually supplied, so an email-only signup leaves them null for later
+  // profile completion.
+  const profilePatch: Record<string, unknown> = { role: "customer", is_active: true };
+  if (fullName) profilePatch.full_name = fullName;
+  if (phone) profilePatch.phone = phone;
   const { error: profErr } = await sb
     .from("profiles")
-    .update({ full_name: fullName, phone, role: "customer", is_active: true })
+    .update(profilePatch)
     .eq("id", userId);
   if (profErr) {
     await sb.auth.admin.deleteUser(userId).catch(() => null);

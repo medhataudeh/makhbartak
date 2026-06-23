@@ -33,7 +33,7 @@ export function CmsPage({ slug, onBack }: Props) {
         <BodyText body={page.bodyAr} />
       )}
       <p className="text-[11px] text-gray-400 mt-6 text-center">
-        آخر تحديث: {new Date(page.updatedAt).toLocaleDateString("ar-SY")}
+        آخر تحديث: {new Date(page.updatedAt).toLocaleDateString("ar-SY-u-nu-latn")}
       </p>
     </Shell>
   );

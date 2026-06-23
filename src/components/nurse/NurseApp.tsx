@@ -817,7 +817,7 @@ function GameWidget({ game }: { game: NurseGamification }) {
       </div>
 
       <div className="grid grid-cols-3 gap-2">
-        <MiniStat Icon={Star} label="إجمالي النقاط" value={(game.totalPoints ?? 0).toLocaleString("ar")} />
+        <MiniStat Icon={Star} label="إجمالي النقاط" value={(game.totalPoints ?? 0).toLocaleString("ar-u-nu-latn")} />
         <MiniStat Icon={Flame} label="الإستمرارية" value={`${game.streak ?? 0} يوم`} />
         <MiniStat Icon={BadgeCheck} label="الشارات" value={badges.length} />
       </div>
@@ -1122,7 +1122,7 @@ function NurseSettings({ nurse, game, onLogout, isOnline, onToggleOnline }: {
             <div aria-hidden="true" className="absolute -top-6 -end-6 w-24 h-24 rounded-full bg-white/15" />
             <p className="text-[11px] uppercase tracking-wide opacity-90 mb-1">المستوى</p>
             <h2 className="text-xl font-bold mb-3">{lvl.name}</h2>
-            <p className="text-3xl font-bold leading-none mb-1">{(game.totalPoints ?? 0).toLocaleString("ar")}</p>
+            <p className="text-3xl font-bold leading-none mb-1">{(game.totalPoints ?? 0).toLocaleString("ar-u-nu-latn")}</p>
             <p className="text-xs opacity-90">إجمالي النقاط</p>
           </section>
         );

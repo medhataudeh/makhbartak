@@ -187,7 +187,10 @@ export interface SignupResult {
 export async function signupCustomer(input: {
   email: string;
   password: string;
-  fullName: string;
+  // Profile details are collected later (booking / profile completion), so
+  // self-signup only needs email + password. Kept optional for the
+  // invitation / admin-created paths that may still pass a name.
+  fullName?: string;
   phone?: string;
 }): Promise<SignupResult> {
   // Step 1: server creates the auth.user + profile + customer row via the

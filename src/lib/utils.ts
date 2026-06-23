@@ -5,18 +5,21 @@ export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
+// `-u-nu-latn` forces Western (English 0-9) digits while keeping the Arabic
+// locale's formatting (grouping, month/weekday names). Prices/dates therefore
+// render "25,000 ل.س" / "16 يونيو" — never Arabic-Indic ٢٥٬٠٠٠.
 export function formatPrice(price: number) {
-  return `${price.toLocaleString("ar-SY")} ل.س`;
+  return `${price.toLocaleString("ar-SY-u-nu-latn")} ل.س`;
 }
 
 export function formatDate(dateStr: string) {
-  return new Date(dateStr).toLocaleDateString("ar-SY", {
+  return new Date(dateStr).toLocaleDateString("ar-SY-u-nu-latn", {
     weekday: "long", year: "numeric", month: "long", day: "numeric",
   });
 }
 
 export function formatTime(dateStr: string) {
-  return new Date(dateStr).toLocaleTimeString("ar-SY", {
+  return new Date(dateStr).toLocaleTimeString("ar-SY-u-nu-latn", {
     hour: "2-digit", minute: "2-digit",
   });
 }

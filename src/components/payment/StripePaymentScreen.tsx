@@ -362,7 +362,7 @@ function SummaryCard({ publicNumber, amountSyp, chargedAmount, providerCurrency,
       </div>
       {exchangeRate && (
         <p className="text-[11px] text-gray-400">
-          سعر الصرف: <span className="lat" dir="ltr">1 {providerCurrency} = {exchangeRate.toLocaleString("ar-SY")} ل.س</span>
+          سعر الصرف: <span className="lat" dir="ltr">1 {providerCurrency} = {exchangeRate.toLocaleString("ar-SY-u-nu-latn")} ل.س</span>
         </p>
       )}
     </div>

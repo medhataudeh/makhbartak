@@ -541,7 +541,7 @@ function Overview({ orders }: { orders: Order[] }) {
         <StatCard icon={<TrendingUp size={20} />} label="طلبات اليوم" value={ADMIN_STATS.todayOrders} color="bg-[#0891B2] text-white" />
         <StatCard icon={<Clock size={20} />} label="قيد الانتظار" value={ADMIN_STATS.pendingOrders} color="bg-amber-500 text-white" />
         <StatCard icon={<CheckCircle size={20} />} label="مكتملة اليوم" value={ADMIN_STATS.completedToday} color="bg-[#059669] text-white" />
-        <StatCard icon={<DollarSign size={20} />} label="الإيرادات (ل.س)" value={ADMIN_STATS.revenue.toLocaleString("ar")} color="bg-purple-600 text-white" />
+        <StatCard icon={<DollarSign size={20} />} label="الإيرادات (ل.س)" value={ADMIN_STATS.revenue.toLocaleString("ar-u-nu-latn")} color="bg-purple-600 text-white" />
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
@@ -2038,7 +2038,7 @@ function GamificationAdmin({ nurses, config, setConfig }: {
             { key: "rank",     label: "#",          render: (_, ) => <span className="font-bold text-[#0891B2]">{leaderboard.indexOf(_) + 1}</span> },
             { key: "name",     label: "الاسم",       render: (x) => x.nurse.name },
             { key: "level",    label: "المستوى",     render: (x) => <Pill color="cyan">{x.game.level.name}</Pill> },
-            { key: "points",   label: "النقاط",      render: (x) => <span className="font-bold">{x.game.totalPoints.toLocaleString("ar")}</span> },
+            { key: "points",   label: "النقاط",      render: (x) => <span className="font-bold">{x.game.totalPoints.toLocaleString("ar-u-nu-latn")}</span> },
             { key: "done",     label: "زيارات",      render: (x) => x.game.totalCompleted },
             { key: "rate",     label: "نسبة النجاح", render: (x) => `${x.game.successRate}%` },
             { key: "rating",   label: "متوسط التقييم", render: (x) => {
@@ -3330,7 +3330,7 @@ function SettingsAdmin() {
         action: "settings_change", entity: "settings", entityId: "global",
         details: "حفظ إعدادات النظام",
       });
-      setSavedAt(new Date().toLocaleTimeString("ar-SY"));
+      setSavedAt(new Date().toLocaleTimeString("ar-SY-u-nu-latn"));
       toast.success("تم الحفظ بنجاح");
     } finally {
       setSaving(false);

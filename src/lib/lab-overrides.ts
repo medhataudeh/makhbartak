@@ -108,6 +108,19 @@ export async function updateLabSelf(id: string, patch: Partial<Lab>): Promise<{ 
     const snake = camelToSnake[k];
     if (snake) wire[snake] = v;
   }
+  // Branding fields arrive nested (LabSettingsSection sends `branding: {...}`),
+  // but the RPC whitelist expects flat snake-case keys. Without this lift the
+  // lab's colors / portal name silently never persist. Only the wire is
+  // touched — `safe` keeps `branding` nested so the local mirror below still
+  // updates the portal's CSS variables immediately.
+  const branding = (safe as { branding?: Lab["branding"] }).branding;
+  if (branding) {
+    if (branding.primaryColor !== undefined) wire.primary_color = branding.primaryColor;
+    if (branding.secondaryColor !== undefined) wire.secondary_color = branding.secondaryColor;
+    if (branding.accentColor !== undefined) wire.accent_color = branding.accentColor;
+    if (branding.portalDisplayName !== undefined) wire.portal_display_name = branding.portalDisplayName;
+    if (branding.logo !== undefined && wire.logo_url === undefined) wire.logo_url = branding.logo;
+  }
   const { apiPatchLab } = await import("./lab-api");
   const r = await apiPatchLab(id, wire);
   if (!r.ok) return r;

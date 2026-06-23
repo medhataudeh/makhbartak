@@ -1,7 +1,7 @@
 "use client";
 import { useState } from "react";
 import { motion } from "framer-motion";
-import { Lock, Mail, User, Phone, Eye, EyeOff, FlaskConical, AlertCircle } from "lucide-react";
+import { Lock, Mail, Eye, EyeOff, FlaskConical, AlertCircle } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { signupCustomer } from "@/lib/auth";
 
@@ -13,9 +13,7 @@ interface Props {
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 export function SignupForm({ onSuccess, onSwitchToLogin }: Props) {
-  const [fullName, setFullName] = useState("");
   const [email, setEmail] = useState("");
-  const [phone, setPhone] = useState("");
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
   const [showPassword, setShowPassword] = useState(false);
@@ -25,17 +23,12 @@ export function SignupForm({ onSuccess, onSwitchToLogin }: Props) {
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
-    if (!fullName.trim()) { setError("الاسم الكامل مطلوب"); return; }
     if (!EMAIL_RE.test(email.trim())) { setError("البريد الإلكتروني غير صالح"); return; }
     if (password.length < 8) { setError("كلمة المرور يجب أن تكون 8 أحرف على الأقل"); return; }
     if (password !== confirm) { setError("كلمتا المرور غير متطابقتين"); return; }
     setLoading(true);
-    const result = await signupCustomer({
-      email: email.trim(),
-      password,
-      fullName: fullName.trim(),
-      phone: phone.trim() || undefined,
-    });
+    // Self-signup is email + password only; name/phone are collected later.
+    const result = await signupCustomer({ email: email.trim(), password });
     setLoading(false);
     if (!result.ok) {
       setError(result.error ?? "تعذر إنشاء الحساب");
@@ -63,27 +56,12 @@ export function SignupForm({ onSuccess, onSwitchToLogin }: Props) {
         </div>
 
         <form onSubmit={submit} className="space-y-4">
-          <Field id="signup-name" label="الاسم الكامل" icon={<User size={16} />}>
-            <input id="signup-name" type="text" autoComplete="name" value={fullName}
-              onChange={(e) => setFullName(e.target.value)}
-              className="w-full h-11 ps-10 pe-3 rounded-xl border border-gray-200 text-sm text-[#164E63] focus:border-[#0891B2] focus:ring-2 focus:ring-[#0891B2]/15 outline-none"
-              required
-            />
-          </Field>
-
           <Field id="signup-email" label="البريد الإلكتروني" icon={<Mail size={16} />}>
             <input id="signup-email" type="email" autoComplete="email" value={email}
               onChange={(e) => setEmail(e.target.value)}
               className="w-full h-11 ps-10 pe-3 rounded-xl border border-gray-200 text-sm text-[#164E63] focus:border-[#0891B2] focus:ring-2 focus:ring-[#0891B2]/15 outline-none"
               style={{ direction: "ltr", textAlign: "right" }}
               required
-            />
-          </Field>
-
-          <Field id="signup-phone" label="رقم الهاتف (اختياري)" icon={<Phone size={16} />}>
-            <input id="signup-phone" type="tel" autoComplete="tel" value={phone}
-              onChange={(e) => setPhone(e.target.value)}
-              className="w-full h-11 ps-10 pe-3 rounded-xl border border-gray-200 text-sm text-[#164E63] focus:border-[#0891B2] focus:ring-2 focus:ring-[#0891B2]/15 outline-none"
             />
           </Field>
 
