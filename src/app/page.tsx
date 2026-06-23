@@ -93,7 +93,7 @@ function CustomerApp() {
   // resets only the navigation state. The auth session lives in cookies
   // and on the auth.users row, separate from this key.
   const NAV_KEY = "makhbartak.customer.nav.v1";
-  const [activeTab, setActiveTabState] = useState<NavTab>(() => {
+  const [activeTab, setActiveTab] = useState<NavTab>(() => {
     if (typeof window === "undefined") return "home";
     try {
       const raw = window.sessionStorage.getItem(NAV_KEY);
@@ -104,7 +104,7 @@ function CustomerApp() {
     } catch {}
     return "home";
   });
-  const [view, setViewState] = useState<AppView>(() => {
+  const [view, setView] = useState<AppView>(() => {
     if (typeof window === "undefined") return "home";
     try {
       const raw = window.sessionStorage.getItem(NAV_KEY);
@@ -117,18 +117,20 @@ function CustomerApp() {
     } catch {}
     return "home";
   });
-  const setActiveTab = (t: NavTab) => {
-    setActiveTabState(t);
-    if (typeof window !== "undefined") {
-      try { window.sessionStorage.setItem(NAV_KEY, JSON.stringify({ tab: t, view })); } catch {}
-    }
-  };
-  const setView = (v: AppView) => {
-    setViewState(v);
-    if (typeof window !== "undefined") {
-      try { window.sessionStorage.setItem(NAV_KEY, JSON.stringify({ tab: activeTab, view: v })); } catch {}
-    }
-  };
+  // Single writer for the nav hint. The previous approach wrapped each setter
+  // to also persist the OTHER field — but it read that field from a stale
+  // closure, so tapping "home" from "account" wrote {tab:"account"} back to
+  // storage and a refresh bounced the user to account. Persisting both fields
+  // together from an effect always uses the committed render values. Transient
+  // booking views collapse to "home" so a mid-booking refresh lands on a valid
+  // screen rather than a broken view missing its in-memory booking state.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const persistView: AppView = view === "notifications" ? "notifications" : "home";
+    try {
+      window.sessionStorage.setItem(NAV_KEY, JSON.stringify({ tab: activeTab, view: persistView }));
+    } catch {}
+  }, [activeTab, view]);
   const [booking, setBooking] = useState<BookingState>({});
   const [pendingPackage, setPendingPackage] = useState<Package | null>(null);
   const [lastIdempotencyKey, setLastIdempotencyKey] = useState<string | null>(null);
@@ -158,10 +160,7 @@ function CustomerApp() {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setView("home");
     if (next) next();
-    // setView is captured via closure intentionally — including it would
-    // re-trigger this effect on every render because the wrapper is
-    // re-created each time.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // setView is a stable useState setter, so it needs no dep entry.
   }, [isCustomer, view]);
   // Live-tracked Order for the success screen. After the server swaps the
   // placeholder for the canonical UUID + server-generated public_number, this
