@@ -3,14 +3,94 @@ import { useEffect } from "react";
 import { motion } from "framer-motion";
 import { Clock, Droplets, Pill, IdCard, Shirt, Share2, ClipboardList, CheckCircle } from "lucide-react";
 import { Button } from "@/components/ui/Button";
+import { useToast } from "@/components/ui/Toast";
 import { useOrders } from "@/lib/store";
 import { instructionsForOrder, isStructuredInstructions } from "@/lib/order-utils";
-import type { TestInstruction, Instruction } from "@/lib/types";
+import { formatDate, formatPrice, getShiftLabel } from "@/lib/utils";
+import type { Order, TestInstruction, Instruction } from "@/lib/types";
 
 interface OrderSuccessProps {
   orderId: string;
   onViewOrder: () => void;
-  onShare: () => void;
+}
+
+// Build the rich, RTL-friendly confirmation message shared via the
+// "مشاركة تفاصيل الطلب" action. Pure presentation of already-hydrated canonical
+// order fields — no financial math, no internal ids (db id / userId /
+// nationalId / nurse / lab / coordinates are deliberately omitted). All numbers
+// flow through formatPrice/formatDate, which force English (latn) digits.
+function buildShareText(
+  orderNumber: string,
+  order: Order | undefined,
+  instructions: Instruction[] | TestInstruction[],
+  structured: boolean,
+): string {
+  const lines: string[] = ["تم حجز موعدك بنجاح."];
+  const add = (label: string, value?: string | null) => {
+    if (value && value.trim()) lines.push(`${label}: ${value.trim()}`);
+  };
+
+  lines.push("");
+  add("رقم الطلب", orderNumber);
+
+  if (order) {
+    add("التاريخ", order.visitDate ? formatDate(order.visitDate) : null);
+    add("الفترة", getShiftLabel(order.shift));
+    add("المريض", order.patient?.name);
+    const addr = [order.address?.label, order.address?.description, order.address?.city]
+      .filter((p) => p && p.trim())
+      .join(" — ");
+    add("العنوان", addr);
+
+    const packageName = order.packageNameAr ?? order.packageSnapshot?.nameAr;
+    if (packageName) {
+      lines.push("");
+      add("الباقة", packageName);
+    }
+
+    const tests = order.items.map((it) => it.nameAr).filter(Boolean);
+    if (tests.length > 0) {
+      lines.push("");
+      lines.push("التحاليل المطلوبة:");
+      tests.forEach((t) => lines.push(`• ${t}`));
+    }
+
+    lines.push("");
+    add("الإجمالي", formatPrice(order.total));
+    const method = order.paymentMethod === "online" ? "دفع إلكتروني" : "نقداً عند الزيارة";
+    const statusAr: Record<Order["paymentStatus"], string> = {
+      pending: "بانتظار الدفع",
+      paid: "مدفوع",
+      failed: "لم يكتمل الدفع",
+      refunded: "مُسترد",
+    };
+    add("طريقة الدفع", `${method} (${statusAr[order.paymentStatus]})`);
+  }
+
+  // Preparation instructions for the selected tests/package, when available.
+  lines.push("");
+  lines.push("تعليمات التحضير:");
+  if (instructions.length > 0) {
+    instructions.forEach((ins) => {
+      if (structured) {
+        const t = ins as TestInstruction;
+        lines.push(`• ${t.titleAr}${t.bodyAr ? ` — ${t.bodyAr}` : ""}`);
+      } else {
+        lines.push(`• ${(ins as Instruction).textAr}`);
+      }
+    });
+  } else {
+    lines.push("• يرجى الالتزام بأي تعليمات تظهر في تفاصيل الطلب أو يرسلها فريق الدعم.");
+  }
+
+  lines.push("");
+  lines.push("تعليمات عامة قبل الزيارة:");
+  lines.push("• تجهيز الهوية أو معلومات المريض إن لزم");
+  lines.push("• التواجد في العنوان قبل الموعد");
+  lines.push("• اتباع تعليمات الصيام أو شرب الماء حسب التحاليل");
+  lines.push("• التواصل مع الدعم في حال الحاجة لتعديل الموعد");
+
+  return lines.join("\n");
 }
 
 const ICON_MAP: Record<string, React.ReactNode> = {
@@ -21,7 +101,8 @@ const ICON_MAP: Record<string, React.ReactNode> = {
   shirt: <Shirt size={20} className="text-gray-500" aria-hidden="true" />,
 };
 
-export function OrderSuccess({ orderId, onViewOrder, onShare }: OrderSuccessProps) {
+export function OrderSuccess({ orderId, onViewOrder }: OrderSuccessProps) {
+  const toast = useToast();
   // Look up the just-created order by its public number so we can render the
   // aggregated, deduped instructions for its actual items. Falls back to an
   // empty list which the helper resolves to platform defaults.
@@ -31,6 +112,26 @@ export function OrderSuccess({ orderId, onViewOrder, onShare }: OrderSuccessProp
     ? instructionsForOrder(matched)
     : ([] as Instruction[] | TestInstruction[]);
   const aggregatedStructured = aggregated.length > 0 && isStructuredInstructions(aggregated);
+
+  const handleShare = async () => {
+    const text = buildShareText(orderId, matched, aggregated, aggregatedStructured);
+    if (typeof navigator !== "undefined" && typeof navigator.share === "function") {
+      try {
+        await navigator.share({ title: "مختبرك — تأكيد الطلب", text });
+        return;
+      } catch (err) {
+        // User dismissed the native sheet — respect that, don't copy.
+        if ((err as Error)?.name === "AbortError") return;
+        // Any other failure falls through to the clipboard path.
+      }
+    }
+    try {
+      await navigator.clipboard.writeText(text);
+      toast.success("تم نسخ تفاصيل الطلب — يمكنك لصقها في واتساب");
+    } catch {
+      toast.error("تعذّرت المشاركة، حاول مرة أخرى");
+    }
+  };
 
   useEffect(() => {
     if (typeof navigator !== "undefined" && "vibrate" in navigator) {
@@ -137,9 +238,9 @@ export function OrderSuccess({ orderId, onViewOrder, onShare }: OrderSuccessProp
         className="fixed md:static bottom-0 inset-x-0 px-4 pt-3 md:pt-6 bg-white border-t md:border-0 border-gray-100 space-y-2 md:space-y-3 safe-bottom-md md:pb-6 z-30"
       >
         <div className="max-w-md mx-auto space-y-2 md:space-y-3">
-          <Button onClick={onShare} variant="outline" size="lg" className="w-full">
+          <Button onClick={handleShare} variant="outline" size="lg" className="w-full">
             <Share2 size={17} aria-hidden="true" />
-            مشاركة التعليمات
+            مشاركة تفاصيل الطلب
           </Button>
           <Button onClick={onViewOrder} size="lg" className="w-full">
             <ClipboardList size={17} aria-hidden="true" />

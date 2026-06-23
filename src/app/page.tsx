@@ -448,11 +448,6 @@ function CustomerApp() {
               setActiveTab("orders"); setView("home");
               setBooking({}); setPendingPackage(null);
             }}
-            onShare={() => {
-              if (typeof navigator !== "undefined" && navigator.share) {
-                navigator.share({ title: "مختبرك", text: "تعليمات التحضير للتحاليل", url: window.location.href });
-              }
-            }}
           />
         );
       default:
