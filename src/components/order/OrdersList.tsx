@@ -7,6 +7,7 @@ import { useSession } from "@/lib/auth";
 import { formatDate, formatPrice } from "@/lib/utils";
 import type { Order } from "@/lib/types";
 import { CustomerStatusBadge } from "@/components/ui/CustomerStatusBadge";
+import { StickyHeader } from "@/components/ui/StickyHeader";
 import { toCustomerStatus } from "@/lib/order-status";
 import { customerOrderRef } from "@/lib/order-utils";
 import { OrderDetails } from "./OrderDetails";
@@ -34,7 +35,7 @@ export function OrdersList({ onOpenNotifications, unreadNotifications = 0, onPay
   return (
     <>
       <div className="flex flex-col pb-nav">
-        <div className="px-4 pt-5 pb-3 flex items-center justify-between gap-3">
+        <StickyHeader className="px-4 pb-3 flex items-center justify-between gap-3">
           <div>
             <h1 className="text-xl font-bold text-[#164E63]">طلباتي</h1>
             <p className="text-sm text-gray-400 mt-0.5">{orders.length} طلبات</p>
@@ -53,7 +54,7 @@ export function OrdersList({ onOpenNotifications, unreadNotifications = 0, onPay
               )}
             </button>
           )}
-        </div>
+        </StickyHeader>
 
         {orders.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-20 px-6 text-center">

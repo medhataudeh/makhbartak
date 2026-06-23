@@ -10,6 +10,7 @@ import { formatPrice } from "@/lib/utils";
 import type { Test } from "@/lib/types";
 import { Button } from "@/components/ui/Button";
 import { BackButton } from "@/components/ui/BackButton";
+import { StickyHeader } from "@/components/ui/StickyHeader";
 
 interface PrescriptionUploaderProps {
   // Phase 3.6: returns the selected tests AND the storage path of the
@@ -112,10 +113,10 @@ export function PrescriptionUploader({ onContinue, onBack }: PrescriptionUploade
 
   return (
     <div className="flex flex-col h-full bg-white">
-      <div className="px-4 py-4 border-b border-gray-100 flex items-center gap-3 bg-white">
+      <StickyHeader className="px-4 pb-4 flex items-center gap-3">
         <BackButton onClick={onBack} />
         <h1 className="text-[16px] font-bold text-[#164E63]">ارفع وصفة طبية</h1>
-      </div>
+      </StickyHeader>
 
       <input
         ref={fileInputRef}

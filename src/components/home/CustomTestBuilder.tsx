@@ -7,6 +7,7 @@ import { searchTests, formatPrice } from "@/lib/utils";
 import type { Test } from "@/lib/types";
 import { Button } from "@/components/ui/Button";
 import { BackButton } from "@/components/ui/BackButton";
+import { StickyHeader } from "@/components/ui/StickyHeader";
 
 interface CustomTestBuilderProps {
   onContinue: (tests: Test[]) => void;
@@ -31,8 +32,8 @@ export function CustomTestBuilder({ onContinue, onBack }: CustomTestBuilderProps
 
   return (
     <div className="flex flex-col h-full">
-      {/* Header */}
-      <div className="px-4 py-4 bg-white border-b border-gray-100">
+      {/* Header — sticky so title + back + search stay reachable while scrolling */}
+      <StickyHeader className="px-4 pb-4">
         <div className="flex items-center gap-3 mb-4">
           <BackButton onClick={onBack} />
           <h1 className="text-[16px] font-bold text-[#164E63]">اختر تحاليلك</h1>
@@ -58,7 +59,7 @@ export function CustomTestBuilder({ onContinue, onBack }: CustomTestBuilderProps
             </button>
           )}
         </div>
-      </div>
+      </StickyHeader>
 
       {/* Selected chips */}
       <AnimatePresence>

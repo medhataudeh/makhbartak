@@ -16,6 +16,7 @@ import {
 import { useSession } from "@/lib/auth";
 import { Button } from "@/components/ui/Button";
 import { BackButton } from "@/components/ui/BackButton";
+import { StickyHeader } from "@/components/ui/StickyHeader";
 import { CmsPage } from "@/components/account/CmsPage";
 
 type SubPage = "profile" | "addresses" | "patients" | "payment" | "support" | "terms" | "privacy";
@@ -37,9 +38,9 @@ export function AccountScreen({ onLogout, onDeleteAccount }: AccountScreenProps)
 
   return (
     <div className="flex flex-col pb-nav bg-gray-50/40 min-h-screen">
-      <div className="px-4 pt-5 pb-4 bg-white border-b border-gray-100">
+      <StickyHeader className="px-4 pb-4">
         <h1 className="text-xl font-bold text-[#164E63]">حسابي</h1>
-      </div>
+      </StickyHeader>
 
       {/* Profile card */}
       <div className="px-4 py-4">
@@ -462,10 +463,10 @@ function HubItem({ icon, label, onClick }: { icon: React.ReactNode; label: strin
 function SubPageShell({ title, onBack, children }: { title: string; onBack: () => void; children: React.ReactNode }) {
   return (
     <>
-      <div className="flex items-center gap-3 px-4 pb-4 bg-white border-b border-gray-100 safe-top-md">
+      <StickyHeader className="flex items-center gap-3 px-4 pb-4">
         <BackButton onClick={onBack} />
         <h2 className="text-[15px] font-bold text-[#164E63] flex-1">{title}</h2>
-      </div>
+      </StickyHeader>
       <div className="flex-1 overflow-y-auto p-4">
         {children}
       </div>
