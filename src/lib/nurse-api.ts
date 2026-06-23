@@ -61,11 +61,21 @@ export async function apiSetNursePrep(
 }
 
 // ─── Daily prep confirmation (server-side day-start gate) ──────────────────
+// One confirmed tool line: the auto-computed required quantity (0 when no
+// test→tool mapping drove it) and the quantity the nurse confirmed preparing.
+export interface PrepConfirmedItem {
+  toolId: string;
+  nameAr?: string;
+  unit?: string;
+  required?: number;
+  prepared?: number;
+}
+
 export interface NursePrepConfirmation {
   nurseId: string;
   workDate: string;
   confirmedAt: string;
-  confirmedItems: string[];
+  confirmedItems: PrepConfirmedItem[];
 }
 
 export async function apiGetPrepConfirmation(
@@ -91,7 +101,7 @@ export async function apiGetPrepConfirmation(
 export async function apiConfirmPrep(
   nurseId: string,
   workDate: string,
-  confirmedItems: string[],
+  confirmedItems: PrepConfirmedItem[],
 ): Promise<{ ok: boolean; error?: string }> {
   const res = await fetch(`/api/nurses/${encodeURIComponent(nurseId)}/prep-confirmation`, {
     method: "POST",

@@ -1,18 +1,18 @@
 "use client";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import Image from "next/image";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Home as HomeIcon, Calendar, Settings as SettingsIcon, Bell, MapPin, Phone,
   CheckCircle2, AlertCircle, Navigation, Clock, ChevronRight, Trophy, Flame,
   Star, Award, TrendingUp, Target, BadgeCheck, ListChecks, ArrowLeft, Package,
-  XCircle, Wrench, Droplets, Wallet,
+  XCircle, Wrench, Droplets, Wallet, Plus, Minus,
 } from "lucide-react";
 import { NurseWallet } from "@/components/nurse/NurseWallet";
 import {
   FAILED_COLLECTION_REASONS, NURSE_BADGES,
 } from "@/lib/mock-data";
-import { apiConfirmPrep } from "@/lib/nurse-api";
+import { apiConfirmPrep, apiGetPrepConfirmation, type PrepConfirmedItem } from "@/lib/nurse-api";
 import { useNurseGamification } from "@/lib/nurse-gamification";
 import { usePersistedNav } from "@/lib/use-persisted-nav";
 import type { Nurse, NurseRouteStop, NurseGamification, Notification, Order } from "@/lib/types";
@@ -38,11 +38,23 @@ import { AuthLoading } from "@/components/auth/AuthLoading";
 import { NurseLogin } from "@/components/nurse/NurseLogin";
 import { USE_SUPABASE } from "@/lib/supabase/flags";
 import { isUuid } from "@/lib/supabase/uuid";
-import { hydratePrep, setPrep, usePrep } from "@/lib/nurse-prep";
 import { hydrateNurseOnline, setNurseOnline, useNurseOnline } from "@/lib/nurse-online";
 import { hydrateShortageRequestsForNurse } from "@/lib/shortage-requests";
 
 type NurseTab = "home" | "schedule" | "wallet" | "settings";
+
+// One row of the morning prep list. `required` is the auto-computed quantity
+// (sum of quantity_per_test across today's tests); `hasQuantity` is false in the
+// presence-only fallback (no test→tool mapping), where `required` is just 1 and
+// the row is a tick. `mustCover` rows block day-start until prepared >= required.
+type PrepItem = {
+  toolId: string;
+  nameAr: string;
+  unit: string;
+  required: number;
+  hasQuantity: boolean;
+  mustCover: boolean;
+};
 
 // Compose the nurse-visible address string. Spec: don't show the "label"
 // (e.g. "المنزل") — show area/city + description so the nurse sees where
@@ -124,45 +136,31 @@ function NurseAppInner({ nurseId, onLogout }: { nurseId: string; onLogout: () =>
 
   const [tab, setTab] = usePersistedNav<NurseTab>("makhbartak.nurse.nav.v1", "home");
 
-  // Prep checklist: a Set of "checked" tool ids persisted per-day. The visible
-  // checklist rows are derived from aggregateNurseTools(), so adding/removing
-  // orders, tweaking buffer pct, or editing a test's nurseTools updates the
-  // list automatically.
-  const dateKey = todayStr;
-  const prep = usePrep(nurseId, dateKey);
-  const checkedIds = useMemo(() => new Set(prep.checkedIds), [prep.checkedIds]);
-
-  // The prep checklist used to gate "started" via prep.started — which was
-  // re-asked on every login (logout cleared it). Now: the nurse has a
-  // persistent `is_online` flag in the DB. Checklist appears only when
-  // offline; on tapping "بدء العمل" we flip to online server-side.
+  // "started" is the persistent DB `is_online` flag. The prep list appears only
+  // while offline; tapping "بدأت يومي" flips to online server-side.
   const isOnline = useNurseOnline();
   const started = isOnline;
 
+  // Explicit prepared quantities the nurse has entered or loaded, keyed by tool
+  // id. Anything NOT in this map falls back to the computed required amount at
+  // render time (see `preparedFor`), so there is no seeding effect. Seeded from
+  // today's confirmation if one exists; persisted back on day start.
+  const [prepared, setPrepared] = useState<Record<string, number>>({});
+
   useEffect(() => {
-    if (USE_SUPABASE && isUuid(nurseId)) {
-      void hydratePrep(nurseId, todayStr);
-      void hydrateNurseOnline(nurseId);
-    }
+    if (!(USE_SUPABASE && isUuid(nurseId))) return;
+    void hydrateNurseOnline(nurseId);
+    void (async () => {
+      const conf = await apiGetPrepConfirmation(nurseId, todayStr);
+      if (!conf?.confirmedItems?.length) return;
+      const seed: Record<string, number> = {};
+      for (const it of conf.confirmedItems) {
+        if (it?.toolId) seed[it.toolId] = Number(it.prepared ?? 0);
+      }
+      // `prev` wins so a value the nurse already touched this session is kept.
+      setPrepared((prev) => ({ ...seed, ...prev }));
+    })();
   }, [nurseId, todayStr]);
-
-  const persistChecklist = (next: Set<string>) => {
-    void setPrep(nurseId, dateKey, { checkedIds: Array.from(next) });
-  };
-
-  const startDay = async () => {
-    // Day-start is server-gated: record an auditable prep confirmation for
-    // today, THEN flip the persistent online flag. The /online route refuses
-    // to go online without today's confirmation, so the gate is not
-    // frontend-only.
-    const conf = await apiConfirmPrep(nurseId, todayStr, Array.from(checkedIds));
-    if (!conf.ok) {
-      toast.error(conf.error ?? "تعذر تأكيد جاهزية الأدوات");
-      return;
-    }
-    const r = await setNurseOnline(nurseId, true);
-    if (!r.ok) toast.error(r.error ?? "تعذر تفعيل وضع العمل");
-  };
 
   // Notifications — DB-only. The mock seed has been removed; admin-created
   // nurses see whatever rows the notifications table has for their
@@ -309,7 +307,7 @@ function NurseAppInner({ nurseId, onLogout }: { nurseId: string; onLogout: () =>
     return r;
   };
 
-  // ─── Morning prep checklist (aggregated from today's orders) ─────────────
+  // ─── Morning prep: required tools + quantities (from today's orders) ──────
   const toolsCatalog = useLibraryTools();
   const checklistDefaults = useChecklistDefaults();
   const todaysOrders = stopsHydrated.map((s) => s.order);
@@ -318,30 +316,59 @@ function NurseAppInner({ nurseId, onLogout }: { nurseId: string; onLogout: () =>
     defaults: checklistDefaults,
     toolsCatalog,
   });
-  // Render rows for the visible checklist. The precise path is per-test tool
-  // aggregation (lab_test_required_tools → Test.nurseTools). When no test
-  // carries structured tools, fall back to the admin-managed nurse_tools
-  // catalog (every active tool) so the nurse always has a required-prep list
-  // to confirm before starting the day. This list is admin-configurable from
-  // الإدارة → أدوات الممرضين.
-  const checklist: { id: string; label: string; checked: boolean; required: boolean }[] =
-    aggregated.length > 0
-      ? aggregated.map((r) => ({
-          id: r.toolId,
-          label: r.qty > 0 ? `${r.nameAr} × ${r.qty} ${r.unit}` : r.nameAr,
-          checked: checkedIds.has(r.toolId),
-          required: r.required,
-        }))
-      : toolsCatalog
-          .filter((t) => t.isActive)
-          .map((t) => ({
-            id: t.id, label: t.nameAr, checked: checkedIds.has(t.id), required: true,
-          }));
 
-  const onToggleCheck = (id: string) => {
-    const next = new Set(checkedIds);
-    if (next.has(id)) next.delete(id); else next.add(id);
-    persistChecklist(next);
+  // Primary path: per-test tool requirements (lab_test_required_tools →
+  // Test.nurseTools) summed across today's orders, so each tool shows the exact
+  // quantity needed (`required` = raw summed quantity). When no test carries a
+  // tool mapping we fall back to the admin nurse_tools catalog as a plain
+  // presence checklist and flag that quantities weren't auto-computed.
+  const hasMapping = aggregated.length > 0;
+  const prepItems: PrepItem[] = hasMapping
+    ? aggregated.map((r) => ({
+        toolId: r.toolId, nameAr: r.nameAr, unit: r.unit,
+        required: r.qtyRaw, hasQuantity: true, mustCover: r.required,
+      }))
+    : toolsCatalog.filter((t) => t.isActive).map((t) => ({
+        toolId: t.id, nameAr: t.nameAr, unit: t.unit,
+        required: 1, hasQuantity: false, mustCover: true,
+      }));
+
+  // Effective prepared amount: an explicit entry wins, otherwise default to the
+  // required quantity (quantity mode — the nurse confirms/adjusts) or 0
+  // (presence mode — the nurse ticks). Derived at render, so no seeding effect.
+  const preparedFor = (it: PrepItem) => prepared[it.toolId] ?? (it.hasQuantity ? it.required : 0);
+  const thresholdFor = (it: PrepItem) => (it.hasQuantity ? it.required : 1);
+  const isCovered = (it: PrepItem) => preparedFor(it) >= thresholdFor(it);
+  const allReady = prepItems.length > 0 && prepItems.filter((it) => it.mustCover).every(isCovered);
+  const readyCount = prepItems.filter(isCovered).length;
+
+  // Default-filled map handed to the UI so rows render the effective quantities.
+  const effectivePrepared: Record<string, number> = {};
+  for (const it of prepItems) effectivePrepared[it.toolId] = preparedFor(it);
+
+  const setPreparedFor = (toolId: string, qty: number) =>
+    setPrepared((prev) => ({ ...prev, [toolId]: Math.max(0, Math.floor(qty) || 0) }));
+
+  const startDay = async () => {
+    // Quantity coverage is a UX gate; the hard server gate is the confirmation
+    // row itself (the /online route refuses to go online without it). We persist
+    // the full required/prepared breakdown into the confirmation for audit.
+    if (!allReady) {
+      toast.error("يرجى تجهيز جميع الأدوات بالكميات المطلوبة قبل بدء اليوم");
+      return;
+    }
+    const items: PrepConfirmedItem[] = prepItems.map((it) => ({
+      toolId: it.toolId, nameAr: it.nameAr, unit: it.unit,
+      required: it.hasQuantity ? it.required : 0,
+      prepared: preparedFor(it),
+    }));
+    const conf = await apiConfirmPrep(nurseId, todayStr, items);
+    if (!conf.ok) {
+      toast.error(conf.error ?? "تعذر تأكيد جاهزية الأدوات");
+      return;
+    }
+    const r = await setNurseOnline(nurseId, true);
+    if (!r.ok) toast.error(r.error ?? "تعذر تفعيل وضع العمل");
   };
 
   return (
@@ -353,9 +380,13 @@ function NurseAppInner({ nurseId, onLogout }: { nurseId: string; onLogout: () =>
             game={game}
             unread={unread}
             today={todayStr}
-            checklist={checklist}
+            prepItems={prepItems}
+            hasMapping={hasMapping}
+            prepared={effectivePrepared}
+            onChangePrepared={setPreparedFor}
+            allReady={allReady}
+            readyCount={readyCount}
             started={started}
-            onToggleCheck={onToggleCheck}
             onStartDay={startDay}
             stops={stopsHydrated}
             nextStop={nextStop}
@@ -463,16 +494,21 @@ function NurseAppInner({ nurseId, onLogout }: { nurseId: string; onLogout: () =>
 // ────────────────────────────── Home ────────────────────────────────────────
 
 function NurseHome({
-  nurse, game, unread, today, checklist, started, onToggleCheck, onStartDay,
+  nurse, game, unread, today, prepItems, hasMapping, prepared, onChangePrepared,
+  allReady, readyCount, started, onStartDay,
   stops, nextStop, completed, remaining, failed, onOpenNotifs, onOpenStop,
 }: {
   nurse: Nurse;
   game: NurseGamification;
   unread: number;
   today: string;
-  checklist: { id: string; label: string; checked: boolean; required?: boolean }[];
+  prepItems: PrepItem[];
+  hasMapping: boolean;
+  prepared: Record<string, number>;
+  onChangePrepared: (toolId: string, qty: number) => void;
+  allReady: boolean;
+  readyCount: number;
   started: boolean;
-  onToggleCheck: (id: string) => void;
   onStartDay: () => void;
   stops: NurseRouteStop[];
   nextStop?: NurseRouteStop;
@@ -482,8 +518,6 @@ function NurseHome({
   onOpenNotifs: () => void;
   onOpenStop: (s: NurseRouteStop) => void;
 }) {
-  const checkedCount = checklist.filter((c) => c.checked).length;
-  const allChecked = checklist.length > 0 && checkedCount === checklist.length;
   const greeting = (() => {
     const h = new Date().getHours();
     if (h < 12) return "صباح الخير";
@@ -539,11 +573,13 @@ function NurseHome({
       {!started ? (
         <>
           <PrepChecklist
-            checklist={checklist}
-            onToggle={onToggleCheck}
+            items={prepItems}
+            hasMapping={hasMapping}
+            prepared={prepared}
+            onChange={onChangePrepared}
             onStart={onStartDay}
-            allChecked={allChecked}
-            checkedCount={checkedCount}
+            allReady={allReady}
+            readyCount={readyCount}
           />
           <button
             onClick={() => setShortageOpen(true)}
@@ -555,8 +591,8 @@ function NurseHome({
         </>
       ) : (
         <>
-          {/* Day started — checklist becomes read-only via this entry. */}
-          <TodayToolsCard onOpen={() => setReviewOpen(true)} totalCount={checklist.length} checkedCount={checkedCount} />
+          {/* Day started — prep list becomes read-only via this entry. */}
+          <TodayToolsCard onOpen={() => setReviewOpen(true)} totalCount={prepItems.length} readyCount={readyCount} />
 
           {stops.length === 0 ? (
             <div className="bg-white rounded-2xl border border-gray-100 p-6 text-center">
@@ -609,22 +645,29 @@ function NurseHome({
       {/* Today's tools — read-only review (post-start) */}
       <BottomSheet open={reviewOpen} onClose={() => setReviewOpen(false)} title="أدواتي اليوم">
         <div className="px-4 pb-4">
-          <p className="text-[11px] text-gray-500 mb-3">قائمة الأدوات التي حضّرتها هذا الصباح. للقراءة فقط.</p>
+          <p className="text-[11px] text-gray-500 mb-3">الكميات التي جهّزتها هذا الصباح. للقراءة فقط.</p>
           <ul className="space-y-1.5">
-            {checklist.map((it) => (
-              <li
-                key={it.id}
-                className="flex items-center gap-3 bg-gray-50 rounded-xl px-3 py-2.5 text-sm text-[#164E63]"
-              >
-                <span className={`w-5 h-5 rounded-full border-2 flex items-center justify-center flex-shrink-0 ${it.checked ? "border-[#0891B2] bg-[#0891B2]" : "border-gray-300"}`}>
-                  {it.checked && <CheckCircle2 size={11} className="text-white" aria-hidden="true" />}
-                </span>
-                <span className="flex-1">{it.label}</span>
-                {it.required && (
-                  <span className="text-[10px] text-amber-700 bg-amber-50 px-1.5 py-0.5 rounded">مطلوب</span>
-                )}
-              </li>
-            ))}
+            {prepItems.map((it) => {
+              const prep = prepared[it.toolId] ?? 0;
+              return (
+                <li
+                  key={it.toolId}
+                  className="flex items-center gap-3 bg-gray-50 rounded-xl px-3 py-2.5 text-sm text-[#164E63]"
+                >
+                  <span className="flex-1">{it.nameAr}</span>
+                  {it.hasQuantity ? (
+                    <span className="text-[11px] text-gray-500">
+                      جُهّز <span className="lat font-semibold text-[#164E63]">{prep}</span>
+                      {" / "}مطلوب <span className="lat">{it.required}</span> {it.unit}
+                    </span>
+                  ) : (
+                    <span className={`w-5 h-5 rounded-full border-2 flex items-center justify-center flex-shrink-0 ${prep >= 1 ? "border-[#0891B2] bg-[#0891B2]" : "border-gray-300"}`}>
+                      {prep >= 1 && <CheckCircle2 size={11} className="text-white" aria-hidden="true" />}
+                    </span>
+                  )}
+                </li>
+              );
+            })}
           </ul>
         </div>
       </BottomSheet>
@@ -632,7 +675,7 @@ function NurseHome({
   );
 }
 
-function TodayToolsCard({ onOpen, totalCount, checkedCount }: { onOpen: () => void; totalCount: number; checkedCount: number }) {
+function TodayToolsCard({ onOpen, totalCount, readyCount }: { onOpen: () => void; totalCount: number; readyCount: number }) {
   return (
     <button
       onClick={onOpen}
@@ -645,30 +688,32 @@ function TodayToolsCard({ onOpen, totalCount, checkedCount }: { onOpen: () => vo
         <p className="text-sm font-bold text-[#164E63]">أدواتي اليوم</p>
         <p className="text-[11px] text-gray-500 mt-0.5">عرض الأدوات والكميات بعد بدء اليوم — للقراءة فقط</p>
       </div>
-      <span className="text-[11px] font-semibold text-[#0891B2]">{checkedCount} / {totalCount}</span>
+      <span className="text-[11px] font-semibold text-[#0891B2] lat">{readyCount} / {totalCount}</span>
     </button>
   );
 }
 
 function PrepChecklist({
-  checklist, onToggle, onStart, allChecked, checkedCount,
+  items, hasMapping, prepared, onChange, onStart, allReady, readyCount,
 }: {
-  checklist: { id: string; label: string; checked: boolean; required?: boolean }[];
-  onToggle: (id: string) => void;
+  items: PrepItem[];
+  hasMapping: boolean;
+  prepared: Record<string, number>;
+  onChange: (toolId: string, qty: number) => void;
   onStart: () => void;
-  allChecked: boolean;
-  checkedCount: number;
+  allReady: boolean;
+  readyCount: number;
 }) {
-  const pct = checklist.length > 0 ? Math.round((checkedCount / checklist.length) * 100) : 0;
-  if (checklist.length === 0) {
+  if (items.length === 0) {
     return (
       <div className="bg-white rounded-2xl border border-gray-100 p-6 text-center">
         <Wrench size={28} className="text-gray-300 mx-auto mb-2" aria-hidden="true" />
-        <p className="text-sm text-gray-500">لا توجد زيارات اليوم</p>
+        <p className="text-sm text-gray-500">لا توجد أدوات لتجهيزها اليوم</p>
         <button onClick={onStart} className="mt-3 text-xs text-[#0891B2] cursor-pointer">بدأ يومي</button>
       </div>
     );
   }
+  const pct = Math.round((readyCount / items.length) * 100);
   return (
     <section className="bg-white rounded-2xl border border-gray-100 p-4 space-y-3" aria-labelledby="prep-title">
       <div className="flex items-start gap-3">
@@ -676,11 +721,22 @@ function PrepChecklist({
           <Wrench size={17} className="text-[#0891B2]" aria-hidden="true" />
         </div>
         <div className="flex-1">
-          <h2 id="prep-title" className="text-sm font-bold text-[#164E63]">جهّز أدوات اليوم</h2>
-          <p className="text-[11px] text-gray-500">تأكد من وجود كل ما يلزم لزيارات اليوم</p>
+          <h2 id="prep-title" className="text-sm font-bold text-[#164E63]">الأدوات المطلوبة لليوم</h2>
+          <p className="text-[11px] text-gray-500">
+            {hasMapping
+              ? "الكميات محسوبة تلقائياً حسب زيارات اليوم — أكّد ما جهّزته"
+              : "أكّد توفّر كل أداة قبل بدء اليوم"}
+          </p>
         </div>
-        <span className="text-xs font-semibold text-[#0891B2]">{checkedCount}/{checklist.length}</span>
+        <span className="text-xs font-semibold text-[#0891B2] lat">{readyCount}/{items.length}</span>
       </div>
+
+      {!hasMapping && (
+        <div className="flex items-start gap-2 bg-amber-50 border border-amber-100 rounded-xl px-3 py-2">
+          <AlertCircle size={14} className="text-amber-500 flex-shrink-0 mt-0.5" aria-hidden="true" />
+          <p className="text-[11px] text-amber-700 leading-relaxed">لم يتم تحديد الكميات تلقائياً — أكّد توفّر الأدوات.</p>
+        </div>
+      )}
 
       {/* Progress */}
       <div className="h-1.5 bg-gray-100 rounded-full overflow-hidden">
@@ -693,42 +749,97 @@ function PrepChecklist({
       </div>
 
       <ul className="space-y-1.5" role="list">
-        {checklist.map((item) => (
-          <li key={item.id}>
-            <button
-              type="button"
-              role="checkbox"
-              aria-checked={item.checked}
-              onClick={() => onToggle(item.id)}
-              className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl border text-start transition-all cursor-pointer ${
-                item.checked ? "bg-emerald-50 border-emerald-100" : "bg-white border-gray-100 active:bg-gray-50"
-              }`}
-            >
-              <span className={`w-5 h-5 rounded-md flex items-center justify-center border-2 flex-shrink-0 ${
-                item.checked ? "bg-[#059669] border-[#059669]" : "bg-white border-gray-300"
-              }`}>
-                {item.checked && <CheckCircle2 size={14} className="text-white" aria-hidden="true" strokeWidth={3} />}
-              </span>
-              <span className={`text-sm flex-1 ${item.checked ? "text-emerald-700 font-medium" : "text-[#164E63]"}`}>
-                {item.label}
-              </span>
-            </button>
-          </li>
+        {items.map((it) => (
+          <PrepRow
+            key={it.toolId}
+            item={it}
+            prepared={prepared[it.toolId] ?? 0}
+            onChange={(q) => onChange(it.toolId, q)}
+          />
         ))}
       </ul>
 
-      <Button
-        size="lg"
-        className="w-full"
-        onClick={onStart}
-        disabled={!allChecked}
-      >
+      <Button size="lg" className="w-full" onClick={onStart} disabled={!allReady}>
         بدأت يومي
       </Button>
-      {!allChecked && (
-        <p className="text-[11px] text-gray-400 text-center">يرجى تأكيد جميع الأدوات قبل بدء اليوم</p>
+      {!allReady && (
+        <p className="text-[11px] text-gray-400 text-center">يجب تجهيز كل أداة بالكمية المطلوبة قبل بدء اليوم</p>
       )}
     </section>
+  );
+}
+
+function PrepRow({ item, prepared, onChange }: {
+  item: PrepItem; prepared: number; onChange: (qty: number) => void;
+}) {
+  const covered = prepared >= (item.hasQuantity ? item.required : 1);
+
+  // Presence-only fallback row (no auto-computed quantity): a simple tick.
+  if (!item.hasQuantity) {
+    return (
+      <li>
+        <button
+          type="button"
+          role="checkbox"
+          aria-checked={covered}
+          onClick={() => onChange(covered ? 0 : 1)}
+          className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl border text-start transition-all cursor-pointer ${
+            covered ? "bg-emerald-50 border-emerald-100" : "bg-white border-gray-100 active:bg-gray-50"
+          }`}
+        >
+          <span className={`w-5 h-5 rounded-md flex items-center justify-center border-2 flex-shrink-0 ${
+            covered ? "bg-[#059669] border-[#059669]" : "bg-white border-gray-300"
+          }`}>
+            {covered && <CheckCircle2 size={14} className="text-white" aria-hidden="true" strokeWidth={3} />}
+          </span>
+          <span className={`text-sm flex-1 ${covered ? "text-emerald-700 font-medium" : "text-[#164E63]"}`}>{item.nameAr}</span>
+        </button>
+      </li>
+    );
+  }
+
+  // Quantity row: required amount + a stepper for the prepared amount.
+  return (
+    <li className={`flex items-center gap-3 px-3 py-2.5 rounded-xl border ${covered ? "bg-emerald-50/60 border-emerald-100" : "bg-white border-amber-200"}`}>
+      <div className="flex-1 min-w-0">
+        <p className="text-sm font-medium text-[#164E63] truncate">
+          {item.nameAr}
+          {!item.mustCover && <span className="ms-1.5 text-[10px] text-gray-400">(اختياري)</span>}
+        </p>
+        <p className="text-[11px] text-gray-500">
+          المطلوب: <span className="lat font-semibold text-[#0E7490]">{item.required}</span> {item.unit}
+          {!covered && <span className="text-red-500"> — أقل من المطلوب</span>}
+        </p>
+      </div>
+      <div className="flex items-center gap-1.5 flex-shrink-0">
+        <button
+          type="button"
+          onClick={() => onChange(prepared - 1)}
+          aria-label={`إنقاص ${item.nameAr}`}
+          disabled={prepared <= 0}
+          className="w-9 h-9 rounded-lg border border-gray-200 flex items-center justify-center text-[#164E63] cursor-pointer active:bg-gray-50 disabled:opacity-30 disabled:cursor-not-allowed"
+        >
+          <Minus size={15} aria-hidden="true" />
+        </button>
+        <input
+          type="number"
+          inputMode="numeric"
+          min={0}
+          aria-label={`الكمية المجهّزة من ${item.nameAr}`}
+          value={prepared}
+          onChange={(e) => onChange(parseInt(e.target.value, 10) || 0)}
+          className={`w-12 h-9 text-center rounded-lg border text-sm font-semibold outline-none focus:border-[#0891B2] focus:ring-2 focus:ring-[#0891B2]/15 ${covered ? "border-emerald-200 text-emerald-700" : "border-amber-300 text-amber-700"}`}
+        />
+        <button
+          type="button"
+          onClick={() => onChange(prepared + 1)}
+          aria-label={`زيادة ${item.nameAr}`}
+          className="w-9 h-9 rounded-lg border border-gray-200 flex items-center justify-center text-[#164E63] cursor-pointer active:bg-gray-50"
+        >
+          <Plus size={15} aria-hidden="true" />
+        </button>
+      </div>
+    </li>
   );
 }
 

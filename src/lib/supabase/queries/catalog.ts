@@ -4,6 +4,7 @@ import type {
   Package,
   TestCategory,
   PackageCategory,
+  TestToolReq,
 } from "@/lib/types";
 
 // All three queries return null on error so the caller falls back to
@@ -36,6 +37,25 @@ export async function fetchTests(
     )
     .is("deleted_at", null);
   if (error || !data) return null;
+
+  // Per-test nurse tool requirements (quantity-aware). Best-effort: a failure
+  // here leaves nurseTools empty so the catalog still loads — the nurse prep
+  // screen then falls back to the plain tool catalog.
+  const reqByTest = new Map<string, TestToolReq[]>();
+  const { data: reqRows } = await sb
+    .from("lab_test_required_tools")
+    .select("lab_test_id, nurse_tool_id, quantity_per_test, required, note");
+  for (const row of reqRows ?? []) {
+    const list = reqByTest.get(row.lab_test_id) ?? [];
+    list.push({
+      toolId: row.nurse_tool_id,
+      quantityPerTest: row.quantity_per_test ?? 1,
+      required: row.required ?? true,
+      note: row.note ?? undefined,
+    });
+    reqByTest.set(row.lab_test_id, list);
+  }
+
   return data.map((r) => ({
     id: r.id,
     nameAr: r.name_ar,
@@ -49,6 +69,7 @@ export async function fetchTests(
     sellPrice: Number(r.sell_price),
     instructionsAr: [],
     tools: [],
+    nurseTools: reqByTest.get(r.id) ?? [],
     isActive: r.is_active,
   }));
 }
