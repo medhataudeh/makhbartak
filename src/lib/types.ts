@@ -727,6 +727,24 @@ export interface SliderItem {
   isActive: boolean;
 }
 
+// Customer-home action cards ("أو ابدأ بطريقتك"). DB-driven content managed
+// from the admin dashboard; see migration 047 + src/lib/home-actions.ts.
+export type HomeActionType = "prescription" | "custom-builder" | "package" | "external";
+
+export interface HomeActionSection {
+  id: string;
+  titleAr: string;
+  descriptionAr: string;
+  ctaLabelAr: string;
+  actionType: HomeActionType;
+  actionValue?: string;     // package uuid or external url, by actionType
+  icon: string;             // lucide icon name
+  imageUrl: string;
+  accent: string;           // visual style key: purple|emerald|cyan|amber
+  displayOrder: number;
+  isActive: boolean;
+}
+
 // ─── Unified mock auth ──────────────────────────────────────────────────────
 // One row per login account across the four portals. AdminUser, LabUser, etc.
 // are projected into this shape by lib/auth.ts so the four sign-in screens
@@ -831,7 +849,7 @@ export const ROLE_PERMISSIONS: Record<AdminRole, string[]> = {
   // finance-sensitive operational config). Same read-only fieldset
   // behaviour applies as for operations_admin.
   finance_admin: ["overview", "finance", "invoices", "payments", "coupons", "settings"],
-  content_admin: ["overview", "tests", "packages", "sliders", "icons", "branding", "content", "libraries", "media", "settings"],
+  content_admin: ["overview", "tests", "packages", "sliders", "home_actions", "icons", "branding", "content", "libraries", "media", "settings"],
 };
 
 // Phase 5.1 — full payment lifecycle on the payments table. Order-level

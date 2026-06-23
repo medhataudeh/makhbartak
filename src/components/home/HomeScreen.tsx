@@ -1,12 +1,30 @@
 "use client";
 import Image from "next/image";
 import { motion } from "framer-motion";
-import { Camera, FlaskConical, ShoppingCart, ChevronLeft, Bell } from "lucide-react";
+import {
+  Camera, FlaskConical, ShoppingCart, ChevronLeft, Bell,
+  Upload, Search, ClipboardList, Stethoscope, Beaker, FileText, HeartPulse, Plus,
+} from "lucide-react";
 import { useSliders } from "@/lib/home-sliders";
 import { usePackages, useCatalogStatus } from "@/lib/catalog";
 import { useBranding } from "@/lib/branding";
-import type { Package, SliderItem } from "@/lib/types";
+import { useHomeActions, DEFAULT_HOME_ACTIONS } from "@/lib/home-actions";
+import type { Package, SliderItem, HomeActionSection } from "@/lib/types";
 import { HomeSlider } from "@/components/home/HomeSlider";
+
+// Maps the DB-stored icon name → lucide component (falls back to FlaskConical).
+const ACTION_ICONS: Record<string, React.FC<{ size?: number }>> = {
+  Camera, FlaskConical, Upload, Search, ClipboardList, Stethoscope, Beaker, FileText, HeartPulse, Plus,
+};
+
+// Visual style presets ("accent") → badge background + gradient tint. Keeps the
+// original per-card look while letting admins pick a palette.
+const ACTION_ACCENTS: Record<string, { badgeBg: string; tint: string }> = {
+  purple: { badgeBg: "bg-purple-600", tint: "from-purple-900/55 via-purple-900/15 to-transparent" },
+  emerald: { badgeBg: "bg-emerald-600", tint: "from-emerald-900/55 via-emerald-900/15 to-transparent" },
+  cyan: { badgeBg: "bg-[#0891B2]", tint: "from-cyan-900/55 via-cyan-900/15 to-transparent" },
+  amber: { badgeBg: "bg-amber-600", tint: "from-amber-900/55 via-amber-900/15 to-transparent" },
+};
 
 interface HomeScreenProps {
   onSelectPackage: (pkg: Package) => void;
@@ -31,6 +49,26 @@ export function HomeScreen({
   const sliders = useSliders();
   const catalogStatus = useCatalogStatus();
   const branding = useBranding();
+  const homeActions = useHomeActions();
+  // DB is the source of truth; DEFAULT_HOME_ACTIONS is a safe fallback only
+  // when settings are empty / not yet hydrated, so the home never renders an
+  // empty action section.
+  const actionSections = homeActions.length > 0 ? homeActions : DEFAULT_HOME_ACTIONS;
+  // Resolve a section's CTA to the same in-app flows the cards always used.
+  const resolveActionHandler = (s: HomeActionSection): (() => void) | null => {
+    if (s.actionType === "prescription") return onPrescription;
+    if (s.actionType === "custom-builder") return onCustomBuilder;
+    if (s.actionType === "package" && s.actionValue) {
+      const pkg = packages.find((p) => p.id === s.actionValue);
+      if (pkg) return () => onSelectPackage(pkg);
+      return null;
+    }
+    if (s.actionType === "external" && s.actionValue) {
+      const url = s.actionValue;
+      return () => { if (typeof window !== "undefined") window.open(url, "_blank", "noopener,noreferrer"); };
+    }
+    return null;
+  };
   const isCatalogEmpty = catalogStatus === "ready" && packages.length === 0 && sliders.length === 0;
   // Resolve a slider item to an action (or null if there's nothing to do).
   // A null result tells HomeSlider to render the card as visually disabled
@@ -141,28 +179,26 @@ export function HomeScreen({
           أو ابدأ بطريقتك
         </h2>
         <div className="grid grid-cols-2 gap-3 md:gap-4">
-          <ActionCard
-            index={0}
-            onClick={onPrescription}
-            image="https://picsum.photos/seed/makhbartak-rx/800/520"
-            badge={<Camera size={14} aria-hidden="true" />}
-            badgeBg="bg-purple-600"
-            titleAr="ارفع وصفة"
-            descriptionAr="صوّر وصفة الطبيب وسنحدد التحاليل ونحجز الموعد"
-            ctaAr="ارفع الآن"
-            tint="from-purple-900/55 via-purple-900/15 to-transparent"
-          />
-          <ActionCard
-            index={1}
-            onClick={onCustomBuilder}
-            image="https://picsum.photos/seed/makhbartak-custom/800/520"
-            badge={<FlaskConical size={14} aria-hidden="true" />}
-            badgeBg="bg-emerald-600"
-            titleAr="اختر تحاليلك بنفسك"
-            descriptionAr="ابحث وأضف ما تحتاج فقط — سعر شفّاف لكل تحليل"
-            ctaAr="ابدأ الاختيار"
-            tint="from-emerald-900/55 via-emerald-900/15 to-transparent"
-          />
+          {actionSections.map((s, i) => {
+            const handler = resolveActionHandler(s);
+            if (!handler) return null;
+            const Icon = ACTION_ICONS[s.icon] ?? FlaskConical;
+            const accent = ACTION_ACCENTS[s.accent] ?? ACTION_ACCENTS.cyan;
+            return (
+              <ActionCard
+                key={s.id}
+                index={i}
+                onClick={handler}
+                image={s.imageUrl}
+                badge={<Icon size={14} />}
+                badgeBg={accent.badgeBg}
+                titleAr={s.titleAr}
+                descriptionAr={s.descriptionAr}
+                ctaAr={s.ctaLabelAr}
+                tint={accent.tint}
+              />
+            );
+          })}
         </div>
       </div>
     </div>
@@ -190,15 +226,19 @@ function ActionCard({ index, onClick, image, badge, badgeBg, titleAr, descriptio
       whileTap={{ scale: 0.98 }}
       onClick={onClick}
       aria-label={titleAr}
-      className="relative w-full overflow-hidden rounded-2xl border border-gray-100 bg-white text-start cursor-pointer h-[200px] md:h-[200px] group"
+      className="relative w-full overflow-hidden rounded-2xl border border-gray-100 bg-[#164E63] text-start cursor-pointer h-[200px] md:h-[200px] group"
     >
-      <Image
-        src={image}
-        alt=""
-        fill
-        sizes="(min-width: 768px) 50vw, 50vw"
-        className="object-cover transition-transform duration-500 group-hover:scale-[1.04]"
-      />
+      {image ? (
+        <Image
+          src={image}
+          alt=""
+          fill
+          sizes="(min-width: 768px) 50vw, 50vw"
+          className="object-cover transition-transform duration-500 group-hover:scale-[1.04]"
+        />
+      ) : (
+        <div className={`absolute inset-0 ${badgeBg}`} aria-hidden="true" />
+      )}
       <div className={`absolute inset-0 bg-gradient-to-t ${tint}`} aria-hidden="true" />
       <span className={`absolute top-3 start-3 inline-flex items-center justify-center w-8 h-8 rounded-lg ${badgeBg} text-white shadow-sm`} aria-hidden="true">
         {badge}

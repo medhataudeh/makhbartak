@@ -1,5 +1,6 @@
 "use client";
-import type { Coupon, Package, SliderItem, Test, Nurse, Lab } from "@/lib/types";
+import type { Coupon, Package, SliderItem, Test, Nurse, Lab, HomeActionSection } from "@/lib/types";
+import { mapHomeAction } from "@/lib/home-actions";
 
 // Stage F follow-up: thin client wrappers around the existing Stage F admin
 // routes. Wires the AdminDashboard sub-component setters through Supabase so
@@ -435,4 +436,42 @@ export async function apiCreateLab(input: {
   const result = await postJson<{ id: string }>("/api/admin/labs", input);
   if ("error" in result) return { ok: false, error: result.error };
   return { ok: true, id: result.id };
+}
+
+// ─── Home action sections (migration 047) ───────────────────────────────────
+export async function hydrateAdminHomeActions(): Promise<HomeActionSection[] | null> {
+  const res = await fetch("/api/admin/home-actions", { cache: "no-store" });
+  if (!res.ok) return null;
+  const body = await res.json().catch(() => null);
+  return Array.isArray(body?.sections)
+    ? (body.sections as Parameters<typeof mapHomeAction>[0][]).map(mapHomeAction)
+    : null;
+}
+
+export async function apiUpsertHomeAction(
+  s: HomeActionSection,
+): Promise<{ ok: boolean; section?: HomeActionSection; error?: string }> {
+  // Strip any non-UUID id (e.g. the "default-*" fallback ids) so a new row
+  // inserts and Postgres mints the canonical uuid.
+  const safeId = s.id && UUID_RE.test(s.id) ? s.id : undefined;
+  const wire = {
+    id: safeId,
+    titleAr: s.titleAr,
+    descriptionAr: s.descriptionAr || undefined,
+    ctaLabelAr: s.ctaLabelAr || undefined,
+    actionType: s.actionType,
+    actionValue: s.actionValue || undefined,
+    icon: s.icon || undefined,
+    imageUrl: s.imageUrl || undefined,
+    accent: s.accent || undefined,
+    displayOrder: s.displayOrder,
+    isActive: s.isActive,
+  };
+  const result = await postJson<{ id: string }>("/api/admin/home-actions", wire);
+  if ("error" in result) return { ok: false, error: result.error };
+  return { ok: true, section: { ...s, id: result.id } };
+}
+
+export async function apiDeleteHomeAction(id: string): Promise<{ ok: boolean; error?: string }> {
+  return deleteJson(`/api/admin/home-actions/${encodeURIComponent(id)}`);
 }

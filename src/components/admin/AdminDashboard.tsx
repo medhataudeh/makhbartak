@@ -20,7 +20,7 @@ import { usePersistedNav } from "@/lib/use-persisted-nav";
 import type {
   AdminUser, AdminRole, Order,
   Test, Package, Coupon, Nurse, SliderItem, SvgIcon, Notification,
-  NurseRoute,
+  NurseRoute, HomeActionSection,
 } from "@/lib/types";
 import { formatDate, formatPrice, relativeTime } from "@/lib/utils";
 import { StatusBadge } from "@/components/ui/StatusBadge";
@@ -52,7 +52,9 @@ import {
   apiUpsertPackage, apiDeletePackage,
   apiUpsertCoupon, apiDeleteCoupon, apiValidateCoupon,
   apiUpsertSlider, apiDeleteSlider,
+  hydrateAdminHomeActions, apiUpsertHomeAction, apiDeleteHomeAction,
 } from "@/lib/admin-catalog-api";
+import { HOME_ACTION_ICON_NAMES, HOME_ACTION_ACCENTS } from "@/lib/home-actions";
 import type { Lab } from "@/lib/types";
 import { logActivity } from "@/lib/activity-log";
 import { useToast } from "@/components/ui/Toast";
@@ -74,7 +76,7 @@ interface AdminDashboardProps {
 type AdminSection =
   | "overview" | "orders" | "users" | "tests" | "packages" | "coupons"
   | "nurses" | "scheduling" | "gamification" | "labs" | "shortages"
-  | "finance" | "payments" | "invoices" | "sliders" | "icons" | "branding" | "content"
+  | "finance" | "payments" | "invoices" | "sliders" | "home_actions" | "icons" | "branding" | "content"
   | "libraries" | "media"
   | "notifications" | "admins" | "activity" | "settings";
 
@@ -110,6 +112,7 @@ const SECTIONS: SectionDef[] = [
 
   { id: "media",         label: "مكتبة الوسائط",     Icon: ImageIcon,     group: "content"    },
   { id: "sliders",       label: "السلايدر الرئيسي", Icon: ImageIcon,     group: "content"    },
+  { id: "home_actions",  label: "أقسام الرئيسية",   Icon: LayoutGrid,    group: "content"    },
   { id: "icons",         label: "الأيقونات",        Icon: Shapes,        group: "content"    },
   { id: "branding",      label: "الشعارات والهوية", Icon: ImageIcon,     group: "content"    },
   { id: "content",       label: "محتوى الصفحات",   Icon: FileText,      group: "content"    },
@@ -150,6 +153,7 @@ export function AdminDashboard({ user, onLogout }: AdminDashboardProps) {
   const [nurses, setNurses]               = useState<Nurse[]>([]);
   const [labs, setLabs]                   = useState<Lab[]>([]);
   const [sliders, setSliders]             = useState<SliderItem[]>([]);
+  const [homeActions, setHomeActions]     = useState<HomeActionSection[]>([]);
   const [icons, setIcons]                 = useState<SvgIcon[]>([]);
   const [orders, setOrders]               = useState<Order[]>([]);
   const [routes, setRoutes]               = useState<NurseRoute[]>([]);
@@ -181,6 +185,9 @@ export function AdminDashboard({ user, onLogout }: AdminDashboardProps) {
       if (remotePackages) setPackages(remotePackages);
       if (remoteCoupons) setCoupons(remoteCoupons);
       if (remoteSliders) setSliders(remoteSliders);
+      const remoteHomeActions = await hydrateAdminHomeActions();
+      if (cancelled) return;
+      if (remoteHomeActions) setHomeActions(remoteHomeActions);
       setLoading(false);
     })();
     return () => { cancelled = true; };
@@ -319,6 +326,7 @@ export function AdminDashboard({ user, onLogout }: AdminDashboardProps) {
           {section === "invoices"      && <InvoicesAdmin />}
           {section === "media"         && <MediaLibraryAdmin />}
           {section === "sliders"       && <SlidersAdmin sliders={sliders} setSliders={setSliders} packages={packages} />}
+          {section === "home_actions"  && <HomeActionsAdmin sections={homeActions} setSections={setHomeActions} packages={packages} />}
           {section === "icons"         && <IconsAdmin icons={icons} setIcons={setIcons} />}
           {section === "branding"      && <BrandingAdmin adminId={user.id} adminName={user.name} adminRole={user.role} />}
           {section === "content"       && <ContentAdmin  adminId={user.id} adminName={user.name} adminRole={user.role} />}
@@ -2214,6 +2222,184 @@ function SlidersAdmin({ sliders, setSliders, packages }: { sliders: SliderItem[]
         />
       )}
     </div>
+  );
+}
+
+// ═══════════════════════ Home action sections (mig 047) ═════════════════════
+// DB-driven version of the customer-home "أو ابدأ بطريقتك" cards. Mirrors the
+// sliders CRUD pattern exactly. Order + active state are handled through the
+// same upsert RPC (display order field + the active toggle), like sliders.
+function HomeActionsAdmin({ sections, setSections, packages }: {
+  sections: HomeActionSection[];
+  setSections: React.Dispatch<React.SetStateAction<HomeActionSection[]>>;
+  packages: Package[];
+}) {
+  const me = useCurrentAdmin();
+  const session = useSession();
+  const toast = useToast();
+  const [editing, setEditing] = useState<HomeActionSection | null>(null);
+  const [creating, setCreating] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState<HomeActionSection | null>(null);
+
+  const upsert = async (s: HomeActionSection) => {
+    if (!session) { toast.error("الجلسة غير صالحة"); return; }
+    const exists = sections.find((x) => x.id === s.id);
+    const r = await apiUpsertHomeAction(s);
+    if (!r.ok || !r.section) { toast.error(r.error ?? "تعذر الحفظ"); return; }
+    const canonical = r.section;
+    setSections((prev) => exists ? prev.map((x) => x.id === s.id ? canonical : x) : [...prev.filter((x) => x.id !== canonical.id), canonical]);
+    logActivity({ adminId: me.id, adminName: me.name, role: me.role, action: "slider_edit", entity: "home_action", entityId: canonical.id, details: exists ? `تعديل ${canonical.titleAr}` : `إضافة ${canonical.titleAr}` });
+    toast.success("تم الحفظ بنجاح");
+    setEditing(null); setCreating(false);
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="flex justify-between items-center">
+        <p className="text-sm text-gray-500">{sections.length} قسم</p>
+        <div className="flex items-center gap-2">
+          {sections.length === 0 && (
+            <Button size="sm" variant="outline" onClick={async () => {
+              const res = await fetch("/api/admin/home-actions/seed-defaults", { method: "POST" });
+              const body = await res.json().catch(() => ({}));
+              if (!res.ok) { toast.error(body.error ?? "تعذر إنشاء الأقسام الافتراضية"); return; }
+              const remote = await hydrateAdminHomeActions();
+              if (remote) setSections(remote);
+              toast.success("تم إنشاء الأقسام الافتراضية");
+            }}>
+              إنشاء أقسام افتراضية
+            </Button>
+          )}
+          <Button size="sm" variant="secondary" onClick={() => setCreating(true)}><Plus size={13} aria-hidden="true" /> إضافة قسم</Button>
+        </div>
+      </div>
+      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+        {[...sections].sort((a, b) => a.displayOrder - b.displayOrder).map((s) => (
+          <article key={s.id} className="bg-white rounded-2xl border border-gray-100 overflow-hidden">
+            <div className="aspect-[16/9] bg-gray-100 relative">
+              {s.imageUrl
+                /* eslint-disable-next-line @next/next/no-img-element */
+                ? <img src={s.imageUrl} alt={s.titleAr} className="w-full h-full object-cover" />
+                : <div className="w-full h-full flex items-center justify-center text-gray-400 text-xs">بدون صورة</div>}
+              <span className="absolute top-2 start-2 bg-black/60 text-white text-[11px] px-2 py-0.5 rounded-md">#{s.displayOrder}</span>
+            </div>
+            <div className="p-4 space-y-2">
+              <h3 className="text-sm font-bold text-[#164E63]">{s.titleAr}</h3>
+              <p className="text-xs text-gray-500 line-clamp-2">{s.descriptionAr}</p>
+              <div className="flex items-center justify-between pt-2 border-t border-gray-50">
+                <Pill color={s.isActive ? "green" : "red"}>{s.isActive ? "نشط" : "موقوف"}</Pill>
+                <ActionMenu row={s} isActive={s.isActive}
+                  onEdit={(r) => setEditing(r)}
+                  onDelete={(r) => setConfirmDelete(r)}
+                  onToggle={async (r) => {
+                    if (!session) { toast.error("الجلسة غير صالحة"); return; }
+                    const next = { ...r, isActive: !r.isActive };
+                    const res = await apiUpsertHomeAction(next);
+                    if (!res.ok) { toast.error(res.error ?? "تعذر التحديث"); return; }
+                    setSections((prev) => prev.map((x) => x.id === r.id ? next : x));
+                  }}
+                />
+              </div>
+            </div>
+          </article>
+        ))}
+      </div>
+      {(editing || creating) && <HomeActionForm initial={editing ?? undefined} packages={packages} onCancel={() => { setEditing(null); setCreating(false); }} onSubmit={upsert} />}
+      {confirmDelete && (
+        <ConfirmModal title="حذف القسم" message={`حذف "${confirmDelete.titleAr}"؟`} danger
+          onCancel={() => setConfirmDelete(null)}
+          onConfirm={async () => {
+            if (!session) { toast.error("الجلسة غير صالحة"); return; }
+            const r = await apiDeleteHomeAction(confirmDelete.id);
+            if (!r.ok) { toast.error(r.error ?? "تعذر الحذف"); return; }
+            setSections((prev) => prev.filter((x) => x.id !== confirmDelete.id));
+            toast.success("تم الحذف");
+            setConfirmDelete(null);
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+function HomeActionForm({ initial, packages, onCancel, onSubmit }: { initial?: HomeActionSection; packages: Package[]; onCancel: () => void; onSubmit: (s: HomeActionSection) => void }) {
+  const [draft, setDraft] = useState<HomeActionSection>(() => initial ?? {
+    id: "", titleAr: "", descriptionAr: "", ctaLabelAr: "ابدأ الآن",
+    actionType: "custom-builder", icon: "FlaskConical", imageUrl: "", accent: "cyan",
+    displayOrder: 99, isActive: true,
+  });
+  const [error, setError] = useState<string | null>(null);
+  const set = <K extends keyof HomeActionSection>(k: K, v: HomeActionSection[K]) => setDraft((d) => ({ ...d, [k]: v }));
+
+  const handleSubmit = () => {
+    setError(null);
+    if (!draft.titleAr.trim()) { setError("العنوان مطلوب"); return; }
+    if (draft.actionType === "package" && (!draft.actionValue || !UUID_RE.test(draft.actionValue))) {
+      setError("اختر باقة صحيحة من القائمة"); return;
+    }
+    onSubmit(draft);
+  };
+
+  return (
+    <Modal title={initial ? "تعديل قسم" : "إضافة قسم"} onClose={onCancel} size="lg">
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+        <Field label="العنوان *"><TextInput value={draft.titleAr} onChange={(e) => set("titleAr", e.target.value)} /></Field>
+        <Field label="نص زر CTA"><TextInput value={draft.ctaLabelAr} onChange={(e) => set("ctaLabelAr", e.target.value)} /></Field>
+        <Field label="الوصف">
+          <textarea value={draft.descriptionAr} onChange={(e) => set("descriptionAr", e.target.value)} rows={2} className="w-full p-3 rounded-xl border border-gray-200 text-sm focus:border-[#0891B2] outline-none resize-none md:col-span-2" />
+        </Field>
+        <Field label="نوع الإجراء">
+          <select value={draft.actionType} onChange={(e) => {
+            const next = e.target.value as HomeActionSection["actionType"];
+            setDraft((d) => ({ ...d, actionType: next, actionValue: next === "package" || next === "external" ? d.actionValue : undefined }));
+          }} className="w-full h-10 px-3 rounded-xl border border-gray-200 text-sm cursor-pointer">
+            <option value="prescription">رفع وصفة</option>
+            <option value="custom-builder">اختيار التحاليل</option>
+            <option value="package">باقة محددة</option>
+            <option value="external">رابط خارجي</option>
+          </select>
+        </Field>
+        {draft.actionType === "package" && (
+          <Field label="الباقة المرتبطة *">
+            <select
+              value={draft.actionValue && UUID_RE.test(draft.actionValue) ? draft.actionValue : ""}
+              onChange={(e) => set("actionValue", e.target.value || undefined)}
+              className="w-full h-10 px-3 rounded-xl border border-gray-200 text-sm cursor-pointer"
+            >
+              <option value="">— اختر باقة —</option>
+              {packages.filter((p) => UUID_RE.test(p.id)).map((p) => (
+                <option key={p.id} value={p.id}>{p.nameAr}</option>
+              ))}
+            </select>
+          </Field>
+        )}
+        {draft.actionType === "external" && (
+          <Field label="الرابط الخارجي"><TextInput value={draft.actionValue ?? ""} onChange={(e) => set("actionValue", e.target.value || undefined)} style={{ direction: "ltr", textAlign: "right" }} placeholder="https://…" /></Field>
+        )}
+        <Field label="الأيقونة">
+          <select value={draft.icon} onChange={(e) => set("icon", e.target.value)} className="w-full h-10 px-3 rounded-xl border border-gray-200 text-sm cursor-pointer">
+            {HOME_ACTION_ICON_NAMES.map((n) => <option key={n} value={n}>{n}</option>)}
+          </select>
+        </Field>
+        <Field label="النمط اللوني">
+          <select value={draft.accent} onChange={(e) => set("accent", e.target.value)} className="w-full h-10 px-3 rounded-xl border border-gray-200 text-sm cursor-pointer">
+            {HOME_ACTION_ACCENTS.map((a) => <option key={a} value={a}>{a}</option>)}
+          </select>
+        </Field>
+        <div className="md:col-span-2">
+          <MediaPicker label="صورة الخلفية" value={draft.imageUrl} onChange={(url) => set("imageUrl", url)} />
+        </div>
+        <Field label="ترتيب العرض"><TextInput type="number" value={draft.displayOrder} onChange={(e) => set("displayOrder", Number(e.target.value))} /></Field>
+      </div>
+      {error && <p className="mt-3 text-xs text-rose-600">{error}</p>}
+      <div className="flex items-center justify-between mt-4">
+        <Toggle checked={draft.isActive} onChange={(v) => set("isActive", v)} label="نشط" />
+        <div className="flex gap-2">
+          <Button variant="outline" onClick={onCancel}>إلغاء</Button>
+          <Button variant="primary" disabled={!draft.titleAr.trim()} onClick={handleSubmit}>حفظ</Button>
+        </div>
+      </div>
+    </Modal>
   );
 }
 
