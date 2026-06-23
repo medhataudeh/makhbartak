@@ -18,27 +18,41 @@ interface HomeSliderProps {
  *  - Mobile (< md):  one tall card per page, swipeable, dot indicator.
  *  - Tablet/desktop: 3-up grid of vertical cards, no swipe needed.
  *
- * Direction note: in RTL layouts paginating "next" advances the index but
- * positions the card to the left of the previous one. We rely on the parent
- * `dir="rtl"` and write transforms in logical "previous→next" terms, so the
- * arrow and order match what an Arabic reader expects.
+ * Direction note: the app is RTL (`dir="rtl"`). "Next" therefore advances the
+ * index while the slide motion + swipe gesture read right-to-left: a rightward
+ * drag advances, and the incoming slide enters from the left. `dir` (+1 next /
+ * -1 prev) drives the framer-motion variants so the animation mirrors the
+ * gesture instead of using LTR math.
  */
+// Enter/exit offsets are mirrored for RTL: advancing (dir +1) brings the new
+// slide in from the left and pushes the old one out to the right.
+const slideVariants = {
+  enter: (dir: number) => ({ opacity: 0, x: dir >= 0 ? -28 : 28 }),
+  center: { opacity: 1, x: 0 },
+  exit: (dir: number) => ({ opacity: 0, x: dir >= 0 ? 28 : -28 }),
+};
+
 export function HomeSlider({ items, onCta, resolveAction }: HomeSliderProps) {
   const isClickable = (item: SliderItem) =>
     resolveAction ? resolveAction(item) != null : true;
   const active = items.filter((s) => s.isActive).sort((a, b) => a.displayOrder - b.displayOrder);
   const [page, setPage] = useState(0);
+  const [dir, setDir] = useState(1);
   const containerRef = useRef<HTMLDivElement>(null);
 
   // Auto-advance on mobile every 6s; pause if user has interacted recently.
   const [paused, setPaused] = useState(false);
   useEffect(() => {
     if (paused || active.length <= 1) return;
-    const t = window.setTimeout(() => setPage((p) => (p + 1) % active.length), 6000);
+    const t = window.setTimeout(() => { setDir(1); setPage((p) => (p + 1) % active.length); }, 6000);
     return () => window.clearTimeout(t);
   }, [page, paused, active.length]);
 
   if (active.length === 0) return null;
+
+  // RTL-correct navigation: a rightward swipe advances ("next").
+  const goNext = () => { setPaused(true); setDir(1); setPage((p) => (p + 1) % active.length); };
+  const goPrev = () => { setPaused(true); setDir(-1); setPage((p) => (p - 1 + active.length) % active.length); };
 
   return (
     <div className="px-4 md:px-6">
@@ -61,21 +75,22 @@ export function HomeSlider({ items, onCta, resolveAction }: HomeSliderProps) {
           className="overflow-hidden touch-pan-y"
           onPointerDown={() => setPaused(true)}
         >
-          <AnimatePresence initial={false} mode="wait">
+          <AnimatePresence initial={false} mode="wait" custom={dir}>
             <motion.div
               key={active[page].id}
-              initial={{ opacity: 0, x: 24 }}
-              animate={{ opacity: 1, x: 0 }}
-              exit={{ opacity: 0, x: -24 }}
+              custom={dir}
+              variants={slideVariants}
+              initial="enter"
+              animate="center"
+              exit="exit"
               transition={{ duration: 0.28, ease: [0.32, 0.72, 0, 1] }}
               drag="x"
               dragConstraints={{ left: 0, right: 0 }}
               dragElastic={0.18}
               onDragEnd={(_, info) => {
-                if (info.offset.x < -60 || info.velocity.x < -300)
-                  setPage((p) => (p + 1) % active.length);
-                else if (info.offset.x > 60 || info.velocity.x > 300)
-                  setPage((p) => (p - 1 + active.length) % active.length);
+                // RTL: drag right → next, drag left → previous.
+                if (info.offset.x > 60 || info.velocity.x > 300) goNext();
+                else if (info.offset.x < -60 || info.velocity.x < -300) goPrev();
               }}
             >
               <SlideCard
@@ -98,7 +113,7 @@ export function HomeSlider({ items, onCta, resolveAction }: HomeSliderProps) {
             {active.map((s, i) => (
               <button
                 key={s.id}
-                onClick={() => { setPaused(true); setPage(i); }}
+                onClick={() => { setPaused(true); setDir(i >= page ? 1 : -1); setPage(i); }}
                 role="tab"
                 aria-selected={page === i}
                 aria-label={`الانتقال إلى ${s.titleAr}`}
@@ -148,10 +163,12 @@ function SlideCard({
         priority={item.displayOrder <= 2}
         draggable={false}
       />
-      {/* Gradient veil for legible text */}
+      {/* Bottom-anchored gradient — just enough contrast under the text while
+         leaving the top ~⅓ of the artwork clear (was a full-card from-black/75
+         veil that dimmed the whole image). */}
       <div
         aria-hidden="true"
-        className="absolute inset-0 bg-gradient-to-t from-black/75 via-black/35 to-transparent"
+        className="absolute inset-x-0 bottom-0 h-2/3 bg-gradient-to-t from-black/65 via-black/20 to-transparent"
       />
 
       {/* Badge */}
