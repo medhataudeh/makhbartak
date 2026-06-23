@@ -5,7 +5,7 @@ import {
   Building2, Settings, TrendingUp, Clock, CheckCircle, DollarSign, FileText,
   UserCog, Image as ImageIcon, Bell, Activity, Shapes, LogOut, Search, Menu,
   X, CreditCard, Eye, Trophy, Plus, Trash2, Pencil, Lock,
-  ChevronUp, ChevronDown, ChevronLeft, Route, MapPin, Wrench,
+  ChevronUp, ChevronDown, ChevronLeft, Route, MapPin, Wrench, Mail,
 } from "lucide-react";
 import {
   // Final hardening: only constants + helpers remain. All MOCK_* arrays
@@ -2441,6 +2441,7 @@ function AdminsAdmin({ currentUser }: { currentUser: AdminUser }) {
   const [creating, setCreating] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState<AdminUser | null>(null);
   const [tab, setTab] = useState<"admins" | "customers" | "nurses">("admins");
+  const [inviting, setInviting] = useState(false);
 
   if (currentUser.role !== "super_admin") {
     return <p className="text-sm text-gray-500">هذه الصفحة متاحة للمدير العام فقط.</p>;
@@ -2480,7 +2481,10 @@ function AdminsAdmin({ currentUser }: { currentUser: AdminUser }) {
         <>
           <div className="flex justify-between items-center">
             <p className="text-sm text-gray-500">{admins.length} موظف</p>
-            <Button size="sm" variant="secondary" onClick={() => setCreating(true)}><Plus size={13} aria-hidden="true" /> إضافة موظف</Button>
+            <div className="flex items-center gap-2">
+              <Button size="sm" variant="outline" onClick={() => setInviting(true)}><Mail size={13} aria-hidden="true" /> دعوة عبر البريد</Button>
+              <Button size="sm" variant="secondary" onClick={() => setCreating(true)}><Plus size={13} aria-hidden="true" /> إضافة موظف</Button>
+            </div>
           </div>
           <Section title="موظفو لوحة الإدارة">
             <DataTable
@@ -2521,6 +2525,7 @@ function AdminsAdmin({ currentUser }: { currentUser: AdminUser }) {
           </Section>
 
           {(editing || creating) && <AdminForm initial={editing ?? undefined} onCancel={() => { setEditing(null); setCreating(false); }} onSubmit={upsert} />}
+          {inviting && <InviteUserModal onClose={() => setInviting(false)} />}
           {confirmDelete && (
             <ConfirmModal title="حذف الموظف" message={`حذف "${confirmDelete.name}"؟`} danger
               onCancel={() => setConfirmDelete(null)}
@@ -2776,6 +2781,164 @@ function AuthUserForm({ role, initial, onCancel, onSubmit }: {
           disabled={!draft.name.trim() || !emailValid || !passwordValid}
           onClick={() => onSubmit({ ...draft, phone: phone.trim() || undefined, city: city.trim() || undefined })}
         >حفظ</Button>
+      </div>
+    </Modal>
+  );
+}
+
+// Invite-by-email modal. Unlike AuthUserForm/AdminForm (which create an
+// account with an admin-set password immediately), this records a platform
+// invitation and sends a Supabase Auth invite link wrapped in our Arabic
+// email. The invitee sets their own password on /invite/accept. Supports all
+// four target roles; finance/lab caps are enforced server-side by the route.
+function InviteUserModal({ onClose }: { onClose: () => void }) {
+  const toast = useToast();
+  const [role, setRole] = useState<"admin" | "lab" | "nurse" | "customer">("lab");
+  const [email, setEmail] = useState("");
+  const [name, setName] = useState("");
+  const [phone, setPhone] = useState("");
+  const [adminRole, setAdminRole] = useState<AdminRole>("operations_admin");
+  const [labs, setLabs] = useState<{ id: string; nameAr: string }[]>([]);
+  const [labId, setLabId] = useState("");
+  const [labRole, setLabRole] = useState<"lab_admin" | "lab_accounting" | "lab_uploader">("lab_uploader");
+  const [city, setCity] = useState("دمشق");
+  const [submitting, setSubmitting] = useState(false);
+  const [inviteLink, setInviteLink] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (role !== "lab") return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await fetch("/api/admin/labs", { cache: "no-store" });
+        if (!res.ok || cancelled) return;
+        const body = (await res.json()) as { labs?: { id: string; name_ar: string }[] };
+        const list = (body.labs ?? []).map((l) => ({ id: l.id, nameAr: l.name_ar }));
+        if (cancelled) return;
+        setLabs(list);
+        setLabId((prev) => prev || (list[0]?.id ?? ""));
+      } catch { /* lab list is best-effort; submit still validates */ }
+    })();
+    return () => { cancelled = true; };
+  }, [role]);
+
+  const emailValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim());
+  const canSubmit = !!name.trim() && emailValid && (role !== "lab" || !!labId) && !submitting;
+
+  const submit = async () => {
+    setSubmitting(true);
+    try {
+      const res = await fetch("/api/admin/invitations", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          role,
+          email: email.trim(),
+          fullName: name.trim(),
+          phone: phone.trim() || undefined,
+          adminRole: role === "admin" ? adminRole : undefined,
+          labId: role === "lab" ? labId : undefined,
+          labRole: role === "lab" ? labRole : undefined,
+          city: role === "nurse" ? city : undefined,
+        }),
+      });
+      const body = (await res.json().catch(() => ({}))) as { error?: string; emailSent?: boolean; inviteLink?: string };
+      if (!res.ok) { toast.error(body.error ?? "تعذر إرسال الدعوة"); setSubmitting(false); return; }
+      if (body.emailSent) { toast.success("تم إرسال الدعوة بالبريد"); onClose(); return; }
+      // Email transport not configured / bounced — surface the link so the
+      // admin can deliver it manually.
+      setInviteLink(body.inviteLink ?? "");
+      setSubmitting(false);
+    } catch {
+      toast.error("تعذر الاتصال بالخادم");
+      setSubmitting(false);
+    }
+  };
+
+  if (inviteLink !== null) {
+    return (
+      <Modal title="رابط الدعوة" onClose={onClose}>
+        <p className="text-sm text-gray-600 leading-relaxed mb-2">
+          تم إنشاء الدعوة، لكن خدمة البريد غير مُفعّلة. انسخ الرابط أدناه وأرسله للمدعو:
+        </p>
+        <textarea readOnly value={inviteLink} dir="ltr"
+          className="w-full h-24 rounded-xl border border-gray-200 p-2 text-xs" />
+        <div className="flex justify-end mt-3"><Button variant="primary" onClick={onClose}>تم</Button></div>
+      </Modal>
+    );
+  }
+
+  return (
+    <Modal title="دعوة مستخدم عبر البريد" onClose={onClose}>
+      <div className="space-y-3">
+        <Field label="نوع الحساب *">
+          <select value={role} onChange={(e) => setRole(e.target.value as typeof role)}
+            className="w-full h-10 px-3 rounded-xl border border-gray-200 text-sm cursor-pointer">
+            <option value="admin">موظف إدارة</option>
+            <option value="lab">مستخدم مختبر</option>
+            <option value="nurse">ممرض</option>
+            <option value="customer">عميل</option>
+          </select>
+        </Field>
+        <Field label="الاسم الكامل *"><TextInput value={name} onChange={(e) => setName(e.target.value)} /></Field>
+        <Field label="البريد الإلكتروني *">
+          <TextInput type="email" value={email} onChange={(e) => setEmail(e.target.value)}
+            style={{ direction: "ltr", textAlign: "right" }} placeholder="user@example.com" />
+          {email && !emailValid && <p className="text-[11px] text-red-500 mt-1">صيغة البريد غير صحيحة</p>}
+        </Field>
+        <Field label="رقم الهاتف">
+          <TextInput type="tel" value={phone} onChange={(e) => setPhone(e.target.value)}
+            style={{ direction: "ltr", textAlign: "right" }} placeholder="+963 9XX XXX XXX" />
+        </Field>
+
+        {role === "admin" && (
+          <Field label="دور الإدارة *">
+            <select value={adminRole} onChange={(e) => setAdminRole(e.target.value as AdminRole)}
+              className="w-full h-10 px-3 rounded-xl border border-gray-200 text-sm cursor-pointer">
+              {(Object.keys(ROLE_LABELS) as AdminRole[]).map((r) => (
+                <option key={r} value={r}>{ROLE_LABELS[r]}</option>
+              ))}
+            </select>
+          </Field>
+        )}
+
+        {role === "lab" && (
+          <>
+            <Field label="المختبر *">
+              <select value={labId} onChange={(e) => setLabId(e.target.value)}
+                className="w-full h-10 px-3 rounded-xl border border-gray-200 text-sm cursor-pointer">
+                {labs.length === 0 && <option value="">— لا توجد مختبرات —</option>}
+                {labs.map((l) => <option key={l.id} value={l.id}>{l.nameAr}</option>)}
+              </select>
+            </Field>
+            <Field label="دور مستخدم المختبر *">
+              <select value={labRole} onChange={(e) => setLabRole(e.target.value as typeof labRole)}
+                className="w-full h-10 px-3 rounded-xl border border-gray-200 text-sm cursor-pointer">
+                <option value="lab_admin">مدير المختبر</option>
+                <option value="lab_accounting">محاسبة المختبر</option>
+                <option value="lab_uploader">مشغّل المختبر</option>
+              </select>
+            </Field>
+          </>
+        )}
+
+        {role === "nurse" && (
+          <Field label="المدينة">
+            <select value={city} onChange={(e) => setCity(e.target.value)}
+              className="w-full h-10 px-3 rounded-xl border border-gray-200 text-sm cursor-pointer">
+              <option value="دمشق">دمشق</option>
+              <option value="ريف دمشق">ريف دمشق</option>
+            </select>
+          </Field>
+        )}
+
+        <p className="text-[11px] text-gray-400 leading-relaxed">
+          سيصل المدعو بريدًا يحوي تفاصيل الدعوة ورابطًا لتعيين كلمة المرور وقبول الدعوة.
+        </p>
+      </div>
+      <div className="flex justify-end gap-2 mt-4">
+        <Button variant="outline" onClick={onClose}>إلغاء</Button>
+        <Button variant="primary" disabled={!canSubmit} loading={submitting} onClick={submit}>إرسال الدعوة</Button>
       </div>
     </Modal>
   );
