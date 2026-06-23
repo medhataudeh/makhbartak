@@ -9,7 +9,11 @@ export function cn(...inputs: ClassValue[]) {
 // locale's formatting (grouping, month/weekday names). Prices/dates therefore
 // render "25,000 ل.س" / "16 يونيو" — never Arabic-Indic ٢٥٬٠٠٠.
 export function formatPrice(price: number) {
-  return `${price.toLocaleString("ar-SY-u-nu-latn")} ل.س`;
+  // Defensive: a non-finite value (undefined/null/NaN reaching this formatter
+  // from a malformed row) must never throw or render "NaN ل.س" — it renders 0.
+  // This is display-only null-safety, not a financial calculation.
+  const n = Number(price);
+  return `${(Number.isFinite(n) ? n : 0).toLocaleString("ar-SY-u-nu-latn")} ل.س`;
 }
 
 export function formatDate(dateStr: string) {

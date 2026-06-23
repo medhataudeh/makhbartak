@@ -284,9 +284,12 @@ function LabPortalShell({ lab, labUser, onLogout }: { lab: Lab; labUser: LabUser
   ];
 
   return (
-    <div className="min-h-screen bg-app flex flex-col md:flex-row">
-      {/* Mobile top bar — brand + logout. Section nav is a horizontal scroller below. */}
-      <div className="md:hidden sticky top-0 z-30 bg-white border-b border-gray-100">
+    <div className="min-h-screen bg-app flex flex-col lg:flex-row">
+      {/* Mobile + tablet top bar — brand + logout. Section nav is a horizontal
+          segmented tab scroller below. Shown up to the lg breakpoint so tablets
+          always have visible, tappable navigation (the desktop sidebar only
+          appears at lg+). */}
+      <div className="lg:hidden sticky top-0 z-30 bg-white border-b border-gray-100">
         <div className="px-4 py-3 flex items-center gap-3" style={{ background: brand.accentColor }}>
           {(() => {
             const url = lab.branding?.logo ?? lab.logo ?? platformLogo;
@@ -334,8 +337,8 @@ function LabPortalShell({ lab, labUser, onLogout }: { lab: Lab; labUser: LabUser
         </div>
       </div>
 
-      {/* Desktop sidebar */}
-      <aside className="hidden md:flex md:w-72 lg:w-80 bg-white border-s border-gray-100 flex-col h-screen sticky top-0">
+      {/* Desktop sidebar — lg+ only; tablets use the top tab bar above. */}
+      <aside className="hidden lg:flex lg:w-80 bg-white border-s border-gray-100 flex-col h-screen sticky top-0">
         <div className="px-4 py-4 border-b border-gray-100 flex items-center gap-3" style={{ background: brand.accentColor }}>
           {(() => {
             const url = lab.branding?.logo ?? lab.logo ?? platformLogo;
@@ -387,7 +390,7 @@ function LabPortalShell({ lab, labUser, onLogout }: { lab: Lab; labUser: LabUser
       </aside>
 
       {/* Main */}
-      <main className="flex-1 min-w-0 md:overflow-y-auto">
+      <main className="flex-1 min-w-0 lg:overflow-y-auto">
         {section === "orders"     && <OrdersSection lab={lab} labUser={labUser} labOrders={labOrders} brand={brand} />}
         {section === "results"    && <OrdersSection lab={lab} labUser={labUser} labOrders={labOrders.filter((o) => o.status !== "lab_issue")} brand={brand} resultsFocus />}
         {section === "issues"     && <IssuesSection lab={lab} labOrders={labOrders.filter((o) => o.status === "lab_issue" || (o.issues?.length ?? 0) > 0)} brand={brand} />}
@@ -440,11 +443,11 @@ function OrdersSection({ lab, labUser, labOrders, brand, resultsFocus }: {
   const showSellPrices = !!lab.revealSellPriceToLab;
 
   return (
-    <div className="flex flex-col md:flex-row md:h-screen">
-      {/* List pane — on mobile, hide once an order is selected so the detail
-         pane is visible. Tapping the mobile back button in the detail clears
-         selectedId to return here. */}
-      <div className={`${selected ? "hidden md:flex" : "flex"} w-full md:w-96 border-s border-gray-100 bg-white flex-col`}>
+    <div className="flex flex-col lg:flex-row lg:h-screen">
+      {/* List pane — on mobile/tablet, hide once an order is selected so the
+         detail pane is visible. The sticky back button in the detail clears
+         selectedId to return here. Two-pane only at lg+. */}
+      <div className={`${selected ? "hidden lg:flex" : "flex"} w-full lg:w-96 border-s border-gray-100 bg-white flex-col`}>
         <div className="px-4 py-3 border-b border-gray-100 space-y-2">
           <h2 className="text-base font-bold text-[#164E63]">{resultsFocus ? "رفع النتائج" : "الطلبات"}</h2>
           <div className="relative">
@@ -519,19 +522,21 @@ function OrdersSection({ lab, labUser, labOrders, brand, resultsFocus }: {
       </div>
 
       {/* Detail pane */}
-      <div className={`${selected ? "flex" : "hidden md:flex"} flex-1 min-w-0 md:overflow-y-auto flex-col`}>
+      <div className={`${selected ? "flex" : "hidden lg:flex"} flex-1 min-w-0 lg:overflow-y-auto flex-col`}>
         {selected ? (
           <>
-            {/* Mobile-only back-to-list strip */}
-            <div className="md:hidden sticky top-0 z-20 flex items-center gap-2 px-3 py-2 bg-white border-b border-gray-100">
+            {/* Sticky back-to-list strip — shown on mobile + tablet (below lg,
+                where the list is hidden). Guarantees an escape from the detail
+                view so the user is never trapped. */}
+            <div className="lg:hidden sticky top-0 z-20 flex items-center gap-2 px-3 py-2 bg-white/95 backdrop-blur border-b border-gray-100">
               <button
                 onClick={() => setSelectedId(null)}
-                aria-label="رجوع للقائمة"
+                aria-label="العودة للطلبات"
                 className="w-10 h-10 rounded-xl bg-gray-100 flex items-center justify-center cursor-pointer active:bg-gray-200"
               >
                 <ChevronRight size={18} className="text-[#164E63]" aria-hidden="true" />
               </button>
-              <span className="text-sm font-semibold text-[#164E63]">رجوع للقائمة</span>
+              <span className="text-sm font-semibold text-[#164E63]">العودة للطلبات</span>
             </div>
           <div className="p-4 md:p-6 lg:p-8 max-w-4xl">
             <header className="flex items-start justify-between gap-4 mb-6 flex-wrap">
