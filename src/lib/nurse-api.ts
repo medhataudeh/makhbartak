@@ -17,49 +17,6 @@ export async function apiUpdateNurseProfile(
   return { ok: true, nurse: json.nurse };
 }
 
-export interface NursePrep {
-  nurseId: string;
-  day: string;
-  started: boolean;
-  checkedIds: string[];
-}
-
-export async function apiGetNursePrep(
-  nurseId: string,
-  day: string,
-): Promise<NursePrep | null> {
-  const res = await fetch(
-    `/api/nurses/${encodeURIComponent(nurseId)}/prep?day=${encodeURIComponent(day)}`,
-    { cache: "no-store" },
-  );
-  if (!res.ok) return null;
-  const body = await res.json().catch(() => null);
-  if (!body?.prep) return null;
-  return {
-    nurseId: body.prep.nurse_id,
-    day: body.prep.day,
-    started: !!body.prep.started,
-    checkedIds: Array.isArray(body.prep.checked_ids) ? body.prep.checked_ids : [],
-  };
-}
-
-export async function apiSetNursePrep(
-  nurseId: string,
-  day: string,
-  patch: { started: boolean; checkedIds: string[] },
-): Promise<{ ok: boolean; error?: string }> {
-  const res = await fetch(`/api/nurses/${encodeURIComponent(nurseId)}/prep`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ day, started: patch.started, checkedIds: patch.checkedIds }),
-  });
-  if (!res.ok) {
-    const body = await res.json().catch(() => ({}));
-    return { ok: false, error: body.error ?? `HTTP ${res.status}` };
-  }
-  return { ok: true };
-}
-
 // ─── Daily prep confirmation (server-side day-start gate) ──────────────────
 // One confirmed tool line: the auto-computed required quantity (0 when no
 // test→tool mapping drove it) and the quantity the nurse confirmed preparing.
