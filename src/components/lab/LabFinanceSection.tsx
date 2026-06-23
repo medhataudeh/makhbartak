@@ -75,6 +75,17 @@ export function LabFinanceSection({ labId, brand }: Props) {
         <p className="text-xs text-gray-500 mt-0.5">المستحقات الحالية، التسويات المستلمة، وحركات الحساب.</p>
       </header>
 
+      {/* Defensive: the wallet read returned nothing (no data yet, or the API
+          responded 401/403/404/500). Show a clear Arabic notice rather than
+          silently rendering zeros. Never throws — all values below are guarded. */}
+      {!loading && !data && (
+        <div className="rounded-2xl border border-amber-100 bg-amber-50 px-4 py-3">
+          <p className="text-xs text-amber-700 leading-relaxed">
+            لا تتوفر بيانات مالية حالياً. إذا استمرت المشكلة، حدّث الصفحة أو تواصل مع الإدارة.
+          </p>
+        </div>
+      )}
+
       {/* Summary cards */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
         <Card icon={<Receipt size={18} className="text-emerald-700" />} label="إجمالي المستحقات" value={formatPrice(summary?.totalEarnings ?? 0)} loading={loading} />

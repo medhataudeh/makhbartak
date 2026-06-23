@@ -391,6 +391,21 @@ function LabPortalShell({ lab, labUser, onLogout }: { lab: Lab; labUser: LabUser
 
       {/* Main */}
       <main className="flex-1 min-w-0 lg:overflow-y-auto">
+        {/* Tablet/mobile escape hatch — every non-orders subview (finance,
+            accounting, issues, settings) gets an explicit "back to orders"
+            action so the user is never trapped, independent of the top tab bar
+            or the error boundary. Hidden on lg+ where the sidebar is present. */}
+        {section !== "orders" && section !== "results" && (
+          <div className="lg:hidden px-4 pt-3">
+            <button
+              onClick={() => setSection("orders")}
+              className="inline-flex items-center gap-1.5 text-sm font-semibold text-[#0891B2] cursor-pointer active:opacity-70"
+            >
+              <ChevronRight size={16} aria-hidden="true" />
+              العودة للطلبات
+            </button>
+          </div>
+        )}
         {section === "orders"     && <OrdersSection lab={lab} labUser={labUser} labOrders={labOrders} brand={brand} />}
         {section === "results"    && <OrdersSection lab={lab} labUser={labUser} labOrders={labOrders.filter((o) => o.status !== "lab_issue")} brand={brand} resultsFocus />}
         {section === "issues"     && <IssuesSection lab={lab} labOrders={labOrders.filter((o) => o.status === "lab_issue" || (o.issues?.length ?? 0) > 0)} brand={brand} />}
