@@ -15,7 +15,6 @@ const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 export function SignupForm({ onSuccess, onSwitchToLogin }: Props) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [confirm, setConfirm] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -25,7 +24,6 @@ export function SignupForm({ onSuccess, onSwitchToLogin }: Props) {
     setError("");
     if (!EMAIL_RE.test(email.trim())) { setError("البريد الإلكتروني غير صالح"); return; }
     if (password.length < 8) { setError("كلمة المرور يجب أن تكون 8 أحرف على الأقل"); return; }
-    if (password !== confirm) { setError("كلمتا المرور غير متطابقتين"); return; }
     setLoading(true);
     // Self-signup is email + password only; name/phone are collected later.
     const result = await signupCustomer({ email: email.trim(), password });
@@ -80,16 +78,6 @@ export function SignupForm({ onSuccess, onSwitchToLogin }: Props) {
             >
               {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
             </button>
-          </Field>
-
-          <Field id="signup-confirm" label="تأكيد كلمة المرور" icon={<Lock size={16} />}>
-            <input id="signup-confirm"
-              type={showPassword ? "text" : "password"} autoComplete="new-password"
-              value={confirm} onChange={(e) => setConfirm(e.target.value)}
-              className="w-full h-11 ps-10 pe-3 rounded-xl border border-gray-200 text-sm text-[#164E63] focus:border-[#0891B2] focus:ring-2 focus:ring-[#0891B2]/15 outline-none"
-              style={{ direction: "ltr", textAlign: "right" }}
-              required
-            />
           </Field>
 
           {error && (
