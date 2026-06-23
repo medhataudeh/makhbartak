@@ -25,24 +25,43 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
 
   const sb = getSupabaseAdmin();
 
-  // Server-side day-start gate: a nurse may only go online after recording an
-  // auditable prep confirmation for today (Asia/Damascus). Admins toggling a
-  // nurse online (operational override) bypass the gate. Going offline is
-  // never gated.
+  // Server-side day-start gate: a nurse may only go online after confirming
+  // prep quantities that COVER the required quantities for today's assigned
+  // orders (Asia/Damascus). The required amounts are computed canonically in
+  // check_nurse_prep_coverage (orders → order_items → lab_test_required_tools),
+  // not trusted from the client. Admins toggling a nurse online (operational
+  // override) bypass the gate. Going offline is never gated.
   if (isOnline && auth.session.role === "nurse") {
     const today = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Damascus" }).format(new Date());
-    const { data: conf, error: confErr } = await sb
-      .from("nurse_daily_prep_confirmations")
-      .select("id")
-      .eq("nurse_id", id)
-      .eq("work_date", today)
-      .maybeSingle();
-    if (confErr) {
-      console.error("[api/nurses/online] prep-confirmation check failed", { id, code: confErr.code, message: confErr.message });
+    const { data: coverage, error: covErr } = await sb.rpc("check_nurse_prep_coverage", {
+      p_nurse_id: id,
+      p_work_date: today,
+    });
+    if (covErr) {
+      console.error("[api/nurses/online] coverage check failed", { id, code: covErr.code, message: covErr.message });
       return NextResponse.json({ error: "تعذر التحقق من جاهزية الأدوات" }, { status: 500 });
     }
-    if (!conf) {
-      return NextResponse.json({ error: "يجب تأكيد جاهزية الأدوات قبل بدء اليوم" }, { status: 409 });
+    const cov = coverage as {
+      ok: boolean;
+      reason: string | null;
+      shortfalls: { nameAr: string; unit: string; required: number; prepared: number }[];
+    } | null;
+    if (!cov?.ok) {
+      if (cov?.reason === "no_confirmation") {
+        return NextResponse.json({ error: "يجب تأكيد جاهزية الأدوات قبل بدء اليوم" }, { status: 409 });
+      }
+      const list = (cov?.shortfalls ?? [])
+        .map((s) => `${s.nameAr} (المطلوب ${s.required}${s.unit ? " " + s.unit : ""}، المجهّز ${s.prepared})`)
+        .join("، ");
+      return NextResponse.json(
+        {
+          error: list
+            ? `الكميات المجهّزة غير كافية لبدء اليوم: ${list}`
+            : "الكميات المجهّزة غير كافية لبدء اليوم",
+          shortfalls: cov?.shortfalls ?? [],
+        },
+        { status: 409 },
+      );
     }
   }
 
